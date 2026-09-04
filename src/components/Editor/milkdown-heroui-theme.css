@@ -1,0 +1,51 @@
+/*
+ * Crepe's own theme is entirely driven by --crepe-* custom properties
+ * (see @milkdown/crepe/theme/classic.css). Repointing them at HeroUI's
+ * design tokens (@heroui/styles) makes the editor's floating menus,
+ * toolbar, and tooltips match the rest of the app instead of Crepe's
+ * default beige palette. Must be imported after the classic.css theme
+ * so these overrides win the cascade.
+ */
+.milkdown {
+  --crepe-color-background: var(--surface);
+  --crepe-color-on-background: var(--foreground);
+  --crepe-color-surface: var(--overlay);
+  --crepe-color-surface-low: var(--surface-secondary);
+  --crepe-color-on-surface: var(--overlay-foreground);
+  --crepe-color-on-surface-variant: var(--muted);
+  --crepe-color-outline: var(--border);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-soft);
+  --crepe-color-on-secondary: var(--accent-soft-foreground);
+  --crepe-color-inverse: var(--foreground);
+  --crepe-color-on-inverse: var(--background);
+  --crepe-color-inline-code: var(--accent-soft-foreground);
+  --crepe-color-error: var(--danger);
+  --crepe-color-hover: var(--default);
+  --crepe-color-selected: var(--accent-soft);
+  --crepe-color-inline-area: var(--default);
+
+  --crepe-font-title:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --crepe-font-default:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+
+  --crepe-shadow-1: var(--overlay-shadow);
+  --crepe-shadow-2: var(--overlay-shadow);
+}
+
+/* HeroUI's floating surfaces (menu/popover) round further than Crepe's
+   defaults (8-12px) — match that on Crepe's own menu/toolbar/tooltip shells. */
+.milkdown .milkdown-slash-menu,
+.milkdown .milkdown-toolbar,
+.milkdown .milkdown-link-preview > .link-preview,
+.milkdown .milkdown-link-edit > .link-edit {
+  border-radius: 1.25rem;
+}
+
+.milkdown .milkdown-slash-menu .menu-groups .menu-group li,
+.milkdown .milkdown-slash-menu .tab-group ul li {
+  border-radius: 1rem;
+}
