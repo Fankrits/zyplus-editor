@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { join } from "@tauri-apps/api/path";
-import { Button, Input, Modal } from "@heroui/react";
+import { Button, Input, Label, Modal, TextField } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
@@ -47,13 +47,15 @@ function AppShell() {
   const handleCreate = async () => {
     const targetDir = createTargetDir ?? state.rootPath;
     if (!targetDir || !newName.trim() || !createKind) return;
-    const path = await join(targetDir, newName.trim());
+    const trimmed = newName.trim();
+    const name = createKind === "file" && !/\.[^./\\]+$/.test(trimmed) ? `${trimmed}.md` : trimmed;
+    const path = await join(targetDir, name);
     if (createKind === "file") {
       await fs.createFile(path);
       await refreshTree();
       dispatch({
         type: "OPEN_TAB",
-        tab: { id: path, filePath: path, title: newName.trim(), content: "", isDirty: false, mode: "rich" },
+        tab: { id: path, filePath: path, title: name, content: "", isDirty: false, mode: "rich" },
       });
     } else {
       await fs.createFolder(path);
@@ -76,31 +78,34 @@ function AppShell() {
 
       <Modal>
         <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>
-          <Modal.Container>
+          <Modal.Container size="sm">
             <Modal.Dialog>
               <Modal.CloseTrigger />
               <Modal.Header>
-                <Modal.Icon className="bg-accent-soft text-accent">
-                  <HugeiconsIcon icon={createKind === "folder" ? FolderAddIcon : FileAddIcon} size={20} />
+                <Modal.Icon className="size-8 bg-accent-soft text-accent">
+                  <HugeiconsIcon icon={createKind === "folder" ? FolderAddIcon : FileAddIcon} size={16} />
                 </Modal.Icon>
                 <Modal.Heading>{createKind === "folder" ? "New Folder" : "New File"}</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
-                <Input
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder={createKind === "folder" ? "folder-name" : "file-name.md"}
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreate();
-                  }}
-                />
+                <TextField>
+                  <Label className="mb-1.5 block">{createKind === "folder" ? "Folder name" : "File name"}</Label>
+                  <Input
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder={createKind === "folder" ? "folder-name" : "file-name.md"}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleCreate();
+                    }}
+                  />
+                </TextField>
               </Modal.Body>
               <Modal.Footer>
-                <Button variant="ghost" onPress={closeCreateModal}>
+                <Button size="sm" variant="ghost" onPress={closeCreateModal}>
                   Cancel
                 </Button>
-                <Button variant="primary" onPress={handleCreate}>
+                <Button size="sm" variant="primary" onPress={handleCreate}>
                   Create
                 </Button>
               </Modal.Footer>
