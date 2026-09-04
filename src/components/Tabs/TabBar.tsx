@@ -8,6 +8,7 @@ import {
   FolderOpenIcon,
   ClipboardIcon,
   Alert01Icon,
+  PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
@@ -17,21 +18,63 @@ import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMen
 interface TabItemProps {
   tab: Pick<TabState, "id" | "title" | "isDirty">;
   isActive: boolean;
+  isDragging: boolean;
+  isDragOver: boolean;
   onSelect: (id: string) => void;
   onRequestClose: (id: string) => void;
   onContextMenu: (e: ReactMouseEvent, id: string) => void;
+  onDragStartTab: (id: string) => void;
+  onDragOverTab: (id: string) => void;
+  onDropTab: (id: string) => void;
+  onDragEndTab: () => void;
 }
 
-const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose, onContextMenu }: TabItemProps) {
+const TabItem = memo(function TabItem({
+  tab,
+  isActive,
+  isDragging,
+  isDragOver,
+  onSelect,
+  onRequestClose,
+  onContextMenu,
+  onDragStartTab,
+  onDragOverTab,
+  onDropTab,
+  onDragEndTab,
+}: TabItemProps) {
   return (
     <div
       role="tab"
+      tabIndex={0}
       aria-selected={isActive}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", tab.id);
+        onDragStartTab(tab.id);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        onDragOverTab(tab.id);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onDropTab(tab.id);
+      }}
+      onDragEnd={onDragEndTab}
       onClick={() => onSelect(tab.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(tab.id);
+        }
+      }}
       onContextMenu={(e) => onContextMenu(e, tab.id)}
-      className={`group flex shrink-0 cursor-default items-center gap-2 border-r border-black/10 px-3 py-1.5 text-sm dark:border-white/10 ${
-        isActive ? "bg-white dark:bg-neutral-800" : "text-neutral-500 hover:bg-black/5 dark:hover:bg-white/5"
-      }`}
+      className={`group flex h-8 shrink-0 cursor-default items-center gap-2 rounded-3xl px-3 text-sm font-medium no-highlight outline-none ${
+        isActive ? "bg-segment text-segment-foreground shadow-surface" : "text-muted hover:opacity-70"
+      } ${isDragging ? "opacity-40" : ""} ${isDragOver ? "status-focused" : ""} focus-visible:status-focused`}
     >
       {tab.isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />}
       <span className="max-w-[14rem] truncate">{tab.title}</span>
@@ -42,7 +85,7 @@ const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose,
           e.stopPropagation();
           onRequestClose(tab.id);
         }}
-        className="rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10"
+        className="rounded-full p-0.5 opacity-0 group-hover:opacity-100 hover:bg-foreground/10"
       >
         <HugeiconsIcon icon={Cancel01Icon} size={13} strokeWidth={2} />
       </button>
@@ -50,10 +93,36 @@ const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose,
   );
 });
 
-export function TabBar() {
+interface TabBarProps {
+  onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
+}
+
+export function TabBar({ onRequestCreate }: TabBarProps) {
   const { state, dispatch } = useWorkspace();
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const contextMenu = useContextMenu();
+
+  const handleDragOverTab = useCallback((id: string) => {
+    setDragOverId((prev) => (prev === id ? prev : id));
+  }, []);
+
+  const handleDropOnTab = useCallback(
+    (id: string) => {
+      if (draggedId && draggedId !== id) {
+        dispatch({ type: "REORDER_TAB", id: draggedId, targetId: id });
+      }
+      setDraggedId(null);
+      setDragOverId(null);
+    },
+    [draggedId, dispatch],
+  );
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedId(null);
+    setDragOverId(null);
+  }, []);
 
   const handleSelect = useCallback(
     (id: string) => dispatch({ type: "FOCUS_TAB", id }),
@@ -139,26 +208,50 @@ export function TabBar() {
     setPendingCloseId(null);
   };
 
-  if (state.tabs.length === 0) {
-    return <div className="h-9 shrink-0 border-b border-black/10 dark:border-white/10" />;
-  }
-
   return (
     <>
       <div
-        role="tablist"
-        className="flex h-9 shrink-0 items-stretch overflow-x-auto border-b border-black/10 dark:border-white/10"
+        className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-default px-1.5 py-2"
+        onDragOver={(e) => {
+          if (e.target !== e.currentTarget) return;
+          e.preventDefault();
+          setDragOverId(null);
+        }}
+        onDrop={(e) => {
+          if (e.target !== e.currentTarget) return;
+          e.preventDefault();
+          if (draggedId) dispatch({ type: "REORDER_TAB", id: draggedId, targetId: null });
+          setDraggedId(null);
+          setDragOverId(null);
+        }}
       >
-        {state.tabs.map((tab) => (
-          <TabItem
-            key={tab.id}
-            tab={tab}
-            isActive={tab.id === state.activeTabId}
-            onSelect={handleSelect}
-            onRequestClose={handleRequestClose}
-            onContextMenu={handleTabContextMenu}
-          />
-        ))}
+        <div role="tablist" className="flex shrink-0 items-center gap-1">
+          {state.tabs.map((tab) => (
+            <TabItem
+              key={tab.id}
+              tab={tab}
+              isActive={tab.id === state.activeTabId}
+              isDragging={tab.id === draggedId}
+              isDragOver={tab.id === dragOverId}
+              onSelect={handleSelect}
+              onRequestClose={handleRequestClose}
+              onContextMenu={handleTabContextMenu}
+              onDragStartTab={setDraggedId}
+              onDragOverTab={handleDragOverTab}
+              onDropTab={handleDropOnTab}
+              onDragEndTab={handleDragEnd}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          aria-label="New file"
+          disabled={!state.rootPath}
+          onClick={() => state.rootPath && onRequestCreate("file", state.rootPath)}
+          className="flex size-8 shrink-0 items-center justify-center rounded-3xl text-muted no-highlight outline-none hover:opacity-70 focus-visible:status-focused disabled:status-disabled"
+        >
+          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2} />
+        </button>
       </div>
 
       <ContextMenu state={contextMenu.state} onClose={contextMenu.close} />

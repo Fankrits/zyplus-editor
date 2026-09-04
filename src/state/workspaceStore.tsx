@@ -39,6 +39,7 @@ type Action =
   | { type: "OPEN_TAB"; tab: TabState }
   | { type: "FOCUS_TAB"; id: string }
   | { type: "CLOSE_TAB"; id: string }
+  | { type: "REORDER_TAB"; id: string; targetId: string | null }
   | { type: "UPDATE_TAB_CONTENT"; id: string; content: string }
   | { type: "SET_TAB_MODE"; id: string; mode: TabMode }
   | { type: "SAVE_TAB_SUCCESS"; id: string }
@@ -82,6 +83,21 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
       };
     case "FOCUS_TAB":
       return { ...state, activeTabId: action.id };
+    case "REORDER_TAB": {
+      const { id, targetId } = action;
+      if (id === targetId) return state;
+      const tabs = [...state.tabs];
+      const fromIndex = tabs.findIndex((t) => t.id === id);
+      if (fromIndex === -1) return state;
+      const [moved] = tabs.splice(fromIndex, 1);
+      const toIndex = targetId ? tabs.findIndex((t) => t.id === targetId) : -1;
+      if (toIndex === -1) {
+        tabs.push(moved);
+      } else {
+        tabs.splice(toIndex, 0, moved);
+      }
+      return { ...state, tabs };
+    }
     case "CLOSE_TAB":
       return {
         ...state,

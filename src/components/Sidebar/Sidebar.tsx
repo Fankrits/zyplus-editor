@@ -1,24 +1,17 @@
-import { useCallback, useState } from "react";
-import { join } from "@tauri-apps/api/path";
-import { Button, Input, Modal } from "@heroui/react";
+import { useCallback } from "react";
+import { Button } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FolderOpenIcon, FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
 
-type CreateKind = "file" | "folder" | null;
+interface SidebarProps {
+  onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
+}
 
-export function Sidebar() {
-  const { state, dispatch, refreshTree } = useWorkspace();
-  const [createKind, setCreateKind] = useState<CreateKind>(null);
-  const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-
-  const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
-    setCreateTargetDir(targetDir);
-    setCreateKind(kind);
-  }, []);
+export function Sidebar({ onRequestCreate }: SidebarProps) {
+  const { state, dispatch } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await fs.openFolderDialog();
@@ -43,25 +36,6 @@ export function Sidebar() {
     [state.tabs, dispatch],
   );
 
-  const closeCreateModal = () => {
-    setCreateKind(null);
-    setCreateTargetDir(null);
-    setNewName("");
-  };
-
-  const handleCreate = async () => {
-    const targetDir = createTargetDir ?? state.rootPath;
-    if (!targetDir || !newName.trim() || !createKind) return;
-    const path = await join(targetDir, newName.trim());
-    if (createKind === "file") {
-      await fs.createFile(path);
-    } else {
-      await fs.createFolder(path);
-    }
-    await refreshTree();
-    closeCreateModal();
-  };
-
   if (!state.rootPath) {
     return (
       <div className="flex h-full w-64 shrink-0 flex-col items-center justify-center gap-3 border-r border-black/10 p-4 dark:border-white/10">
@@ -85,7 +59,7 @@ export function Sidebar() {
             isIconOnly
             variant="ghost"
             aria-label="New file"
-            onPress={() => requestCreate("file", state.rootPath!)}
+            onPress={() => onRequestCreate("file", state.rootPath!)}
           >
             <HugeiconsIcon icon={FileAddIcon} size={16} />
           </Button>
@@ -94,48 +68,13 @@ export function Sidebar() {
             isIconOnly
             variant="ghost"
             aria-label="New folder"
-            onPress={() => requestCreate("folder", state.rootPath!)}
+            onPress={() => onRequestCreate("folder", state.rootPath!)}
           >
             <HugeiconsIcon icon={FolderAddIcon} size={16} />
           </Button>
         </div>
       </div>
-      <FileTree onOpenFile={handleOpenFile} onRequestCreate={requestCreate} />
-
-      <Modal>
-        <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>
-          <Modal.Container>
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
-                <Modal.Icon className="bg-accent-soft text-accent">
-                  <HugeiconsIcon icon={createKind === "folder" ? FolderAddIcon : FileAddIcon} size={20} />
-                </Modal.Icon>
-                <Modal.Heading>{createKind === "folder" ? "New Folder" : "New File"}</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <Input
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder={createKind === "folder" ? "folder-name" : "file-name.md"}
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleCreate();
-                  }}
-                />
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="ghost" onPress={closeCreateModal}>
-                  Cancel
-                </Button>
-                <Button variant="primary" onPress={handleCreate}>
-                  Create
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
+      <FileTree onOpenFile={handleOpenFile} onRequestCreate={onRequestCreate} />
     </div>
   );
 }
