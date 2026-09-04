@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouse
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 import { dirname, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Button, Modal } from "@heroui/react";
+import { Button, Input, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowDown01Icon,
@@ -248,18 +248,44 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
   const rowStyle = { ...style, paddingLeft: (style.paddingLeft as number | undefined ?? 0) + 8 };
 
   if (node.isEditing) {
+    const isFile = !node.data.isFolder;
     return (
-      <div style={rowStyle} className="flex h-full items-center pr-2">
-        <input
+      <div style={rowStyle} className="mx-1 my-0.5 flex h-[calc(100%-4px)] items-center gap-2 pr-2">
+        <span className="w-3.5 shrink-0" />
+        <HugeiconsIcon
+          icon={
+            node.data.isFolder
+              ? node.isOpen
+                ? FolderOpenIcon
+                : Folder01Icon
+              : isFile && fs.isMarkdownFile(node.data.name)
+                ? FileTextIcon
+                : File01Icon
+          }
+          size={16}
+          strokeWidth={1.75}
+          className="shrink-0 opacity-70"
+        />
+        <Input
           defaultValue={node.data.name}
           autoFocus
-          onFocus={(e) => e.currentTarget.select()}
+          fullWidth
+          onFocus={(e) => {
+            // Select just the filename stem (like Finder/VS Code) so retyping
+            // doesn't clobber the extension by accident. Folders have no extension.
+            const dotIndex = node.data.name.lastIndexOf(".");
+            if (isFile && dotIndex > 0) {
+              e.currentTarget.setSelectionRange(0, dotIndex);
+            } else {
+              e.currentTarget.select();
+            }
+          }}
           onBlur={() => node.reset()}
           onKeyDown={(e) => {
             if (e.key === "Escape") node.reset();
             if (e.key === "Enter") node.submit(e.currentTarget.value);
           }}
-          className="w-full rounded-lg border border-neutral-400 bg-white px-1.5 py-1 text-sm text-black outline-none dark:bg-neutral-900 dark:text-white"
+          className="h-7 px-2 py-0 text-sm"
         />
       </div>
     );
