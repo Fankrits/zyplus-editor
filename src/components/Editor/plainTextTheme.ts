@@ -4,7 +4,7 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
 export const plainTextTheme: Extension = EditorView.theme({
-  ".cm-editor": {
+  "&": {
     height: "100%",
     background: "transparent",
   },
