@@ -17,6 +17,7 @@ function AppShell() {
   const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -63,9 +64,13 @@ function AppShell() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white text-black dark:bg-neutral-900 dark:text-white">
-      <Sidebar onRequestCreate={requestCreate} />
+      <Sidebar onRequestCreate={requestCreate} isCollapsed={isSidebarCollapsed} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TabBar onRequestCreate={requestCreate} />
+        <TabBar
+          onRequestCreate={requestCreate}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={() => setIsSidebarCollapsed((v) => !v)}
+        />
         <EditorPane />
       </div>
 

@@ -11,6 +11,7 @@ import {
   PlusSignIcon,
   TextFontIcon,
   SourceCodeIcon,
+  SidebarLeftIcon,
 } from "@hugeicons/core-free-icons";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
@@ -97,9 +98,11 @@ const TabItem = memo(function TabItem({
 
 interface TabBarProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
+  isSidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
 }
 
-export function TabBar({ onRequestCreate }: TabBarProps) {
+export function TabBar({ onRequestCreate, isSidebarCollapsed, onToggleSidebar }: TabBarProps) {
   const { state, activeTab, dispatch } = useWorkspace();
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -227,6 +230,16 @@ export function TabBar({ onRequestCreate }: TabBarProps) {
           setDragOverId(null);
         }}
       >
+        <button
+          type="button"
+          aria-label={isSidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          onClick={onToggleSidebar}
+          className={`flex size-8 shrink-0 items-center justify-center rounded-3xl no-highlight outline-none hover:opacity-70 focus-visible:status-focused ${
+            isSidebarCollapsed ? "text-muted" : "text-accent"
+          }`}
+        >
+          <HugeiconsIcon icon={SidebarLeftIcon} size={16} strokeWidth={2} />
+        </button>
         <div role="tablist" className="flex shrink-0 items-center gap-1">
           {state.tabs.map((tab) => (
             <TabItem

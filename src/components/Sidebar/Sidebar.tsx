@@ -8,9 +8,10 @@ import { FileTree } from "./FileTree";
 
 interface SidebarProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
+  isCollapsed: boolean;
 }
 
-export function Sidebar({ onRequestCreate }: SidebarProps) {
+export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
   const { state, dispatch } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
@@ -35,6 +36,8 @@ export function Sidebar({ onRequestCreate }: SidebarProps) {
     },
     [state.tabs, dispatch],
   );
+
+  if (isCollapsed) return null;
 
   if (!state.rootPath) {
     return (
