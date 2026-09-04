@@ -1,21 +1,25 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Button, Modal } from "@heroui/react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
 import { writeTextFile } from "../../lib/fs";
+import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
 
 interface TabItemProps {
   tab: Pick<TabState, "id" | "title" | "isDirty">;
   isActive: boolean;
   onSelect: (id: string) => void;
   onRequestClose: (id: string) => void;
+  onContextMenu: (e: ReactMouseEvent, id: string) => void;
 }
 
-const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose }: TabItemProps) {
+const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose, onContextMenu }: TabItemProps) {
   return (
     <div
       role="tab"
       aria-selected={isActive}
       onClick={() => onSelect(tab.id)}
+      onContextMenu={(e) => onContextMenu(e, tab.id)}
       className={`group flex shrink-0 cursor-default items-center gap-2 border-r border-black/10 px-3 py-1.5 text-sm dark:border-white/10 ${
         isActive ? "bg-white dark:bg-neutral-800" : "text-neutral-500 hover:bg-black/5 dark:hover:bg-white/5"
       }`}
@@ -40,6 +44,7 @@ const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose 
 export function TabBar() {
   const { state, dispatch } = useWorkspace();
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
+  const contextMenu = useContextMenu();
 
   const handleSelect = useCallback(
     (id: string) => dispatch({ type: "FOCUS_TAB", id }),
@@ -57,6 +62,46 @@ export function TabBar() {
       setPendingCloseId(id);
     },
     [state.tabs, dispatch],
+  );
+
+  const handleSave = useCallback(
+    async (id: string) => {
+      const tab = state.tabs.find((t) => t.id === id);
+      if (!tab) return;
+      await writeTextFile(tab.filePath, tab.content);
+      dispatch({ type: "SAVE_TAB_SUCCESS", id });
+    },
+    [state.tabs, dispatch],
+  );
+
+  // Bulk close only ever affects clean tabs — dirty tabs are left open rather than
+  // risking silently discarded work; use the single "Close" action to be prompted per-tab.
+  const handleCloseOthers = useCallback(
+    (keepId: string) => {
+      state.tabs.filter((t) => t.id !== keepId && !t.isDirty).forEach((t) => dispatch({ type: "CLOSE_TAB", id: t.id }));
+    },
+    [state.tabs, dispatch],
+  );
+
+  const handleCloseAll = useCallback(() => {
+    state.tabs.filter((t) => !t.isDirty).forEach((t) => dispatch({ type: "CLOSE_TAB", id: t.id }));
+  }, [state.tabs, dispatch]);
+
+  const handleTabContextMenu = useCallback(
+    (e: ReactMouseEvent, id: string) => {
+      const tab = state.tabs.find((t) => t.id === id);
+      if (!tab) return;
+      const items: ContextMenuItem[] = [
+        { key: "save", label: "Save", disabled: !tab.isDirty, onSelect: () => handleSave(id) },
+        { key: "close", label: "Close", onSelect: () => handleRequestClose(id) },
+        { key: "close-others", label: "Close Others", onSelect: () => handleCloseOthers(id) },
+        { key: "close-all", label: "Close All", onSelect: () => handleCloseAll() },
+        { key: "reveal", label: "Reveal in Finder", onSelect: () => revealItemInDir(tab.filePath) },
+        { key: "copy-path", label: "Copy Path", onSelect: () => navigator.clipboard.writeText(tab.filePath) },
+      ];
+      contextMenu.open(e, items);
+    },
+    [state.tabs, handleSave, handleRequestClose, handleCloseOthers, handleCloseAll, contextMenu],
   );
 
   const pendingTab = state.tabs.find((t) => t.id === pendingCloseId) ?? null;
@@ -92,9 +137,12 @@ export function TabBar() {
             isActive={tab.id === state.activeTabId}
             onSelect={handleSelect}
             onRequestClose={handleRequestClose}
+            onContextMenu={handleTabContextMenu}
           />
         ))}
       </div>
+
+      <ContextMenu state={contextMenu.state} onClose={contextMenu.close} />
 
       <Modal>
         <Modal.Backdrop isOpen={pendingTab !== null} onOpenChange={(open) => !open && setPendingCloseId(null)}>

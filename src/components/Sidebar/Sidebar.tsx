@@ -10,7 +10,13 @@ type CreateKind = "file" | "folder" | null;
 export function Sidebar() {
   const { state, dispatch, refreshTree } = useWorkspace();
   const [createKind, setCreateKind] = useState<CreateKind>(null);
+  const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+
+  const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
+    setCreateTargetDir(targetDir);
+    setCreateKind(kind);
+  }, []);
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await fs.openFolderDialog();
@@ -37,12 +43,14 @@ export function Sidebar() {
 
   const closeCreateModal = () => {
     setCreateKind(null);
+    setCreateTargetDir(null);
     setNewName("");
   };
 
   const handleCreate = async () => {
-    if (!state.rootPath || !newName.trim() || !createKind) return;
-    const path = await join(state.rootPath, newName.trim());
+    const targetDir = createTargetDir ?? state.rootPath;
+    if (!targetDir || !newName.trim() || !createKind) return;
+    const path = await join(targetDir, newName.trim());
     if (createKind === "file") {
       await fs.createFile(path);
     } else {
@@ -69,15 +77,27 @@ export function Sidebar() {
           {state.rootPath.split(/[\\/]/).pop()}
         </span>
         <div className="flex shrink-0 gap-1">
-          <Button size="sm" isIconOnly variant="ghost" aria-label="New file" onPress={() => setCreateKind("file")}>
+          <Button
+            size="sm"
+            isIconOnly
+            variant="ghost"
+            aria-label="New file"
+            onPress={() => requestCreate("file", state.rootPath!)}
+          >
             +
           </Button>
-          <Button size="sm" isIconOnly variant="ghost" aria-label="New folder" onPress={() => setCreateKind("folder")}>
+          <Button
+            size="sm"
+            isIconOnly
+            variant="ghost"
+            aria-label="New folder"
+            onPress={() => requestCreate("folder", state.rootPath!)}
+          >
             /
           </Button>
         </div>
       </div>
-      <FileTree onOpenFile={handleOpenFile} />
+      <FileTree onOpenFile={handleOpenFile} onRequestCreate={requestCreate} />
 
       <Modal>
         <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>

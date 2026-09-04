@@ -8,7 +8,7 @@ import {
   rename as renameRaw,
   exists,
 } from "@tauri-apps/plugin-fs";
-import { join } from "@tauri-apps/api/path";
+import { join, dirname, basename } from "@tauri-apps/api/path";
 import type { TreeNode } from "../state/workspaceStore";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".txt"];
@@ -72,4 +72,25 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
 
 export async function deletePath(path: string, isFolder: boolean): Promise<void> {
   await remove(path, { recursive: isFolder });
+}
+
+/** Copies a file alongside itself as "name copy.ext", "name copy 2.ext", ... and returns the new path. */
+export async function duplicateFile(path: string): Promise<string> {
+  const content = await readTextFileRaw(path);
+  const dir = await dirname(path);
+  const name = await basename(path);
+  const dotIndex = name.lastIndexOf(".");
+  const stem = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+  const ext = dotIndex > 0 ? name.slice(dotIndex) : "";
+
+  let candidateName = `${stem} copy${ext}`;
+  let newPath = await join(dir, candidateName);
+  let n = 2;
+  while (await exists(newPath)) {
+    candidateName = `${stem} copy ${n}${ext}`;
+    newPath = await join(dir, candidateName);
+    n++;
+  }
+  await writeTextFileRaw(newPath, content);
+  return newPath;
 }
