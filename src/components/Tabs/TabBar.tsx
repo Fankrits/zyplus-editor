@@ -9,6 +9,8 @@ import {
   ClipboardIcon,
   Alert01Icon,
   PlusSignIcon,
+  TextFontIcon,
+  SourceCodeIcon,
 } from "@hugeicons/core-free-icons";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
@@ -73,7 +75,7 @@ const TabItem = memo(function TabItem({
       }}
       onContextMenu={(e) => onContextMenu(e, tab.id)}
       className={`group flex h-8 shrink-0 cursor-default items-center gap-2 rounded-3xl px-3 text-sm font-medium no-highlight outline-none ${
-        isActive ? "bg-segment text-segment-foreground shadow-surface" : "text-muted hover:opacity-70"
+        isActive ? "bg-accent-soft text-accent-soft-foreground" : "text-muted hover:opacity-70"
       } ${isDragging ? "opacity-40" : ""} ${isDragOver ? "status-focused" : ""} focus-visible:status-focused`}
     >
       {tab.isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />}
@@ -98,7 +100,7 @@ interface TabBarProps {
 }
 
 export function TabBar({ onRequestCreate }: TabBarProps) {
-  const { state, dispatch } = useWorkspace();
+  const { state, activeTab, dispatch } = useWorkspace();
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -211,7 +213,7 @@ export function TabBar({ onRequestCreate }: TabBarProps) {
   return (
     <>
       <div
-        className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-default px-1.5 py-2"
+        className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-white px-1.5 py-2"
         onDragOver={(e) => {
           if (e.target !== e.currentTarget) return;
           e.preventDefault();
@@ -252,6 +254,26 @@ export function TabBar({ onRequestCreate }: TabBarProps) {
         >
           <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2} />
         </button>
+        {activeTab && (
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button
+              size="sm"
+              variant={activeTab.mode === "rich" ? "secondary" : "ghost"}
+              onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "rich" })}
+            >
+              <HugeiconsIcon icon={TextFontIcon} size={15} />
+              Rich
+            </Button>
+            <Button
+              size="sm"
+              variant={activeTab.mode === "plain" ? "secondary" : "ghost"}
+              onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "plain" })}
+            >
+              <HugeiconsIcon icon={SourceCodeIcon} size={15} />
+              Plain
+            </Button>
+          </div>
+        )}
       </div>
 
       <ContextMenu state={contextMenu.state} onClose={contextMenu.close} />

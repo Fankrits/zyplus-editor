@@ -1,7 +1,6 @@
 import { useCallback } from "react";
-import { Button } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { TextFontIcon, SourceCodeIcon, FileEmpty01Icon } from "@hugeicons/core-free-icons";
+import { FileEmpty01Icon } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../../state/workspaceStore";
 import { RichTextEditor } from "./RichTextEditor";
 import { PlainTextEditor } from "./PlainTextEditor";
@@ -28,24 +27,6 @@ export function EditorPane() {
 
   return (
     <div className="flex h-full flex-1 min-w-0 flex-col">
-      <div className="flex shrink-0 items-center justify-end gap-1 border-b border-black/10 px-3 py-1.5 dark:border-white/10">
-        <Button
-          size="sm"
-          variant={activeTab.mode === "rich" ? "secondary" : "ghost"}
-          onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "rich" })}
-        >
-          <HugeiconsIcon icon={TextFontIcon} size={15} />
-          Rich
-        </Button>
-        <Button
-          size="sm"
-          variant={activeTab.mode === "plain" ? "secondary" : "ghost"}
-          onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "plain" })}
-        >
-          <HugeiconsIcon icon={SourceCodeIcon} size={15} />
-          Plain
-        </Button>
-      </div>
       <div className="min-h-0 flex-1">
         {activeTab.mode === "rich" ? (
           <RichTextEditor key={activeTab.id} initialValue={activeTab.content} onChange={handleChange} />
