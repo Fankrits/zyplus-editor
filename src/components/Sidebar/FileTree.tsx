@@ -122,7 +122,6 @@ function Node({ node, style, dragHandle }: NodeRendererProps<TreeNode>) {
     <div
       style={indent}
       ref={dragHandle}
-      onClick={(e) => node.handleClick(e)}
       onDoubleClick={() => node.edit()}
       className={`flex cursor-default items-center gap-1 truncate px-1 text-sm select-none ${
         node.isSelected ? "bg-blue-500/20" : "hover:bg-black/5 dark:hover:bg-white/10"
