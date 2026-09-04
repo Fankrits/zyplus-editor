@@ -193,8 +193,8 @@ export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
         data={state.tree}
         width={size.width}
         height={size.height}
-        rowHeight={26}
-        indent={14}
+        rowHeight={40}
+        indent={18}
         onActivate={handleActivate}
         onRename={handleRename}
         onMove={handleMove}
@@ -243,11 +243,13 @@ interface NodeProps extends NodeRendererProps<TreeNode> {
 }
 
 function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
-  const indent = { ...style, paddingLeft: (style.paddingLeft as number | undefined ?? 0) + node.level * 14 };
+  // `style.paddingLeft` already equals node.level * the Tree's `indent` prop (react-arborist
+  // computes this for us) — just add a small constant base inset on top of it.
+  const rowStyle = { ...style, paddingLeft: (style.paddingLeft as number | undefined ?? 0) + 8 };
 
   if (node.isEditing) {
     return (
-      <div style={indent} className="flex items-center px-1">
+      <div style={rowStyle} className="flex h-full items-center pr-2">
         <input
           defaultValue={node.data.name}
           autoFocus
@@ -257,7 +259,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
             if (e.key === "Escape") node.reset();
             if (e.key === "Enter") node.submit(e.currentTarget.value);
           }}
-          className="w-full rounded border border-neutral-400 bg-white px-1 text-sm text-black outline-none dark:bg-neutral-900 dark:text-white"
+          className="w-full rounded-lg border border-neutral-400 bg-white px-1.5 py-1 text-sm text-black outline-none dark:bg-neutral-900 dark:text-white"
         />
       </div>
     );
@@ -265,17 +267,17 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
 
   return (
     <div
-      style={indent}
+      style={rowStyle}
       ref={dragHandle}
       onDoubleClick={() => node.edit()}
       onContextMenu={(e) => onNodeContextMenu(e, node)}
-      className={`flex cursor-default items-center gap-1 truncate px-1 text-sm select-none ${
-        node.isSelected ? "bg-blue-500/20" : "hover:bg-black/5 dark:hover:bg-white/10"
+      className={`mx-1 my-0.5 flex h-[calc(100%-4px)] cursor-default items-center gap-2 rounded-2xl pr-2 text-sm select-none ${
+        node.isSelected ? "bg-accent-soft text-accent-soft-foreground" : "hover:bg-default"
       }`}
     >
-      <span className="flex w-3 shrink-0 items-center justify-center opacity-60">
+      <span className="flex w-3.5 shrink-0 items-center justify-center opacity-60">
         {node.data.isFolder && (
-          <HugeiconsIcon icon={node.isOpen ? ArrowDown01Icon : ArrowRight01Icon} size={12} strokeWidth={2} />
+          <HugeiconsIcon icon={node.isOpen ? ArrowDown01Icon : ArrowRight01Icon} size={13} strokeWidth={2} />
         )}
       </span>
       <HugeiconsIcon
@@ -288,7 +290,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
               ? FileTextIcon
               : File01Icon
         }
-        size={15}
+        size={16}
         strokeWidth={1.75}
         className="shrink-0 opacity-70"
       />
