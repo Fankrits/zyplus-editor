@@ -1,5 +1,7 @@
 import { useCallback } from "react";
 import { Button } from "@heroui/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { TextFontIcon, SourceCodeIcon, FileEmpty01Icon } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../../state/workspaceStore";
 import { RichTextEditor } from "./RichTextEditor";
 import { PlainTextEditor } from "./PlainTextEditor";
@@ -17,7 +19,8 @@ export function EditorPane() {
 
   if (!activeTab) {
     return (
-      <div className="flex h-full flex-1 items-center justify-center text-sm text-neutral-500">
+      <div className="flex h-full flex-1 flex-col items-center justify-center gap-3 text-sm text-neutral-500">
+        <HugeiconsIcon icon={FileEmpty01Icon} size={32} strokeWidth={1.5} className="opacity-40" />
         Open a folder and select a markdown file to start editing.
       </div>
     );
@@ -31,6 +34,7 @@ export function EditorPane() {
           variant={activeTab.mode === "rich" ? "secondary" : "ghost"}
           onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "rich" })}
         >
+          <HugeiconsIcon icon={TextFontIcon} size={15} />
           Rich
         </Button>
         <Button
@@ -38,6 +42,7 @@ export function EditorPane() {
           variant={activeTab.mode === "plain" ? "secondary" : "ghost"}
           onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "plain" })}
         >
+          <HugeiconsIcon icon={SourceCodeIcon} size={15} />
           Plain
         </Button>
       </div>

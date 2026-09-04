@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import { join } from "@tauri-apps/api/path";
 import { Button, Input, Modal } from "@heroui/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { FolderOpenIcon, FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
@@ -64,6 +66,7 @@ export function Sidebar() {
     return (
       <div className="flex h-full w-64 shrink-0 flex-col items-center justify-center gap-3 border-r border-black/10 p-4 dark:border-white/10">
         <Button variant="primary" onPress={handleOpenFolder}>
+          <HugeiconsIcon icon={FolderOpenIcon} size={18} />
           Open Folder
         </Button>
       </div>
@@ -84,7 +87,7 @@ export function Sidebar() {
             aria-label="New file"
             onPress={() => requestCreate("file", state.rootPath!)}
           >
-            +
+            <HugeiconsIcon icon={FileAddIcon} size={16} />
           </Button>
           <Button
             size="sm"
@@ -93,7 +96,7 @@ export function Sidebar() {
             aria-label="New folder"
             onPress={() => requestCreate("folder", state.rootPath!)}
           >
-            /
+            <HugeiconsIcon icon={FolderAddIcon} size={16} />
           </Button>
         </div>
       </div>
@@ -105,6 +108,9 @@ export function Sidebar() {
             <Modal.Dialog>
               <Modal.CloseTrigger />
               <Modal.Header>
+                <Modal.Icon className="bg-accent-soft text-accent">
+                  <HugeiconsIcon icon={createKind === "folder" ? FolderAddIcon : FileAddIcon} size={20} />
+                </Modal.Icon>
                 <Modal.Heading>{createKind === "folder" ? "New Folder" : "New File"}</Modal.Heading>
               </Modal.Header>
               <Modal.Body>

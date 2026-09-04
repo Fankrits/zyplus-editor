@@ -3,6 +3,23 @@ import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 import { dirname, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button, Modal } from "@heroui/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  ArrowDown01Icon,
+  ArrowRight01Icon,
+  Folder01Icon,
+  FolderOpenIcon,
+  FolderAddIcon,
+  File01Icon,
+  FileTextIcon,
+  FileAddIcon,
+  PencilEdit01Icon,
+  Copy01Icon,
+  ExternalLinkIcon,
+  ClipboardIcon,
+  TrashIcon,
+  Alert01Icon,
+} from "@hugeicons/core-free-icons";
 import { useWorkspace, type TreeNode } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
@@ -104,21 +121,36 @@ export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
       const items: ContextMenuItem[] = [];
 
       if (isFile) {
-        items.push({ key: "open", label: "Open", onSelect: () => onOpenFile(node.data.id, node.data.name) });
+        items.push({
+          key: "open",
+          label: "Open",
+          icon: ExternalLinkIcon,
+          onSelect: () => onOpenFile(node.data.id, node.data.name),
+        });
       } else {
         items.push(
-          { key: "new-file", label: "New File", onSelect: () => onRequestCreate("file", node.data.id) },
-          { key: "new-folder", label: "New Folder", onSelect: () => onRequestCreate("folder", node.data.id) },
+          { key: "new-file", label: "New File", icon: FileAddIcon, onSelect: () => onRequestCreate("file", node.data.id) },
+          {
+            key: "new-folder",
+            label: "New Folder",
+            icon: FolderAddIcon,
+            onSelect: () => onRequestCreate("folder", node.data.id),
+          },
         );
       }
-      items.push({ key: "rename", label: "Rename", onSelect: () => node.edit() });
+      items.push({ key: "rename", label: "Rename", icon: PencilEdit01Icon, onSelect: () => node.edit() });
       if (isFile) {
-        items.push({ key: "duplicate", label: "Duplicate", onSelect: () => handleDuplicate(node) });
+        items.push({ key: "duplicate", label: "Duplicate", icon: Copy01Icon, onSelect: () => handleDuplicate(node) });
       }
       items.push(
-        { key: "reveal", label: "Reveal in Finder", onSelect: () => revealItemInDir(node.data.id) },
-        { key: "copy-path", label: "Copy Path", onSelect: () => navigator.clipboard.writeText(node.data.id) },
-        { key: "delete", label: "Delete", danger: true, onSelect: () => setPendingDelete([node]) },
+        { key: "reveal", label: "Reveal in Finder", icon: FolderOpenIcon, onSelect: () => revealItemInDir(node.data.id) },
+        {
+          key: "copy-path",
+          label: "Copy Path",
+          icon: ClipboardIcon,
+          onSelect: () => navigator.clipboard.writeText(node.data.id),
+        },
+        { key: "delete", label: "Delete", icon: TrashIcon, danger: true, onSelect: () => setPendingDelete([node]) },
       );
       return items;
     },
@@ -138,8 +170,13 @@ export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
     (e: ReactMouseEvent) => {
       if (!state.rootPath) return;
       contextMenu.open(e, [
-        { key: "new-file", label: "New File", onSelect: () => onRequestCreate("file", state.rootPath!) },
-        { key: "new-folder", label: "New Folder", onSelect: () => onRequestCreate("folder", state.rootPath!) },
+        { key: "new-file", label: "New File", icon: FileAddIcon, onSelect: () => onRequestCreate("file", state.rootPath!) },
+        {
+          key: "new-folder",
+          label: "New Folder",
+          icon: FolderAddIcon,
+          onSelect: () => onRequestCreate("folder", state.rootPath!),
+        },
       ]);
     },
     [state.rootPath, onRequestCreate, contextMenu],
@@ -175,6 +212,9 @@ export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
             <Modal.Dialog>
               <Modal.CloseTrigger />
               <Modal.Header>
+                <Modal.Icon className="bg-danger-soft text-danger">
+                  <HugeiconsIcon icon={Alert01Icon} size={20} />
+                </Modal.Icon>
                 <Modal.Heading>
                   Delete {pendingDelete && pendingDelete.length > 1 ? `${pendingDelete.length} items` : pendingDelete?.[0]?.data.name}?
                 </Modal.Heading>
@@ -233,9 +273,25 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
         node.isSelected ? "bg-blue-500/20" : "hover:bg-black/5 dark:hover:bg-white/10"
       }`}
     >
-      <span className="w-3 shrink-0 text-center text-[10px] opacity-60">
-        {node.data.isFolder ? (node.isOpen ? "▾" : "▸") : ""}
+      <span className="flex w-3 shrink-0 items-center justify-center opacity-60">
+        {node.data.isFolder && (
+          <HugeiconsIcon icon={node.isOpen ? ArrowDown01Icon : ArrowRight01Icon} size={12} strokeWidth={2} />
+        )}
       </span>
+      <HugeiconsIcon
+        icon={
+          node.data.isFolder
+            ? node.isOpen
+              ? FolderOpenIcon
+              : Folder01Icon
+            : fs.isMarkdownFile(node.data.name)
+              ? FileTextIcon
+              : File01Icon
+        }
+        size={15}
+        strokeWidth={1.75}
+        className="shrink-0 opacity-70"
+      />
       <span className="truncate">{node.data.name}</span>
     </div>
   );

@@ -1,5 +1,14 @@
 import { memo, useCallback, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Button, Modal } from "@heroui/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  Cancel01Icon,
+  FloppyDiskIcon,
+  MultiplicationSignIcon,
+  FolderOpenIcon,
+  ClipboardIcon,
+  Alert01Icon,
+} from "@hugeicons/core-free-icons";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
 import { writeTextFile } from "../../lib/fs";
@@ -33,9 +42,9 @@ const TabItem = memo(function TabItem({ tab, isActive, onSelect, onRequestClose,
           e.stopPropagation();
           onRequestClose(tab.id);
         }}
-        className="rounded px-1 text-xs opacity-0 group-hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10"
+        className="rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10"
       >
-        ✕
+        <HugeiconsIcon icon={Cancel01Icon} size={13} strokeWidth={2} />
       </button>
     </div>
   );
@@ -92,12 +101,22 @@ export function TabBar() {
       const tab = state.tabs.find((t) => t.id === id);
       if (!tab) return;
       const items: ContextMenuItem[] = [
-        { key: "save", label: "Save", disabled: !tab.isDirty, onSelect: () => handleSave(id) },
-        { key: "close", label: "Close", onSelect: () => handleRequestClose(id) },
-        { key: "close-others", label: "Close Others", onSelect: () => handleCloseOthers(id) },
-        { key: "close-all", label: "Close All", onSelect: () => handleCloseAll() },
-        { key: "reveal", label: "Reveal in Finder", onSelect: () => revealItemInDir(tab.filePath) },
-        { key: "copy-path", label: "Copy Path", onSelect: () => navigator.clipboard.writeText(tab.filePath) },
+        { key: "save", label: "Save", icon: FloppyDiskIcon, disabled: !tab.isDirty, onSelect: () => handleSave(id) },
+        { key: "close", label: "Close", icon: Cancel01Icon, onSelect: () => handleRequestClose(id) },
+        {
+          key: "close-others",
+          label: "Close Others",
+          icon: MultiplicationSignIcon,
+          onSelect: () => handleCloseOthers(id),
+        },
+        { key: "close-all", label: "Close All", icon: MultiplicationSignIcon, onSelect: () => handleCloseAll() },
+        { key: "reveal", label: "Reveal in Finder", icon: FolderOpenIcon, onSelect: () => revealItemInDir(tab.filePath) },
+        {
+          key: "copy-path",
+          label: "Copy Path",
+          icon: ClipboardIcon,
+          onSelect: () => navigator.clipboard.writeText(tab.filePath),
+        },
       ];
       contextMenu.open(e, items);
     },
@@ -150,6 +169,9 @@ export function TabBar() {
             <Modal.Dialog>
               <Modal.CloseTrigger />
               <Modal.Header>
+                <Modal.Icon className="bg-warning-soft text-warning">
+                  <HugeiconsIcon icon={Alert01Icon} size={20} />
+                </Modal.Icon>
                 <Modal.Heading>Unsaved changes</Modal.Heading>
               </Modal.Header>
               <Modal.Body>

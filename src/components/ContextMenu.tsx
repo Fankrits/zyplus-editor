@@ -1,9 +1,12 @@
 import { useCallback, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Dropdown } from "@heroui/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import type { IconSvgElement } from "@hugeicons/react";
 
 export interface ContextMenuItem {
   key: string;
   label: string;
+  icon?: IconSvgElement;
   danger?: boolean;
   disabled?: boolean;
   onSelect: () => void;
@@ -51,11 +54,15 @@ export function ContextMenu({ state, onClose }: { state: ContextMenuState | null
             <Dropdown.Item
               key={item.key}
               id={item.key}
+              textValue={item.label}
               isDisabled={item.disabled}
               variant={item.danger ? "danger" : "default"}
               onAction={item.onSelect}
             >
-              {item.label}
+              <span className="flex items-center gap-2">
+                {item.icon && <HugeiconsIcon icon={item.icon} size={16} strokeWidth={1.75} />}
+                {item.label}
+              </span>
             </Dropdown.Item>
           ))}
         </Dropdown.Menu>
