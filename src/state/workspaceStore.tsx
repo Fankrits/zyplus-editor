@@ -169,6 +169,10 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
+  if (import.meta.env.DEV && typeof window !== "undefined") {
+    (window as unknown as { __workspaceDispatch?: typeof dispatch }).__workspaceDispatch = dispatch;
+  }
+
   const refreshTree = useCallback(async () => {
     if (!state.rootPath) return;
     const tree = await readDirRecursive(state.rootPath);
