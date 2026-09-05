@@ -19,7 +19,7 @@ describe("open actions & workspace transitions", () => {
 
   it("opening an external file adds a new tab and focuses it", () => {
     const initial: WorkspaceState = {
-      rootPath: "/demo-workspace",
+      roots: ["/demo-workspace"],
       tree: [],
       tabs: [],
       activeTabId: null,
@@ -44,22 +44,50 @@ describe("open actions & workspace transitions", () => {
     expect(next.activeTabId).toBe("/external/notes.md");
   });
 
-  it("switching workspace with OPEN_ROOT resets or reassigns tree and rootPath", () => {
+  it("ADD_ROOT appends a project without touching the existing one, and ignores duplicates", () => {
     const initial: WorkspaceState = {
-      rootPath: "/old-project",
-      tree: [{ id: "/old-project/a.md", name: "a.md", isFolder: false }],
+      roots: ["/old-project"],
+      tree: [{ id: "/old-project", name: "old-project", isFolder: true, children: [] }],
       tabs: [{ id: "/old-project/a.md", filePath: "/old-project/a.md", title: "a.md", content: "", isDirty: false, mode: "rich" }],
       activeTabId: "/old-project/a.md",
     };
 
     const next = workspaceReducer(initial, {
-      type: "OPEN_ROOT",
+      type: "ADD_ROOT",
       rootPath: "/new-project",
-      tree: [{ id: "/new-project/b.md", name: "b.md", isFolder: false }],
+      node: { id: "/new-project", name: "new-project", isFolder: true, children: [] },
     });
 
-    expect(next.rootPath).toBe("/new-project");
-    expect(next.tree).toHaveLength(1);
-    expect(next.tree[0].id).toBe("/new-project/b.md");
+    expect(next.roots).toEqual(["/old-project", "/new-project"]);
+    expect(next.tree).toHaveLength(2);
+    expect(next.tabs).toHaveLength(1);
+
+    const again = workspaceReducer(next, {
+      type: "ADD_ROOT",
+      rootPath: "/new-project",
+      node: { id: "/new-project", name: "new-project", isFolder: true, children: [] },
+    });
+    expect(again).toBe(next);
+  });
+
+  it("CLOSE_ROOT drops the project, its tree node and its open tabs", () => {
+    const initial: WorkspaceState = {
+      roots: ["/a", "/b"],
+      tree: [
+        { id: "/a", name: "a", isFolder: true, children: [] },
+        { id: "/b", name: "b", isFolder: true, children: [] },
+      ],
+      tabs: [
+        { id: "/a/one.md", filePath: "/a/one.md", title: "one.md", content: "", isDirty: false, mode: "rich" },
+        { id: "/b/two.md", filePath: "/b/two.md", title: "two.md", content: "", isDirty: false, mode: "rich" },
+      ],
+      activeTabId: "/a/one.md",
+    };
+
+    const next = workspaceReducer(initial, { type: "CLOSE_ROOT", rootPath: "/a" });
+    expect(next.roots).toEqual(["/b"]);
+    expect(next.tree.map((n) => n.id)).toEqual(["/b"]);
+    expect(next.tabs.map((t) => t.id)).toEqual(["/b/two.md"]);
+    expect(next.activeTabId).toBe("/b/two.md");
   });
 });

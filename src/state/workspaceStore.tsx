@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { readDirRecursive } from "../lib/fs";
+import { readProjectNode } from "../lib/fs";
 import { loadSession, saveSession } from "../lib/sessionStorage";
 import {
   workspaceReducer,
@@ -29,6 +29,11 @@ interface WorkspaceContextValue {
   dispatch: React.Dispatch<Action>;
   activeTab: TabState | null;
   refreshTree: () => Promise<void>;
+  /** False until the stored session has been read back. */
+  isHydrated: boolean;
+  /** Folder created on first run; where the header's "new file" lands. */
+  defaultFolder: string | null;
+  setDefaultFolder: (path: string) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -36,19 +41,21 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(workspaceReducer, initialState);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [defaultFolder, setDefaultFolder] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     async function hydrate() {
       const stored = loadSession();
-      if (stored?.rootPath) {
+      if (stored?.defaultFolder) setDefaultFolder(stored.defaultFolder);
+      if (stored && stored.roots.length > 0) {
         try {
           const restored = await restoreWorkspaceFromSession(stored);
           if (!isMounted) return;
           if (restored) {
             dispatch({
               type: "RESTORE_WORKSPACE",
-              rootPath: restored.rootPath,
+              roots: restored.roots,
               tree: restored.tree,
               tabs: restored.tabs,
               activeTabId: restored.activeTabId,
@@ -59,7 +66,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           if (!isMounted) return;
           dispatch({
             type: "RESTORE_WORKSPACE",
-            rootPath: null,
+            roots: [],
             tree: [],
             tabs: [],
             activeTabId: null,
@@ -83,13 +90,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!isHydrated) return;
     const current = loadSession();
     saveSession({
-      version: 1,
-      rootPath: state.rootPath,
+      version: 2,
+      roots: state.roots,
+      defaultFolder,
       tabs: state.tabs.map((t) => ({ filePath: t.filePath, mode: t.mode })),
       activeFilePath: state.activeTabId,
       isSidebarCollapsed: current?.isSidebarCollapsed ?? false,
     });
-  }, [isHydrated, state.rootPath, state.tabs, state.activeTabId]);
+  }, [isHydrated, state.roots, state.tabs, state.activeTabId, defaultFolder]);
 
   useEffect(() => {
     if (import.meta.env.DEV && typeof window !== "undefined") {
@@ -99,10 +107,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [dispatch, state]);
 
   const refreshTree = useCallback(async () => {
-    if (!state.rootPath) return;
-    const tree = await readDirRecursive(state.rootPath);
+    if (state.roots.length === 0) return;
+    const tree = await Promise.all(state.roots.map(readProjectNode));
     dispatch({ type: "SET_TREE", tree });
-  }, [state.rootPath]);
+  }, [state.roots]);
 
   const activeTab = useMemo(
     () => state.tabs.find((t) => t.id === state.activeTabId) ?? null,
@@ -110,8 +118,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ state, dispatch, activeTab, refreshTree }),
-    [state, activeTab, refreshTree],
+    () => ({ state, dispatch, activeTab, refreshTree, isHydrated, defaultFolder, setDefaultFolder }),
+    [state, activeTab, refreshTree, isHydrated, defaultFolder],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

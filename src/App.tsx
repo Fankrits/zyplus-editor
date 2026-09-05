@@ -10,12 +10,14 @@ import { loadSession, saveSession } from "./lib/sessionStorage";
 import { Sidebar, SidebarContent } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
+import { Welcome } from "./components/Welcome";
 import { useIsDesktop } from "./lib/useMediaQuery";
 
 type CreateKind = "file" | "folder" | null;
 
 function AppShell() {
-  const { state, activeTab, dispatch, refreshTree } = useWorkspace();
+  const { state, activeTab, dispatch, refreshTree, isHydrated, defaultFolder, setDefaultFolder } =
+    useWorkspace();
   const isDesktop = useIsDesktop();
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [createKind, setCreateKind] = useState<CreateKind>(null);
@@ -33,8 +35,9 @@ function AppShell() {
 
   useEffect(() => {
     const current = loadSession() ?? {
-      version: 1,
-      rootPath: null,
+      version: 2 as const,
+      roots: [],
+      defaultFolder: null,
       tabs: [],
       activeFilePath: null,
       isSidebarCollapsed: false,
@@ -84,8 +87,17 @@ function AppShell() {
     setNewName("");
   };
 
+  const handleFirstFolder = useCallback(
+    async (folder: string) => {
+      setDefaultFolder(folder);
+      const node = await fs.readProjectNode(folder);
+      dispatch({ type: "ADD_ROOT", rootPath: folder, node });
+    },
+    [dispatch, setDefaultFolder],
+  );
+
   const handleCreate = async () => {
-    const targetDir = createTargetDir ?? state.rootPath;
+    const targetDir = createTargetDir ?? defaultFolder ?? state.roots[0];
     if (!targetDir || !newName.trim() || !createKind) return;
     const trimmed = newName.trim();
     const name = createKind === "file" && !/\.[^./\\]+$/.test(trimmed) ? `${trimmed}.md` : trimmed;
@@ -103,6 +115,12 @@ function AppShell() {
     }
     closeCreateModal();
   };
+
+  if (!isHydrated) return <div className="h-screen w-screen bg-white dark:bg-neutral-900" />;
+
+  if (!defaultFolder && state.roots.length === 0) {
+    return <Welcome onReady={handleFirstFolder} />;
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white text-black dark:bg-neutral-900 dark:text-white">

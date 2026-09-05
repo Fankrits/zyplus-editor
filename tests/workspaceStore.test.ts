@@ -11,7 +11,7 @@ import type { PersistedWorkspaceSession } from "../src/lib/sessionStorage";
 
 describe("workspaceReducer", () => {
   const initial: WorkspaceState = {
-    rootPath: null,
+    roots: [],
     tree: [],
     tabs: [],
     activeTabId: null,
@@ -39,21 +39,21 @@ describe("workspaceReducer", () => {
 
     const next = workspaceReducer(initial, {
       type: "RESTORE_WORKSPACE",
-      rootPath: "/project",
+      roots: ["/project"],
       tree: [{ id: "/project/doc1.md", name: "doc1.md", isFolder: false }],
       tabs,
       activeTabId: "/project/doc2.md",
     });
 
-    expect(next.rootPath).toBe("/project");
+    expect(next.roots).toEqual(["/project"]);
     expect(next.tree.length).toBe(1);
     expect(next.tabs.length).toBe(2);
     expect(next.activeTabId).toBe("/project/doc2.md");
   });
 
-  it("handles RESTORE_WORKSPACE with null rootPath and empty state", () => {
+  it("handles RESTORE_WORKSPACE with no roots and empty state", () => {
     const populated: WorkspaceState = {
-      rootPath: "/previous",
+      roots: ["/previous"],
       tree: [{ id: "/previous/doc.md", name: "doc.md", isFolder: false }],
       tabs: [
         {
@@ -70,13 +70,13 @@ describe("workspaceReducer", () => {
 
     const next = workspaceReducer(populated, {
       type: "RESTORE_WORKSPACE",
-      rootPath: null,
+      roots: [],
       tree: [],
       tabs: [],
       activeTabId: null,
     });
 
-    expect(next.rootPath).toBeNull();
+    expect(next.roots).toEqual([]);
     expect(next.tree).toEqual([]);
     expect(next.tabs).toEqual([]);
     expect(next.activeTabId).toBeNull();
@@ -92,17 +92,23 @@ describe("basenameOf", () => {
 });
 
 describe("restoreWorkspaceFromSession", () => {
-  const fakeTree: TreeNode[] = [
-    { id: "/test/doc1.md", name: "doc1.md", isFolder: false },
-    { id: "/test/doc2.md", name: "doc2.md", isFolder: false },
-  ];
+  const projectNode: TreeNode = {
+    id: "/project",
+    name: "project",
+    isFolder: true,
+    children: [
+      { id: "/project/doc1.md", name: "doc1.md", isFolder: false },
+      { id: "/project/doc2.md", name: "doc2.md", isFolder: false },
+    ],
+  };
 
-  it("returns null when session is null or rootPath is null", async () => {
+  it("returns null when session is null or has no roots", async () => {
     expect(await restoreWorkspaceFromSession(null)).toBeNull();
     expect(
       await restoreWorkspaceFromSession({
-        version: 1,
-        rootPath: null,
+        version: 2,
+        roots: [],
+        defaultFolder: null,
         tabs: [],
         activeFilePath: null,
         isSidebarCollapsed: false,
@@ -112,9 +118,9 @@ describe("restoreWorkspaceFromSession", () => {
 
   it("restores tree and tabs when all files exist", async () => {
     const mockFs = {
-      readDirRecursive: async (path: string) => {
+      readProjectNode: async (path: string) => {
         expect(path).toBe("/project");
-        return fakeTree;
+        return projectNode;
       },
       readTextFile: async (path: string) => {
         if (path === "/project/doc1.md") return "# Doc 1";
@@ -124,8 +130,9 @@ describe("restoreWorkspaceFromSession", () => {
     };
 
     const session: PersistedWorkspaceSession = {
-      version: 1,
-      rootPath: "/project",
+      version: 2,
+      roots: ["/project"],
+      defaultFolder: null,
       tabs: [
         { filePath: "/project/doc1.md", mode: "rich" },
         { filePath: "/project/doc2.md", mode: "plain" },
@@ -136,8 +143,8 @@ describe("restoreWorkspaceFromSession", () => {
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);
     expect(restored).not.toBeNull();
-    expect(restored?.rootPath).toBe("/project");
-    expect(restored?.tree).toEqual(fakeTree);
+    expect(restored?.roots).toEqual(["/project"]);
+    expect(restored?.tree).toEqual([projectNode]);
     expect(restored?.tabs.length).toBe(2);
     expect(restored?.tabs[0]).toEqual({
       id: "/project/doc1.md",
@@ -160,7 +167,7 @@ describe("restoreWorkspaceFromSession", () => {
 
   it("gracefully skips missing files and falls back activeTabId", async () => {
     const mockFs = {
-      readDirRecursive: async () => fakeTree,
+      readProjectNode: async () => projectNode,
       readTextFile: async (path: string) => {
         if (path === "/project/doc1.md") return "# Doc 1";
         throw new Error("File deleted");
@@ -168,8 +175,9 @@ describe("restoreWorkspaceFromSession", () => {
     };
 
     const session: PersistedWorkspaceSession = {
-      version: 1,
-      rootPath: "/project",
+      version: 2,
+      roots: ["/project"],
+      defaultFolder: null,
       tabs: [
         { filePath: "/project/doc1.md", mode: "rich" },
         { filePath: "/project/deleted.md", mode: "plain" },
@@ -186,47 +194,45 @@ describe("restoreWorkspaceFromSession", () => {
     expect(restored?.activeTabId).toBe("/project/doc1.md");
   });
 
-  it("resets to empty state when rootPath folder cannot be read", async () => {
+  it("drops projects whose folder cannot be read", async () => {
     const mockFs = {
-      readDirRecursive: async () => {
+      readProjectNode: async () => {
         throw new Error("Folder removed / inaccessible");
       },
       readTextFile: async () => "content",
     };
 
     const session: PersistedWorkspaceSession = {
-      version: 1,
-      rootPath: "/removed-folder",
+      version: 2,
+      roots: ["/removed-folder"],
+      defaultFolder: null,
       tabs: [{ filePath: "/removed-folder/doc1.md", mode: "rich" }],
       activeFilePath: "/removed-folder/doc1.md",
       isSidebarCollapsed: false,
     };
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);
-    expect(restored).toEqual({
-      rootPath: null,
-      tree: [],
-      tabs: [],
-      activeTabId: null,
-    });
+    expect(restored?.roots).toEqual([]);
+    expect(restored?.tree).toEqual([]);
   });
 
   it("handles empty tabs list with null activeTabId", async () => {
     const mockFs = {
-      readDirRecursive: async () => fakeTree,
+      readProjectNode: async () => projectNode,
       readTextFile: async () => "content",
     };
 
     const session: PersistedWorkspaceSession = {
-      version: 1,
-      rootPath: "/project",
+      version: 2,
+      roots: ["/project"],
+      defaultFolder: null,
       tabs: [],
       activeFilePath: null,
       isSidebarCollapsed: false,
     };
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);
-    expect(restored?.rootPath).toBe("/project");
+    expect(restored?.roots).toEqual(["/project"]);
     expect(restored?.tabs).toEqual([]);
     expect(restored?.activeTabId).toBeNull();
   });

@@ -111,7 +111,9 @@ export function TabBar({
   isDesktop = true,
   isMobileDrawerOpen = false,
 }: TabBarProps) {
-  const { state, activeTab, dispatch } = useWorkspace();
+  const { state, activeTab, dispatch, defaultFolder } = useWorkspace();
+  const newFileDir =
+    defaultFolder && state.roots.includes(defaultFolder) ? defaultFolder : state.roots[0];
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -278,8 +280,8 @@ export function TabBar({
           <button
             type="button"
             aria-label="New file"
-            disabled={!state.rootPath}
-            onClick={() => state.rootPath && onRequestCreate("file", state.rootPath)}
+            disabled={newFileDir === undefined}
+            onClick={() => newFileDir && onRequestCreate("file", newFileDir)}
             className="flex size-8 shrink-0 items-center justify-center rounded-3xl text-muted no-highlight outline-none hover:opacity-70 focus-visible:status-focused disabled:status-disabled"
           >
             <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2} />

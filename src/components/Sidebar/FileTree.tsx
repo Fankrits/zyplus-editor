@@ -18,6 +18,7 @@ import {
   ExternalLinkIcon,
   ClipboardIcon,
   TrashIcon,
+  Cancel01Icon,
   Alert01Icon,
 } from "@hugeicons/core-free-icons";
 import { useWorkspace, type TreeNode } from "../../state/workspaceStore";
@@ -38,6 +39,7 @@ function basename(path: string): string {
 
 export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
   const { state, dispatch, refreshTree } = useWorkspace();
+  const isRoot = useCallback((id: string) => state.roots.includes(id), [state.roots]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [pendingDelete, setPendingDelete] = useState<NodeApi<TreeNode>[] | null>(null);
@@ -79,8 +81,9 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
   const handleMove = useCallback(
     async ({ dragIds, parentId }: { dragIds: string[]; parentId: string | null }) => {
-      const destDir = parentId ?? state.rootPath;
-      if (!destDir) return;
+      // parentId === null means the workspace level, which holds projects, not files.
+      if (!parentId) return;
+      const destDir = parentId;
       for (const id of dragIds) {
         const newPath = await join(destDir, basename(id));
         if (newPath === id) continue;
@@ -89,7 +92,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
       }
       await refreshTree();
     },
-    [dispatch, refreshTree, state.rootPath],
+    [dispatch, refreshTree],
   );
 
   // Keyboard-triggered delete (react-arborist's own Delete/Backspace handling) and the
@@ -120,6 +123,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   const buildNodeMenuItems = useCallback(
     (node: NodeApi<TreeNode>): ContextMenuItem[] => {
       const isFile = !node.data.isFolder;
+      const root = isRoot(node.data.id);
       const items: ContextMenuItem[] = [];
 
       if (isFile) {
@@ -140,7 +144,9 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
           },
         );
       }
-      items.push({ key: "rename", label: "Rename", icon: PencilEdit01Icon, onSelect: () => node.edit() });
+      if (!root) {
+        items.push({ key: "rename", label: "Rename", icon: PencilEdit01Icon, onSelect: () => node.edit() });
+      }
       if (isFile) {
         items.push({ key: "duplicate", label: "Duplicate", icon: Copy01Icon, onSelect: () => handleDuplicate(node) });
       }
@@ -152,11 +158,18 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
           icon: ClipboardIcon,
           onSelect: () => navigator.clipboard.writeText(node.data.id),
         },
-        { key: "delete", label: "Delete", icon: TrashIcon, danger: true, onSelect: () => setPendingDelete([node]) },
+        root
+          ? {
+              key: "close-project",
+              label: "Close Project",
+              icon: Cancel01Icon,
+              onSelect: () => dispatch({ type: "CLOSE_ROOT", rootPath: node.data.id }),
+            }
+          : { key: "delete", label: "Delete", icon: TrashIcon, danger: true, onSelect: () => setPendingDelete([node]) },
       );
       return items;
     },
-    [onOpenFile, onRequestCreate, handleDuplicate],
+    [onOpenFile, onRequestCreate, handleDuplicate, isRoot, dispatch],
   );
 
   const handleNodeContextMenu = useCallback(
@@ -170,16 +183,18 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   // Right-click on empty space below the rows (not a row itself, since rows stop propagation).
   const handleTreeContextMenu = useCallback(
     (e: ReactMouseEvent) => {
-      if (!state.rootPath) return;
-      const items: ContextMenuItem[] = [
-        { key: "new-file", label: "New File", icon: FileAddIcon, onSelect: () => onRequestCreate("file", state.rootPath!) },
-        {
-          key: "new-folder",
-          label: "New Folder",
-          icon: FolderAddIcon,
-          onSelect: () => onRequestCreate("folder", state.rootPath!),
-        },
-      ];
+      const primaryDir = state.roots[0];
+      const items: ContextMenuItem[] = primaryDir
+        ? [
+            { key: "new-file", label: "New File", icon: FileAddIcon, onSelect: () => onRequestCreate("file", primaryDir) },
+            {
+              key: "new-folder",
+              label: "New Folder",
+              icon: FolderAddIcon,
+              onSelect: () => onRequestCreate("folder", primaryDir),
+            },
+          ]
+        : [];
       if (onOpenFilePicker) {
         items.push({
           key: "open-file",
@@ -191,19 +206,21 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
       if (onOpenFolder) {
         items.push({
           key: "open-folder",
-          label: "Open Folder...",
+          label: "Add Project Folder...",
           icon: FolderOpenIcon,
           onSelect: onOpenFolder,
         });
       }
       contextMenu.open(e, items);
     },
-    [state.rootPath, onRequestCreate, contextMenu, onOpenFilePicker, onOpenFolder],
+    [state.roots, onRequestCreate, contextMenu, onOpenFilePicker, onOpenFolder],
   );
 
   const renderNode = useCallback(
-    (props: NodeRendererProps<TreeNode>) => <Node {...props} onNodeContextMenu={handleNodeContextMenu} />,
-    [handleNodeContextMenu],
+    (props: NodeRendererProps<TreeNode>) => (
+      <Node {...props} onNodeContextMenu={handleNodeContextMenu} isRoot={isRoot(props.node.data.id)} />
+    ),
+    [handleNodeContextMenu, isRoot],
   );
 
   return (
@@ -219,6 +236,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
         onMove={handleMove}
         onDelete={handleDeleteRequest}
         onContextMenu={handleTreeContextMenu}
+        disableDrag={(data) => isRoot(data.id)}
       >
         {renderNode}
       </Tree>
@@ -259,9 +277,10 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
 interface NodeProps extends NodeRendererProps<TreeNode> {
   onNodeContextMenu: (e: ReactMouseEvent, node: NodeApi<TreeNode>) => void;
+  isRoot: boolean;
 }
 
-function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
+function Node({ node, style, dragHandle, onNodeContextMenu, isRoot }: NodeProps) {
   // `style.paddingLeft` already equals node.level * the Tree's `indent` prop (react-arborist
   // computes this for us) — just add a small constant base inset on top of it.
   const rowStyle = { ...style, paddingLeft: (style.paddingLeft as number | undefined ?? 0) + 8 };
@@ -314,7 +333,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
     <div
       style={rowStyle}
       ref={dragHandle}
-      onDoubleClick={() => node.edit()}
+      onDoubleClick={() => (isRoot ? node.toggle() : node.edit())}
       onContextMenu={(e) => onNodeContextMenu(e, node)}
       className={`mx-1 my-0.5 flex h-[calc(100%-4px)] cursor-default items-center gap-2 rounded-2xl pr-2 text-sm select-none ${
         node.isSelected ? "bg-accent-soft text-accent-soft-foreground" : "hover:bg-default"
@@ -339,7 +358,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu }: NodeProps) {
         strokeWidth={1.75}
         className="shrink-0 opacity-70"
       />
-      <span className="truncate">{node.data.name}</span>
+      <span className={`truncate ${isRoot ? "font-semibold" : ""}`}>{node.data.name}</span>
     </div>
   );
 }

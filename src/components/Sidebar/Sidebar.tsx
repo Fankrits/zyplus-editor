@@ -14,13 +14,13 @@ export interface SidebarContentProps {
 }
 
 export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: SidebarContentProps) {
-  const { state, dispatch } = useWorkspace();
+  const { state, dispatch, defaultFolder } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await fs.openFolderDialog();
     if (!picked) return;
-    const tree = await fs.readDirRecursive(picked);
-    dispatch({ type: "OPEN_ROOT", rootPath: picked, tree });
+    const node = await fs.readProjectNode(picked);
+    dispatch({ type: "ADD_ROOT", rootPath: picked, node });
     onOpenFolder?.();
   }, [dispatch, onOpenFolder]);
 
@@ -49,7 +49,11 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
     handleOpenFile(picked, name);
   }, [handleOpenFile]);
 
-  if (!state.rootPath) {
+  // Where header-level "new file/folder" land when several projects are open.
+  const primaryDir =
+    defaultFolder && state.roots.includes(defaultFolder) ? defaultFolder : state.roots[0];
+
+  if (state.roots.length === 0) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-4">
         <Logo size={40} className="mb-1 text-black dark:text-white" />
@@ -72,7 +76,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
         <span className="flex min-w-0 items-center gap-2">
           <Logo size={16} className="shrink-0 text-black dark:text-white" />
           <span className="truncate text-xs font-medium uppercase tracking-wide text-neutral-500">
-            {state.rootPath.split(/[\\/]/).pop()}
+            Projects
           </span>
         </span>
         <div className="flex shrink-0 gap-1">
@@ -81,7 +85,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
             isIconOnly
             variant="ghost"
             aria-label="New file"
-            onPress={() => onRequestCreate("file", state.rootPath!)}
+            onPress={() => onRequestCreate("file", primaryDir)}
           >
             <HugeiconsIcon icon={FileAddIcon} size={16} />
           </Button>
@@ -90,7 +94,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
             isIconOnly
             variant="ghost"
             aria-label="New folder"
-            onPress={() => onRequestCreate("folder", state.rootPath!)}
+            onPress={() => onRequestCreate("folder", primaryDir)}
           >
             <HugeiconsIcon icon={FolderAddIcon} size={16} />
           </Button>
@@ -107,7 +111,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
             size="sm"
             isIconOnly
             variant="ghost"
-            aria-label="Open folder"
+            aria-label="Add project folder"
             onPress={handleOpenFolder}
           >
             <HugeiconsIcon icon={FolderOpenIcon} size={16} />

@@ -8,7 +8,12 @@ import {
   rename as renameRaw,
   exists,
 } from "@tauri-apps/plugin-fs";
-import { join as tauriJoin, dirname as tauriDirname, basename as tauriBasename } from "@tauri-apps/api/path";
+import {
+  join as tauriJoin,
+  dirname as tauriDirname,
+  basename as tauriBasename,
+  documentDir,
+} from "@tauri-apps/api/path";
 import { isTauri } from "@tauri-apps/api/core";
 import type { TreeNode } from "../state/workspaceReducer";
 
@@ -110,6 +115,30 @@ export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
     return a.name.localeCompare(b.name);
   });
   return nodes;
+}
+
+/** Reads a folder as a project: one collapsible top-level node holding the tree. */
+export async function readProjectNode(dirPath: string): Promise<TreeNode> {
+  const children = await readDirRecursive(dirPath);
+  return { id: dirPath, name: mockBasename(dirPath), isFolder: true, children };
+}
+
+export const DEFAULT_FOLDER_NAME = "Zyplus";
+
+/** Suggested parent for the default folder (Documents on desktop). */
+export async function defaultFolderParent(): Promise<string> {
+  if (!isTauri()) return "/demo";
+  return documentDir();
+}
+
+/** Creates (or reuses) `<parent>/Zyplus` and returns its path. */
+export async function createDefaultFolder(parent: string): Promise<string> {
+  const path = isTauri()
+    ? await tauriJoin(parent, DEFAULT_FOLDER_NAME)
+    : "/demo-workspace";
+  if (!isTauri()) return path;
+  if (!(await exists(path))) await mkdir(path, { recursive: true });
+  return path;
 }
 
 export async function readTextFile(path: string): Promise<string> {

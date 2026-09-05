@@ -1,5 +1,5 @@
 export const SESSION_STORAGE_KEY = "zyplus:workspace-session";
-export const CURRENT_SESSION_VERSION = 1;
+export const CURRENT_SESSION_VERSION = 2;
 
 export interface PersistedTab {
   filePath: string;
@@ -7,8 +7,11 @@ export interface PersistedTab {
 }
 
 export interface PersistedWorkspaceSession {
-  version: 1;
-  rootPath: string | null;
+  version: 2;
+  /** Open project folders, in sidebar order. */
+  roots: string[];
+  /** Folder the app creates on first run and uses as the default place for new files. */
+  defaultFolder: string | null;
   tabs: PersistedTab[];
   activeFilePath: string | null;
   isSidebarCollapsed: boolean;
@@ -20,8 +23,19 @@ export function loadSession(): PersistedWorkspaceSession | null {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || parsed.version !== CURRENT_SESSION_VERSION) return null;
-    if (typeof parsed.rootPath !== "string" && parsed.rootPath !== null) return null;
+    if (!parsed) return null;
+
+    // v1 stored a single `rootPath`; carry it over as the first project.
+    let roots: unknown;
+    if (parsed.version === 1) {
+      if (typeof parsed.rootPath !== "string" && parsed.rootPath !== null) return null;
+      roots = parsed.rootPath ? [parsed.rootPath] : [];
+    } else if (parsed.version === CURRENT_SESSION_VERSION) {
+      roots = parsed.roots;
+    } else {
+      return null;
+    }
+    if (!Array.isArray(roots) || roots.some((r) => typeof r !== "string")) return null;
     if (!Array.isArray(parsed.tabs)) return null;
 
     const validatedTabs: PersistedTab[] = [];
@@ -37,7 +51,8 @@ export function loadSession(): PersistedWorkspaceSession | null {
 
     return {
       version: CURRENT_SESSION_VERSION,
-      rootPath: parsed.rootPath,
+      roots: roots as string[],
+      defaultFolder: typeof parsed.defaultFolder === "string" ? parsed.defaultFolder : null,
       tabs: validatedTabs,
       activeFilePath: typeof parsed.activeFilePath === "string" ? parsed.activeFilePath : null,
       isSidebarCollapsed: Boolean(parsed.isSidebarCollapsed),

@@ -1,4 +1,4 @@
-import { readDirRecursive, readTextFile } from "../lib/fs";
+import { readProjectNode, readTextFile } from "../lib/fs";
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
 
 export type TabMode = "rich" | "plain";
@@ -20,14 +20,16 @@ export interface TabState {
 }
 
 export interface WorkspaceState {
-  rootPath: string | null;
+  /** Open project folders, in sidebar order. Each is a top-level node in `tree`. */
+  roots: string[];
   tree: TreeNode[];
   tabs: TabState[];
   activeTabId: string | null;
 }
 
 export type Action =
-  | { type: "OPEN_ROOT"; rootPath: string; tree: TreeNode[] }
+  | { type: "ADD_ROOT"; rootPath: string; node: TreeNode }
+  | { type: "CLOSE_ROOT"; rootPath: string }
   | { type: "SET_TREE"; tree: TreeNode[] }
   | { type: "OPEN_TAB"; tab: TabState }
   | { type: "FOCUS_TAB"; id: string }
@@ -40,14 +42,14 @@ export type Action =
   | { type: "CLOSE_TABS_UNDER"; prefix: string }
   | {
       type: "RESTORE_WORKSPACE";
-      rootPath: string | null;
+      roots: string[];
       tree: TreeNode[];
       tabs: TabState[];
       activeTabId: string | null;
     };
 
 export const initialState: WorkspaceState = {
-  rootPath: null,
+  roots: [],
   tree: [],
   tabs: [],
   activeTabId: null,
@@ -56,6 +58,10 @@ export const initialState: WorkspaceState = {
 export function basenameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] ?? path;
+}
+
+export function isUnder(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "\\");
 }
 
 export function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: string | null) {
@@ -68,18 +74,31 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
   switch (action.type) {
     case "RESTORE_WORKSPACE":
       return {
-        rootPath: action.rootPath,
+        roots: action.roots,
         tree: action.tree,
         tabs: action.tabs,
         activeTabId: action.activeTabId,
       };
-    case "OPEN_ROOT":
+    case "ADD_ROOT": {
+      if (state.roots.includes(action.rootPath)) return state;
       return {
-        rootPath: action.rootPath,
-        tree: action.tree,
-        tabs: [],
-        activeTabId: null,
+        ...state,
+        roots: [...state.roots, action.rootPath],
+        tree: [...state.tree, action.node],
       };
+    }
+    case "CLOSE_ROOT": {
+      const { rootPath } = action;
+      const keep = state.tabs.filter((t) => !isUnder(t.filePath, rootPath));
+      return {
+        roots: state.roots.filter((r) => r !== rootPath),
+        tree: state.tree.filter((n) => n.id !== rootPath),
+        tabs: keep,
+        activeTabId: keep.some((t) => t.id === state.activeTabId)
+          ? state.activeTabId
+          : (keep[keep.length - 1]?.id ?? null),
+      };
+    }
     case "SET_TREE":
       return { ...state, tree: action.tree };
     case "OPEN_TAB":
@@ -146,12 +165,7 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
     }
     case "CLOSE_TABS_UNDER": {
       const { prefix } = action;
-      const keep = state.tabs.filter(
-        (t) =>
-          t.filePath !== prefix &&
-          !t.filePath.startsWith(prefix + "/") &&
-          !t.filePath.startsWith(prefix + "\\"),
-      );
+      const keep = state.tabs.filter((t) => !isUnder(t.filePath, prefix));
       const removedActive = !keep.some((t) => t.id === state.activeTabId);
       return {
         ...state,
@@ -167,22 +181,21 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
 export async function restoreWorkspaceFromSession(
   stored: PersistedWorkspaceSession | null,
   fsApi: {
-    readDirRecursive: (dir: string) => Promise<TreeNode[]>;
+    readProjectNode: (dir: string) => Promise<TreeNode>;
     readTextFile: (path: string) => Promise<string>;
-  } = { readDirRecursive, readTextFile },
+  } = { readProjectNode, readTextFile },
 ): Promise<WorkspaceState | null> {
-  if (!stored || !stored.rootPath) return null;
+  if (!stored || stored.roots.length === 0) return null;
 
-  let tree: TreeNode[];
-  try {
-    tree = await fsApi.readDirRecursive(stored.rootPath);
-  } catch {
-    return {
-      rootPath: null,
-      tree: [],
-      tabs: [],
-      activeTabId: null,
-    };
+  const roots: string[] = [];
+  const tree: TreeNode[] = [];
+  for (const root of stored.roots) {
+    try {
+      tree.push(await fsApi.readProjectNode(root));
+      roots.push(root);
+    } catch {
+      // Project folder is gone or unreadable — drop it silently.
+    }
   }
 
   const tabs: TabState[] = [];
@@ -209,10 +222,5 @@ export async function restoreWorkspaceFromSession(
     activeTabId = tabs[tabs.length - 1].id;
   }
 
-  return {
-    rootPath: stored.rootPath,
-    tree,
-    tabs,
-    activeTabId,
-  };
+  return { roots, tree, tabs, activeTabId };
 }
