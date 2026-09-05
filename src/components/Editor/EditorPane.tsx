@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useWorkspace } from "../../state/workspaceStore";
 import { RichTextEditor } from "./RichTextEditor";
 import { PlainTextEditor } from "./PlainTextEditor";
-import { Logo } from "../Logo";
+import { Wordmark } from "../Logo";
 
 export function EditorPane() {
   const { activeTab, dispatch } = useWorkspace();
@@ -18,8 +18,7 @@ export function EditorPane() {
   if (!activeTab) {
     return (
       <div className="flex h-full flex-1 flex-col items-center justify-center gap-3 text-sm text-neutral-500">
-        <Logo size={56} className="text-black opacity-15 dark:text-white" />
-        <span className="text-base font-semibold tracking-tight text-black dark:text-white">Zyplus</span>
+        <Wordmark size={56} className="opacity-40" />
         Open a folder and select a markdown file to start editing.
       </div>
     );

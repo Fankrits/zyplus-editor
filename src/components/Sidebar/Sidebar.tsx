@@ -5,7 +5,7 @@ import { FolderOpenIcon, FileAddIcon, FolderAddIcon, File01Icon } from "@hugeico
 import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
-import { Logo } from "../Logo";
+import { Logo, Wordmark } from "../Logo";
 
 export interface SidebarContentProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
@@ -59,8 +59,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
   if (state.roots.length === 0) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-4">
-        <Logo size={40} className="mb-1 text-black dark:text-white" />
-        <span className="mb-2 text-sm font-semibold tracking-tight">Zyplus</span>
+        <Wordmark size={40} className="mb-2" />
         <Button variant="primary" onPress={handleOpenFolder}>
           <HugeiconsIcon icon={FolderOpenIcon} size={18} />
           Open Folder

@@ -15,3 +15,13 @@ export function Logo({ size = 24, className = "" }: { size?: number; className?:
     </svg>
   );
 }
+
+/** Logo + "Zyplus" lockup used by the welcome and empty states. */
+export function Wordmark({ size = 24, className = "" }: { size?: number; className?: string }) {
+  return (
+    <span className={`flex flex-col items-center gap-3 text-black dark:text-white ${className}`}>
+      <Logo size={size} />
+      <span className="text-base font-semibold tracking-tight">Zyplus</span>
+    </span>
+  );
+}
