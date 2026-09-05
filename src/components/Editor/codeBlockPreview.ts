@@ -10,8 +10,9 @@ if (typeof CSSRuleList !== "undefined" && !CSSRuleList.prototype[Symbol.iterator
 }
 
 // Fallback for headless or mock environments where SVG getBBox is not implemented
-if (typeof SVGElement !== "undefined" && !SVGElement.prototype.getBBox) {
-  SVGElement.prototype.getBBox = function () {
+const svgProto = typeof SVGElement !== "undefined" ? (SVGElement.prototype as unknown as { getBBox?: () => { x: number; y: number; width: number; height: number } }) : null;
+if (svgProto && !svgProto.getBBox) {
+  svgProto.getBBox = function () {
     return { x: 0, y: 0, width: 100, height: 40 };
   };
 }
