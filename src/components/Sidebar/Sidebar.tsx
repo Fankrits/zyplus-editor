@@ -14,7 +14,7 @@ export interface SidebarContentProps {
 }
 
 export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: SidebarContentProps) {
-  const { state, dispatch, defaultFolder } = useWorkspace();
+  const { state, dispatch, activeTab, defaultFolder } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await fs.openFolderDialog();
@@ -49,9 +49,12 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
     handleOpenFile(picked, name);
   }, [handleOpenFile]);
 
-  // Where header-level "new file/folder" land when several projects are open.
+  // Header-level "new file/folder" land next to the file you're editing; falling back to
+  // the default project folder, then the first open one.
+  const activeDir = activeTab?.filePath?.replace(/[\\/][^\\/]*$/, "");
   const primaryDir =
-    defaultFolder && state.roots.includes(defaultFolder) ? defaultFolder : state.roots[0];
+    activeDir ||
+    (defaultFolder && state.roots.includes(defaultFolder) ? defaultFolder : state.roots[0]);
 
   if (state.roots.length === 0) {
     return (
