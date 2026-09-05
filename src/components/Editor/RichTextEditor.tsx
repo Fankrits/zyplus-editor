@@ -3,6 +3,7 @@ import { Crepe } from "@milkdown/crepe";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/classic.css";
 import "./milkdown-heroui-theme.css";
+import { supportedLanguages, renderCodeBlockPreview } from "./codeBlockPreview";
 
 interface RichTextEditorProps {
   initialValue: string;
@@ -24,6 +25,10 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
           blockHandle: {
             getOffset: () => (window.innerWidth < 640 ? 4 : 12),
           },
+        },
+        [Crepe.Feature.CodeMirror]: {
+          languages: supportedLanguages,
+          renderPreview: renderCodeBlockPreview,
         },
       },
     });

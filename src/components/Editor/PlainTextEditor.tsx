@@ -2,6 +2,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
 import { plainTextTheme, plainTextHighlighting } from "./plainTextTheme";
+import { supportedLanguages } from "./codeBlockPreview";
 
 interface PlainTextEditorProps {
   initialValue: string;
@@ -11,7 +12,7 @@ interface PlainTextEditorProps {
 // Without line wrapping, long lines overflow and force a horizontal
 // scrollbar whose unstyled corner shows up as a stray black square.
 const extensions = [
-  markdown(),
+  markdown({ codeLanguages: supportedLanguages }),
   EditorView.lineWrapping,
   plainTextTheme,
   plainTextHighlighting,

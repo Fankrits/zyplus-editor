@@ -29,6 +29,10 @@ const mockFsStore = new Map<string, string>([
     "/demo-workspace/notes.md",
     "## Project Notes\n\n- Support session restoration\n- Fast and responsive\n",
   ],
+  [
+    "/demo-workspace/diagram.md",
+    "# Diagram & Math Demo\n\n## Flowchart\n\n```mermaid\nflowchart TD\n    A[Start] --> B{Is it working?}\n    B -- Yes --> C[Great!]\n    B -- No --> D[Debug]\n```\n\n## Math Formula\n\n```latex\n\\int_{-\\infty}^\\infty e^{-x^2} dx = \\sqrt{\\pi}\n```\n",
+  ],
 ]);
 
 function mockJoin(...parts: string[]): string {
