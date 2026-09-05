@@ -84,24 +84,6 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
             size="sm"
             isIconOnly
             variant="ghost"
-            aria-label="New file"
-            onPress={() => onRequestCreate("file", primaryDir)}
-          >
-            <HugeiconsIcon icon={FileAddIcon} size={16} />
-          </Button>
-          <Button
-            size="sm"
-            isIconOnly
-            variant="ghost"
-            aria-label="New folder"
-            onPress={() => onRequestCreate("folder", primaryDir)}
-          >
-            <HugeiconsIcon icon={FolderAddIcon} size={16} />
-          </Button>
-          <Button
-            size="sm"
-            isIconOnly
-            variant="ghost"
             aria-label="Open file"
             onPress={handleOpenFilePicker}
           >
@@ -117,6 +99,26 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
             <HugeiconsIcon icon={FolderOpenIcon} size={16} />
           </Button>
         </div>
+      </div>
+      <div className="flex shrink-0 gap-2 px-2 pb-2">
+        <Button
+          size="sm"
+          variant="primary"
+          className="flex-1"
+          onPress={() => onRequestCreate("file", primaryDir)}
+        >
+          <HugeiconsIcon icon={FileAddIcon} size={16} />
+          New File
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          isIconOnly
+          aria-label="New folder"
+          onPress={() => onRequestCreate("folder", primaryDir)}
+        >
+          <HugeiconsIcon icon={FolderAddIcon} size={16} />
+        </Button>
       </div>
       <FileTree
         onOpenFile={handleOpenFile}

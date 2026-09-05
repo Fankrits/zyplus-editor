@@ -218,9 +218,14 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
   const renderNode = useCallback(
     (props: NodeRendererProps<TreeNode>) => (
-      <Node {...props} onNodeContextMenu={handleNodeContextMenu} isRoot={isRoot(props.node.data.id)} />
+      <Node
+        {...props}
+        onNodeContextMenu={handleNodeContextMenu}
+        onRequestCreate={onRequestCreate}
+        isRoot={isRoot(props.node.data.id)}
+      />
     ),
-    [handleNodeContextMenu, isRoot],
+    [handleNodeContextMenu, onRequestCreate, isRoot],
   );
 
   return (
@@ -277,10 +282,11 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
 interface NodeProps extends NodeRendererProps<TreeNode> {
   onNodeContextMenu: (e: ReactMouseEvent, node: NodeApi<TreeNode>) => void;
+  onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
   isRoot: boolean;
 }
 
-function Node({ node, style, dragHandle, onNodeContextMenu, isRoot }: NodeProps) {
+function Node({ node, style, dragHandle, onNodeContextMenu, onRequestCreate, isRoot }: NodeProps) {
   // `style.paddingLeft` already equals node.level * the Tree's `indent` prop (react-arborist
   // computes this for us) — just add a small constant base inset on top of it.
   const rowStyle = { ...style, paddingLeft: (style.paddingLeft as number | undefined ?? 0) + 8 };
@@ -335,7 +341,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu, isRoot }: NodeProps)
       ref={dragHandle}
       onDoubleClick={() => (isRoot ? node.toggle() : node.edit())}
       onContextMenu={(e) => onNodeContextMenu(e, node)}
-      className={`mx-1 my-0.5 flex h-[calc(100%-4px)] cursor-default items-center gap-2 rounded-2xl pr-2 text-sm select-none ${
+      className={`group mx-1 my-0.5 flex h-[calc(100%-4px)] cursor-default items-center gap-2 rounded-2xl pr-1 text-sm select-none ${
         node.isSelected ? "bg-accent-soft text-accent-soft-foreground" : "hover:bg-default"
       }`}
     >
@@ -358,7 +364,54 @@ function Node({ node, style, dragHandle, onNodeContextMenu, isRoot }: NodeProps)
         strokeWidth={1.75}
         className="shrink-0 opacity-70"
       />
-      <span className={`truncate ${isRoot ? "font-semibold" : ""}`}>{node.data.name}</span>
+      <span className={`min-w-0 flex-1 truncate ${isRoot ? "font-semibold" : ""}`}>{node.data.name}</span>
+      {node.data.isFolder && (
+        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <RowAction
+            label="New file here"
+            icon={FileAddIcon}
+            onClick={() => {
+              if (!node.isOpen) node.open();
+              onRequestCreate("file", node.data.id);
+            }}
+          />
+          <RowAction
+            label="New folder here"
+            icon={FolderAddIcon}
+            onClick={() => {
+              if (!node.isOpen) node.open();
+              onRequestCreate("folder", node.data.id);
+            }}
+          />
+        </span>
+      )}
     </div>
+  );
+}
+
+function RowAction({
+  label,
+  icon,
+  onClick,
+}: {
+  label: string;
+  icon: typeof FileAddIcon;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      // Rows react to click/double-click, so keep row selection out of it.
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      className="flex size-6 items-center justify-center rounded-lg opacity-70 hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+    >
+      <HugeiconsIcon icon={icon} size={14} strokeWidth={1.75} />
+    </button>
   );
 }
