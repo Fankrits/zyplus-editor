@@ -17,7 +17,7 @@ export function EditorPane() {
 
   if (!activeTab) {
     return (
-      <div className="flex h-full flex-1 flex-col items-center justify-center gap-3 text-sm text-neutral-500">
+      <div className="flex h-full flex-1 flex-col items-center justify-center gap-3 text-sm text-muted">
         <Wordmark size={56} className="opacity-40" />
         Open a folder and select a markdown file to start editing.
       </div>

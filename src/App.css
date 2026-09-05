@@ -11,6 +11,15 @@ body,
 }
 
 /*
+ * HeroUI's light canvas is a grey that the editor's white page clashed with.
+ * One surface for chrome and document: white in light, near-black in dark
+ * (the dark canvas already reads as such, so only light needs overriding).
+ */
+:root:not([data-theme="dark"]) {
+  --background: var(--white);
+}
+
+/*
  * Diagram palette. Mermaid bakes colors into the SVG at render time, so the
  * rendered previews are restyled through these tokens instead — they follow
  * `data-theme` without re-rendering the diagram.

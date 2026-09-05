@@ -7,7 +7,8 @@
  * so these overrides win the cascade.
  */
 .milkdown {
-  --crepe-color-background: var(--surface);
+  /* The editor is the app canvas, not a card floating on it. */
+  --crepe-color-background: var(--background);
   --crepe-color-on-background: var(--foreground);
   --crepe-color-surface: var(--overlay);
   --crepe-color-surface-low: var(--surface-secondary);
