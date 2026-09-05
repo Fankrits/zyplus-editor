@@ -31,38 +31,64 @@ export const supportedLanguages: LanguageDescription[] = [
 const DIAGRAM_LANGUAGES = new Set(["mermaid", "flowchart", "diagram"]);
 const MATH_LANGUAGES = new Set(["latex", "math", "katex", "tex"]);
 
-export function getMermaidConfig(isDark: boolean) {
+export function getMermaidConfig() {
   // Pure white / clean luminous background fills and distinct theme strokes
-  const primaryFill = isDark ? "#18181b" : "#ffffff";
-  const primaryStroke = isDark ? "#38bdf8" : "#006fee";
-  const primaryText = isDark ? "#e0f2fe" : "#006fee";
+  const primaryFill = "#ffffff";
+  const primaryStroke = "#006fee";
+  const primaryText = "#006fee";
 
-  const secondaryFill = isDark ? "#18181b" : "#ffffff";
-  const secondaryStroke = isDark ? "#c084fc" : "#7828c8";
-  const secondaryText = isDark ? "#f3e8ff" : "#7828c8";
+  const secondaryFill = "#ffffff";
+  const secondaryStroke = "#7828c8";
+  const secondaryText = "#7828c8";
 
-  const tertiaryFill = isDark ? "#18181b" : "#ffffff";
-  const tertiaryStroke = isDark ? "#4ade80" : "#17c964";
-  const tertiaryText = isDark ? "#dcfce7" : "#16a34a";
+  const tertiaryFill = "#ffffff";
+  const tertiaryStroke = "#17c964";
+  const tertiaryText = "#16a34a";
 
-  const warningFill = isDark ? "#18181b" : "#ffffff";
-  const warningStroke = isDark ? "#fbbf24" : "#f5a524";
-  const warningText = isDark ? "#fef3c7" : "#d97706";
+  const warningFill = "#ffffff";
+  const warningStroke = "#f5a524";
+  const warningText = "#d97706";
 
-  const lineStroke = isDark ? "#94a3b8" : "#64748b";
-  const clusterFill = isDark ? "#18181b" : "#ffffff";
-  const clusterBorder = isDark ? "#52525b" : "#cbd5e1";
-  const edgeLabelBg = isDark ? "#18181b" : "#ffffff";
-  const textColor = isDark ? "#f4f4f5" : "#0f172a";
+  const lineStroke = "#64748b";
+  const clusterFill = "#ffffff";
+  const clusterBorder = "#cbd5e1";
+  const edgeLabelBg = "#ffffff";
+  const textColor = "#0f172a";
 
   return {
     startOnLoad: false,
     securityLevel: "loose" as const,
     suppressErrorRendering: true,
     theme: "base" as const,
+    flowchart: {
+      htmlLabels: true,
+      padding: 20,
+    },
+    themeCSS: `
+      foreignObject, foreignObject > div, .label foreignObject, .cluster-label foreignObject {
+        overflow: visible !important;
+      }
+      .node .label, .cluster-label {
+        overflow: visible !important;
+      }
+      foreignObject p, .nodeLabel p {
+        margin: 0 !important;
+        padding: 0 0 2px 0 !important;
+        line-height: 1.35 !important;
+      }
+      .cluster rect {
+        stroke-dasharray: none !important;
+        rx: 0 !important;
+        ry: 0 !important;
+      }
+      .node rect {
+        rx: 0 !important;
+        ry: 0 !important;
+      }
+    `,
     themeVariables: {
-      darkMode: isDark,
-      background: "transparent",
+      darkMode: false,
+      background: "#ffffff",
       fontFamily:
         "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
       fontSize: "14px",
@@ -122,7 +148,7 @@ export function getMermaidConfig(isDark: boolean) {
       labelBoxBkgColor: secondaryFill,
       labelBoxBorderColor: secondaryStroke,
       labelTextColor: secondaryText,
-      activationBkgColor: isDark ? "rgba(0, 111, 238, 0.25)" : "rgba(0, 111, 238, 0.15)",
+      activationBkgColor: "rgba(0, 111, 238, 0.15)",
       activationBorderColor: primaryStroke,
 
       // Class diagrams
@@ -137,14 +163,14 @@ export function getMermaidConfig(isDark: boolean) {
       git5: "#06b6d4",
       git6: "#ec4899",
       git7: "#6366f1",
-      gitBranchLabel0: isDark ? "#93c5fd" : "#004493",
-      gitBranchLabel1: isDark ? "#c4b5fd" : "#481878",
-      gitBranchLabel2: isDark ? "#6ee7b7" : "#0e793c",
-      gitBranchLabel3: isDark ? "#fde047" : "#92400e",
-      gitBranchLabel4: isDark ? "#fca5a5" : "#991b1b",
-      gitBranchLabel5: isDark ? "#67e8f9" : "#155e75",
-      gitBranchLabel6: isDark ? "#f472b6" : "#9d174d",
-      gitBranchLabel7: isDark ? "#a5b4fc" : "#3730a3",
+      gitBranchLabel0: "#004493",
+      gitBranchLabel1: "#481878",
+      gitBranchLabel2: "#0e793c",
+      gitBranchLabel3: "#92400e",
+      gitBranchLabel4: "#991b1b",
+      gitBranchLabel5: "#155e75",
+      gitBranchLabel6: "#9d174d",
+      gitBranchLabel7: "#3730a3",
 
       // Pie Chart
       pie1: "#006fee",
@@ -156,55 +182,85 @@ export function getMermaidConfig(isDark: boolean) {
       pie7: "#ec4899",
       pieTitleTextColor: textColor,
       pieSectionTextColor: "#ffffff",
-      pieLegendTextColor: isDark ? "#e4e4e7" : "#3f3f46",
-      pieStrokeColor: isDark ? "#18181b" : "#ffffff",
+      pieLegendTextColor: "#3f3f46",
+      pieStrokeColor: "#ffffff",
       pieStrokeWidth: "2px",
     },
   };
 }
 
-function injectMulticolorStyles(svg: string, renderId: string, isDark: boolean): string {
-  const bg = isDark ? "#18181b" : "#ffffff";
+function injectMulticolorStyles(svg: string, renderId: string): string {
+  const bg = "#ffffff";
   const styles = `
+    #${renderId} foreignObject,
+    #${renderId} foreignObject > div,
+    #${renderId} .label foreignObject,
+    #${renderId} .cluster-label foreignObject {
+      overflow: visible !important;
+    }
+    #${renderId} .node .label,
+    #${renderId} .cluster-label {
+      overflow: visible !important;
+    }
+    #${renderId} foreignObject p,
+    #${renderId} .nodeLabel p {
+      margin: 0 !important;
+      padding: 0 0 2px 0 !important;
+      line-height: 1.35 !important;
+    }
+    #${renderId} foreignObject span,
+    #${renderId} .nodeLabel {
+      display: inline-block !important;
+      line-height: 1.35 !important;
+      overflow: visible !important;
+    }
+    #${renderId} .cluster-label :is(span, text, p),
+    #${renderId} .cluster .nodeLabel {
+      color: #0f172a !important;
+      fill: #0f172a !important;
+      font-weight: 600 !important;
+      font-size: 13px !important;
+    }
+
     #${renderId} .node :is(rect, polygon, circle, ellipse, path.basic, .outer-path path) { stroke-width: 1.75px !important; }
     #${renderId} .node:not(.cluster) rect { rx: 0 !important; ry: 0 !important; }
-    #${renderId} .cluster rect { rx: 0 !important; ry: 0 !important; stroke-width: 1.5px !important; stroke-dasharray: none !important; fill: ${bg} !important; stroke: ${isDark ? "#52525b" : "#cbd5e1"} !important; }
+    #${renderId} .cluster rect { rx: 0 !important; ry: 0 !important; stroke-width: 1.5px !important; stroke-dasharray: none !important; fill: ${bg} !important; stroke: #cbd5e1 !important; }
 
     /* 1. Vibrant Blue */
-    #${renderId} g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#38bdf8" : "#006fee"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #006fee !important; }
     #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#38bdf8" : "#006fee"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#e0f2fe" : "#006fee"} !important; fill: ${isDark ? "#e0f2fe" : "#006fee"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #006fee !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #006fee !important; fill: #006fee !important; font-weight: 600 !important; }
 
     /* 2. Vibrant Purple */
-    #${renderId} g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#c084fc" : "#7828c8"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #7828c8 !important; }
     #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#c084fc" : "#7828c8"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#f3e8ff" : "#7828c8"} !important; fill: ${isDark ? "#f3e8ff" : "#7828c8"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #7828c8 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #7828c8 !important; fill: #7828c8 !important; font-weight: 600 !important; }
 
     /* 3. Vibrant Emerald */
-    #${renderId} g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#4ade80" : "#17c964"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #17c964 !important; }
     #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#4ade80" : "#17c964"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#dcfce7" : "#16a34a"} !important; fill: ${isDark ? "#dcfce7" : "#16a34a"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #17c964 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #16a34a !important; fill: #16a34a !important; font-weight: 600 !important; }
 
     /* 4. Vibrant Amber */
-    #${renderId} g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#fbbf24" : "#f5a524"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #f5a524 !important; }
     #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#fbbf24" : "#f5a524"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#fef3c7" : "#d97706"} !important; fill: ${isDark ? "#fef3c7" : "#d97706"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #f5a524 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #d97706 !important; fill: #d97706 !important; font-weight: 600 !important; }
 
     /* 5. Vibrant Rose */
-    #${renderId} g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#fb7185" : "#f31260"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #f31260 !important; }
     #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#fb7185" : "#f31260"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#ffe4e6" : "#e11d48"} !important; fill: ${isDark ? "#ffe4e6" : "#e11d48"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #f31260 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #e11d48 !important; fill: #e11d48 !important; font-weight: 600 !important; }
 
     /* 6. Vibrant Cyan */
-    #${renderId} g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#22d3ee" : "#06b6d4"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #06b6d4 !important; }
     #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#22d3ee" : "#06b6d4"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#cffafe" : "#0891b2"} !important; fill: ${isDark ? "#cffafe" : "#0891b2"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #06b6d4 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #0891b2 !important; fill: #0891b2 !important; font-weight: 600 !important; }
   `;
 
   if (svg.includes("</svg>")) {
@@ -235,19 +291,13 @@ export function renderCodeBlockPreview(
   }
 
   if (DIAGRAM_LANGUAGES.has(lang)) {
-    const isDark =
-      typeof document !== "undefined" &&
-      (document.documentElement.classList.contains("dark") ||
-        (typeof window !== "undefined" &&
-          window.matchMedia("(prefers-color-scheme: dark)").matches));
-
-    mermaid.initialize(getMermaidConfig(isDark));
+    mermaid.initialize(getMermaidConfig());
 
     const renderId = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
     mermaid
       .render(renderId, trimmed)
       .then(({ svg }) => {
-        applyPreview(injectMulticolorStyles(svg, renderId, isDark));
+        applyPreview(injectMulticolorStyles(svg, renderId));
       })
       .catch(() => {
         applyPreview(null);
