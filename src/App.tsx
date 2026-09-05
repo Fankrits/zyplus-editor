@@ -6,6 +6,7 @@ import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
 import { WorkspaceProvider, useWorkspace } from "./state/workspaceStore";
 import * as fs from "./lib/fs";
+import { loadSession, saveSession } from "./lib/sessionStorage";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
@@ -17,7 +18,16 @@ function AppShell() {
   const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    return loadSession()?.isSidebarCollapsed ?? false;
+  });
+
+  useEffect(() => {
+    const current = loadSession();
+    if (current) {
+      saveSession({ ...current, isSidebarCollapsed });
+    }
+  }, [isSidebarCollapsed]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

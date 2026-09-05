@@ -5,9 +5,15 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   type ReactNode,
 } from "react";
-import { readDirRecursive } from "../lib/fs";
+import { readDirRecursive, readTextFile } from "../lib/fs";
+import {
+  loadSession,
+  saveSession,
+  type PersistedWorkspaceSession,
+} from "../lib/sessionStorage";
 
 export type TabMode = "rich" | "plain";
 
@@ -61,7 +67,7 @@ const initialState: WorkspaceState = {
   activeTabId: null,
 };
 
-function basenameOf(path: string): string {
+export function basenameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] ?? path;
 }
@@ -172,6 +178,66 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
   }
 }
 
+export interface RestoredWorkspace {
+  rootPath: string | null;
+  tree: TreeNode[];
+  tabs: TabState[];
+  activeTabId: string | null;
+}
+
+export async function restoreWorkspaceFromSession(
+  stored: PersistedWorkspaceSession | null,
+  fsApi: {
+    readDirRecursive: (path: string) => Promise<TreeNode[]>;
+    readTextFile: (path: string) => Promise<string>;
+  } = { readDirRecursive, readTextFile },
+): Promise<RestoredWorkspace | null> {
+  if (!stored || !stored.rootPath) return null;
+
+  let tree: TreeNode[];
+  try {
+    tree = await fsApi.readDirRecursive(stored.rootPath);
+  } catch {
+    return {
+      rootPath: null,
+      tree: [],
+      tabs: [],
+      activeTabId: null,
+    };
+  }
+
+  const tabs: TabState[] = [];
+  for (const tab of stored.tabs) {
+    try {
+      const content = await fsApi.readTextFile(tab.filePath);
+      tabs.push({
+        id: tab.filePath,
+        filePath: tab.filePath,
+        title: basenameOf(tab.filePath),
+        content,
+        isDirty: false,
+        mode: tab.mode,
+      });
+    } catch {
+      // Gracefully skip tab if reading failed (e.g. file deleted/moved)
+    }
+  }
+
+  let activeTabId: string | null = null;
+  if (stored.activeFilePath && tabs.some((t) => t.id === stored.activeFilePath)) {
+    activeTabId = stored.activeFilePath;
+  } else if (tabs.length > 0) {
+    activeTabId = tabs[tabs.length - 1].id;
+  }
+
+  return {
+    rootPath: stored.rootPath,
+    tree,
+    tabs,
+    activeTabId,
+  };
+}
+
 interface WorkspaceContextValue {
   state: WorkspaceState;
   dispatch: React.Dispatch<Action>;
@@ -183,6 +249,65 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(workspaceReducer, initialState);
+  const isHydrated = useRef(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function hydrate() {
+      const stored = loadSession();
+      if (stored?.rootPath) {
+        try {
+          const restored = await restoreWorkspaceFromSession(stored);
+          if (!isMounted) return;
+          isHydrated.current = true;
+          if (restored) {
+            dispatch({
+              type: "RESTORE_WORKSPACE",
+              rootPath: restored.rootPath,
+              tree: restored.tree,
+              tabs: restored.tabs,
+              activeTabId: restored.activeTabId,
+            });
+          }
+          return;
+        } catch (err) {
+          console.warn("Failed to restore workspace session:", err);
+          if (!isMounted) return;
+          isHydrated.current = true;
+          dispatch({
+            type: "RESTORE_WORKSPACE",
+            rootPath: null,
+            tree: [],
+            tabs: [],
+            activeTabId: null,
+          });
+          return;
+        }
+      }
+
+      if (isMounted) {
+        isHydrated.current = true;
+      }
+    }
+
+    hydrate();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated.current) return;
+    const current = loadSession();
+    saveSession({
+      version: 1,
+      rootPath: state.rootPath,
+      tabs: state.tabs.map((t) => ({ filePath: t.filePath, mode: t.mode })),
+      activeFilePath: state.activeTabId,
+      isSidebarCollapsed: current?.isSidebarCollapsed ?? false,
+    });
+  }, [state.rootPath, state.tabs, state.activeTabId]);
 
   useEffect(() => {
     if (import.meta.env.DEV && typeof window !== "undefined") {
