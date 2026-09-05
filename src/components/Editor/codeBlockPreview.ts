@@ -32,26 +32,26 @@ const DIAGRAM_LANGUAGES = new Set(["mermaid", "flowchart", "diagram"]);
 const MATH_LANGUAGES = new Set(["latex", "math", "katex", "tex"]);
 
 export function getMermaidConfig(isDark: boolean) {
-  // Brighter luminous background fills and distinct theme strokes
-  const primaryFill = isDark ? "#0c2b5e" : "#f0f7ff";
+  // Pure white / clean luminous background fills and distinct theme strokes
+  const primaryFill = isDark ? "#18181b" : "#ffffff";
   const primaryStroke = isDark ? "#38bdf8" : "#006fee";
-  const primaryText = isDark ? "#e0f2fe" : "#1e40af";
+  const primaryText = isDark ? "#e0f2fe" : "#006fee";
 
-  const secondaryFill = isDark ? "#2e124d" : "#faf5ff";
+  const secondaryFill = isDark ? "#18181b" : "#ffffff";
   const secondaryStroke = isDark ? "#c084fc" : "#7828c8";
-  const secondaryText = isDark ? "#f3e8ff" : "#581c87";
+  const secondaryText = isDark ? "#f3e8ff" : "#7828c8";
 
-  const tertiaryFill = isDark ? "#062e1a" : "#f0fdf4";
+  const tertiaryFill = isDark ? "#18181b" : "#ffffff";
   const tertiaryStroke = isDark ? "#4ade80" : "#17c964";
-  const tertiaryText = isDark ? "#dcfce7" : "#14532d";
+  const tertiaryText = isDark ? "#dcfce7" : "#16a34a";
 
-  const warningFill = isDark ? "#2d2006" : "#fffbeb";
+  const warningFill = isDark ? "#18181b" : "#ffffff";
   const warningStroke = isDark ? "#fbbf24" : "#f5a524";
-  const warningText = isDark ? "#fef3c7" : "#78350f";
+  const warningText = isDark ? "#fef3c7" : "#d97706";
 
-  const lineStroke = isDark ? "#94a3b8" : "#475569";
-  const clusterFill = isDark ? "rgba(39, 39, 42, 0.4)" : "#fafafa";
-  const clusterBorder = isDark ? "#52525b" : "#d4d4d8";
+  const lineStroke = isDark ? "#94a3b8" : "#64748b";
+  const clusterFill = isDark ? "#18181b" : "#ffffff";
+  const clusterBorder = isDark ? "#52525b" : "#cbd5e1";
   const edgeLabelBg = isDark ? "#18181b" : "#ffffff";
   const textColor = isDark ? "#f4f4f5" : "#0f172a";
 
@@ -67,17 +67,17 @@ export function getMermaidConfig(isDark: boolean) {
         "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
       fontSize: "14px",
 
-      // Flowchart primary nodes (HeroUI Blue)
+      // Flowchart primary nodes
       primaryColor: primaryFill,
       primaryBorderColor: primaryStroke,
       primaryTextColor: primaryText,
 
-      // Secondary (HeroUI Purple)
+      // Secondary
       secondaryColor: secondaryFill,
       secondaryBorderColor: secondaryStroke,
       secondaryTextColor: secondaryText,
 
-      // Tertiary (HeroUI Success Emerald)
+      // Tertiary
       tertiaryColor: tertiaryFill,
       tertiaryBorderColor: tertiaryStroke,
       tertiaryTextColor: tertiaryText,
@@ -101,7 +101,7 @@ export function getMermaidConfig(isDark: boolean) {
       edgeLabelBackground: edgeLabelBg,
       textColor: textColor,
 
-      // Notes (HeroUI Amber)
+      // Notes
       noteBkgColor: warningFill,
       noteBorderColor: warningStroke,
       noteTextColor: warningText,
@@ -128,7 +128,7 @@ export function getMermaidConfig(isDark: boolean) {
       // Class diagrams
       classText: primaryText,
 
-      // Git Graph (HeroUI semantic palette)
+      // Git Graph
       git0: "#006fee",
       git1: "#7828c8",
       git2: "#17c964",
@@ -164,46 +164,47 @@ export function getMermaidConfig(isDark: boolean) {
 }
 
 function injectMulticolorStyles(svg: string, renderId: string, isDark: boolean): string {
+  const bg = isDark ? "#18181b" : "#ffffff";
   const styles = `
     #${renderId} .node :is(rect, polygon, circle, ellipse, path.basic, .outer-path path) { stroke-width: 1.75px !important; }
     #${renderId} .node:not(.cluster) rect { rx: 0 !important; ry: 0 !important; }
-    #${renderId} .cluster rect { rx: 0 !important; ry: 0 !important; stroke-width: 1.5px !important; stroke-dasharray: 4 4 !important; }
+    #${renderId} .cluster rect { rx: 0 !important; ry: 0 !important; stroke-width: 1.5px !important; stroke-dasharray: none !important; fill: ${bg} !important; stroke: ${isDark ? "#52525b" : "#cbd5e1"} !important; }
 
     /* 1. Vibrant Blue */
-    #${renderId} g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${isDark ? "#0c2b5e" : "#eff6ff"} !important; stroke: ${isDark ? "#38bdf8" : "#006fee"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${isDark ? "#0c2b5e" : "#eff6ff"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#38bdf8" : "#006fee"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
     #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#38bdf8" : "#006fee"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#e0f2fe" : "#1e40af"} !important; fill: ${isDark ? "#e0f2fe" : "#1e40af"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#e0f2fe" : "#006fee"} !important; fill: ${isDark ? "#e0f2fe" : "#006fee"} !important; font-weight: 600 !important; }
 
     /* 2. Vibrant Purple */
-    #${renderId} g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${isDark ? "#2e124d" : "#faf5ff"} !important; stroke: ${isDark ? "#c084fc" : "#7828c8"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${isDark ? "#2e124d" : "#faf5ff"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#c084fc" : "#7828c8"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
     #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#c084fc" : "#7828c8"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#f3e8ff" : "#581c87"} !important; fill: ${isDark ? "#f3e8ff" : "#581c87"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#f3e8ff" : "#7828c8"} !important; fill: ${isDark ? "#f3e8ff" : "#7828c8"} !important; font-weight: 600 !important; }
 
     /* 3. Vibrant Emerald */
-    #${renderId} g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${isDark ? "#062e1a" : "#f0fdf4"} !important; stroke: ${isDark ? "#4ade80" : "#17c964"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${isDark ? "#062e1a" : "#f0fdf4"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#4ade80" : "#17c964"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
     #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#4ade80" : "#17c964"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#dcfce7" : "#14532d"} !important; fill: ${isDark ? "#dcfce7" : "#14532d"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#dcfce7" : "#16a34a"} !important; fill: ${isDark ? "#dcfce7" : "#16a34a"} !important; font-weight: 600 !important; }
 
     /* 4. Vibrant Amber */
-    #${renderId} g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${isDark ? "#2d2006" : "#fffbeb"} !important; stroke: ${isDark ? "#fbbf24" : "#f5a524"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${isDark ? "#2d2006" : "#fffbeb"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#fbbf24" : "#f5a524"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
     #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#fbbf24" : "#f5a524"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#fef3c7" : "#78350f"} !important; fill: ${isDark ? "#fef3c7" : "#78350f"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#fef3c7" : "#d97706"} !important; fill: ${isDark ? "#fef3c7" : "#d97706"} !important; font-weight: 600 !important; }
 
     /* 5. Vibrant Rose */
-    #${renderId} g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${isDark ? "#360c1c" : "#fff1f2"} !important; stroke: ${isDark ? "#fb7185" : "#f31260"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${isDark ? "#360c1c" : "#fff1f2"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#fb7185" : "#f31260"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
     #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#fb7185" : "#f31260"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#ffe4e6" : "#881337"} !important; fill: ${isDark ? "#ffe4e6" : "#881337"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#ffe4e6" : "#e11d48"} !important; fill: ${isDark ? "#ffe4e6" : "#e11d48"} !important; font-weight: 600 !important; }
 
     /* 6. Vibrant Cyan */
-    #${renderId} g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${isDark ? "#082f38" : "#ecfeff"} !important; stroke: ${isDark ? "#22d3ee" : "#06b6d4"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${isDark ? "#082f38" : "#ecfeff"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: ${isDark ? "#22d3ee" : "#06b6d4"} !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
     #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: ${isDark ? "#22d3ee" : "#06b6d4"} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#cffafe" : "#155e75"} !important; fill: ${isDark ? "#cffafe" : "#155e75"} !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: ${isDark ? "#cffafe" : "#0891b2"} !important; fill: ${isDark ? "#cffafe" : "#0891b2"} !important; font-weight: 600 !important; }
   `;
 
   if (svg.includes("</svg>")) {
