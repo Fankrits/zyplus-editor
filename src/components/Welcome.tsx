@@ -37,14 +37,14 @@ export function Welcome({ onReady }: { onReady: (folder: string) => void }) {
   }, [parent, onReady]);
 
   return (
-    <div className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-white p-6 text-black dark:bg-neutral-900 dark:text-white">
-      <Logo size={48} className="text-black dark:text-white" />
+    <div className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-background p-6 text-foreground">
+      <Logo size={48} className="text-foreground" />
       <h1 className="text-lg font-semibold tracking-tight">Welcome to Zyplus</h1>
-      <p className="max-w-sm text-center text-sm text-neutral-500">
+      <p className="max-w-sm text-center text-sm text-muted">
         Zyplus keeps your notes in a folder on your computer. Pick where it should live — you can
         add more project folders later.
       </p>
-      <code className="max-w-full truncate rounded-lg bg-black/5 px-3 py-1.5 text-xs dark:bg-white/10">
+      <code className="max-w-full truncate rounded-lg bg-surface-secondary px-3 py-1.5 text-xs">
         {parent ? `${parent}/${fs.DEFAULT_FOLDER_NAME}` : "Loading…"}
       </code>
       {error && <p className="text-sm text-danger">{error}</p>}

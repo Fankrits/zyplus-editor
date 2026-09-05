@@ -45,24 +45,34 @@ function AppShell() {
     saveSession({ ...current, isSidebarCollapsed });
   }, [isSidebarCollapsed]);
 
+  const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
+    setCreateTargetDir(targetDir);
+    setCreateKind(kind);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+      if (!e.metaKey && !e.ctrlKey) return;
+      if (e.key === "s") {
         e.preventDefault();
         if (!activeTab || !activeTab.isDirty) return;
         fs.writeTextFile(activeTab.filePath, activeTab.content).then(() => {
           dispatch({ type: "SAVE_TAB_SUCCESS", id: activeTab.id });
         });
+      } else if (e.key === "n") {
+        e.preventDefault();
+        const activeDir = activeTab?.filePath?.replace(/[\\/][^\\/]*$/, "");
+        const targetDir = activeDir || defaultFolder || state.roots[0];
+        if (targetDir) requestCreate("file", targetDir);
+      } else if (e.key === "b") {
+        e.preventDefault();
+        if (isDesktop) setIsSidebarCollapsed((v) => !v);
+        else setIsMobileDrawerOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTab, dispatch]);
-
-  const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
-    setCreateTargetDir(targetDir);
-    setCreateKind(kind);
-  }, []);
+  }, [activeTab, dispatch, defaultFolder, state.roots, isDesktop, requestCreate]);
 
   const handleOpenFileFromDrawer = useCallback(
     async (path: string, name: string) => {
@@ -116,14 +126,14 @@ function AppShell() {
     closeCreateModal();
   };
 
-  if (!isHydrated) return <div className="h-screen w-screen bg-white dark:bg-neutral-900" />;
+  if (!isHydrated) return <div className="h-screen w-screen bg-background" />;
 
   if (!defaultFolder && state.roots.length === 0) {
     return <Welcome onReady={handleFirstFolder} />;
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white text-black dark:bg-neutral-900 dark:text-white">
+    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {isDesktop && <Sidebar onRequestCreate={requestCreate} isCollapsed={isSidebarCollapsed} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar
@@ -146,7 +156,7 @@ function AppShell() {
         <Drawer isOpen={isMobileDrawerOpen} onOpenChange={setIsMobileDrawerOpen}>
           <Drawer.Backdrop>
             <Drawer.Content placement="left" className="w-72 max-w-[85vw] h-full p-0">
-              <Drawer.Dialog className="h-full flex flex-col bg-white dark:bg-neutral-900">
+              <Drawer.Dialog className="h-full flex flex-col bg-background text-foreground">
                 <Drawer.Header className="flex items-center justify-between border-b border-border px-3 py-2">
                   <Drawer.Heading className="text-sm font-semibold truncate">Files</Drawer.Heading>
                   <Drawer.CloseTrigger />

@@ -409,7 +409,7 @@ function RowAction({
         onClick();
       }}
       onDoubleClick={(e) => e.stopPropagation()}
-      className="flex size-6 items-center justify-center rounded-lg opacity-70 hover:bg-black/10 hover:opacity-100 dark:hover:bg-white/10"
+      className="flex size-6 items-center justify-center rounded-lg opacity-70 hover:bg-surface-hover hover:opacity-100"
     >
       <HugeiconsIcon icon={icon} size={14} strokeWidth={1.75} />
     </button>

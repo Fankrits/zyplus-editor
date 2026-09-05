@@ -226,7 +226,7 @@ export function TabBar({
   return (
     <>
       <div
-        className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-white px-1.5 py-2"
+        className="flex h-12 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-background px-1.5 py-2"
         onDragOver={(e) => {
           if (e.target !== e.currentTarget) return;
           e.preventDefault();

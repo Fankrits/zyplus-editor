@@ -31,6 +31,8 @@ export function PlainTextEditor({ initialValue, onChange }: PlainTextEditorProps
         highlightActiveLine: false,
       }}
       height="100%"
+      // Our own theme paints the editor; the packaged "light" one hardcodes a white background.
+      theme="none"
       autoFocus
       className="h-full"
     />

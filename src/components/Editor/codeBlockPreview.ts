@@ -1,4 +1,5 @@
 import katex from "katex";
+import { isDarkTheme } from "../../lib/theme";
 import mermaid from "mermaid";
 import { LanguageDescription } from "@codemirror/language";
 import { languages as defaultLanguages } from "@codemirror/language-data";
@@ -32,28 +33,32 @@ const DIAGRAM_LANGUAGES = new Set(["mermaid", "flowchart", "diagram"]);
 const MATH_LANGUAGES = new Set(["latex", "math", "katex", "tex"]);
 
 export function getMermaidConfig() {
-  // Pure white / clean luminous background fills and distinct theme strokes
-  const primaryFill = "#ffffff";
-  const primaryStroke = "#006fee";
-  const primaryText = "#006fee";
+  // Mermaid bakes these into the SVG, so they can't be CSS variables; they mirror
+  // the --diagram-* tokens in App.css. Flat background fills, distinct strokes.
+  const dark = isDarkTheme();
+  const fill = dark ? "#18181b" : "#ffffff";
 
-  const secondaryFill = "#ffffff";
-  const secondaryStroke = "#7828c8";
-  const secondaryText = "#7828c8";
+  const primaryFill = fill;
+  const primaryStroke = dark ? "#63b3ff" : "#006fee";
+  const primaryText = primaryStroke;
 
-  const tertiaryFill = "#ffffff";
-  const tertiaryStroke = "#17c964";
-  const tertiaryText = "#16a34a";
+  const secondaryFill = fill;
+  const secondaryStroke = dark ? "#c084fc" : "#7828c8";
+  const secondaryText = secondaryStroke;
 
-  const warningFill = "#ffffff";
-  const warningStroke = "#f5a524";
-  const warningText = "#d97706";
+  const tertiaryFill = fill;
+  const tertiaryStroke = dark ? "#34d399" : "#17c964";
+  const tertiaryText = dark ? "#34d399" : "#16a34a";
 
-  const lineStroke = "#64748b";
-  const clusterFill = "#ffffff";
-  const clusterBorder = "#cbd5e1";
-  const edgeLabelBg = "#ffffff";
-  const textColor = "#0f172a";
+  const warningFill = fill;
+  const warningStroke = dark ? "#fbbf24" : "#f5a524";
+  const warningText = dark ? "#fbbf24" : "#d97706";
+
+  const lineStroke = dark ? "#a1a1aa" : "#64748b";
+  const clusterFill = fill;
+  const clusterBorder = dark ? "#3f3f46" : "#cbd5e1";
+  const edgeLabelBg = fill;
+  const textColor = dark ? "#e4e4e7" : "#0f172a";
 
   return {
     startOnLoad: false,
@@ -87,8 +92,8 @@ export function getMermaidConfig() {
       }
     `,
     themeVariables: {
-      darkMode: false,
-      background: "#ffffff",
+      darkMode: dark,
+      background: fill,
       fontFamily:
         "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
       fontSize: "14px",
@@ -181,16 +186,16 @@ export function getMermaidConfig() {
       pie6: "#06b6d4",
       pie7: "#ec4899",
       pieTitleTextColor: textColor,
-      pieSectionTextColor: "#ffffff",
-      pieLegendTextColor: "#3f3f46",
-      pieStrokeColor: "#ffffff",
+      pieSectionTextColor: fill,
+      pieLegendTextColor: textColor,
+      pieStrokeColor: fill,
       pieStrokeWidth: "2px",
     },
   };
 }
 
 function injectMulticolorStyles(svg: string, renderId: string): string {
-  const bg = "#ffffff";
+  const bg = "var(--diagram-bg)";
   const styles = `
     #${renderId} foreignObject,
     #${renderId} foreignObject > div,
@@ -216,51 +221,51 @@ function injectMulticolorStyles(svg: string, renderId: string): string {
     }
     #${renderId} .cluster-label :is(span, text, p),
     #${renderId} .cluster .nodeLabel {
-      color: #0f172a !important;
-      fill: #0f172a !important;
+      color: var(--diagram-text) !important;
+      fill: var(--diagram-text) !important;
       font-weight: 600 !important;
       font-size: 13px !important;
     }
 
     #${renderId} .node :is(rect, polygon, circle, ellipse, path.basic, .outer-path path) { stroke-width: 1.75px !important; }
     #${renderId} .node:not(.cluster) rect { rx: 0 !important; ry: 0 !important; }
-    #${renderId} .cluster rect { rx: 0 !important; ry: 0 !important; stroke-width: 1.5px !important; stroke-dasharray: none !important; fill: ${bg} !important; stroke: #cbd5e1 !important; }
+    #${renderId} .cluster rect { rx: 0 !important; ry: 0 !important; stroke-width: 1.5px !important; stroke-dasharray: none !important; fill: ${bg} !important; stroke: var(--diagram-border) !important; }
 
     /* 1. Vibrant Blue */
-    #${renderId} g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #006fee !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: var(--diagram-1) !important; }
     #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #006fee !important; }
-    #${renderId} g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #006fee !important; fill: #006fee !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: var(--diagram-1) !important; }
+    #${renderId} g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: var(--diagram-1-text) !important; fill: var(--diagram-1-text) !important; font-weight: 600 !important; }
 
     /* 2. Vibrant Purple */
-    #${renderId} g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #7828c8 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: var(--diagram-2) !important; }
     #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #7828c8 !important; }
-    #${renderId} g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #7828c8 !important; fill: #7828c8 !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: var(--diagram-2) !important; }
+    #${renderId} g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: var(--diagram-2-text) !important; fill: var(--diagram-2-text) !important; font-weight: 600 !important; }
 
     /* 3. Vibrant Emerald */
-    #${renderId} g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #17c964 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: var(--diagram-3) !important; }
     #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #17c964 !important; }
-    #${renderId} g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #16a34a !important; fill: #16a34a !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: var(--diagram-3) !important; }
+    #${renderId} g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: var(--diagram-3-text) !important; fill: var(--diagram-3-text) !important; font-weight: 600 !important; }
 
     /* 4. Vibrant Amber */
-    #${renderId} g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #f5a524 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: var(--diagram-4) !important; }
     #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #f5a524 !important; }
-    #${renderId} g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #d97706 !important; fill: #d97706 !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: var(--diagram-4) !important; }
+    #${renderId} g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: var(--diagram-4-text) !important; fill: var(--diagram-4-text) !important; font-weight: 600 !important; }
 
     /* 5. Vibrant Rose */
-    #${renderId} g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #f31260 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: var(--diagram-5) !important; }
     #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #f31260 !important; }
-    #${renderId} g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #e11d48 !important; fill: #e11d48 !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: var(--diagram-5) !important; }
+    #${renderId} g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: var(--diagram-5-text) !important; fill: var(--diagram-5-text) !important; font-weight: 600 !important; }
 
     /* 6. Vibrant Cyan */
-    #${renderId} g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: #06b6d4 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) { fill: ${bg} !important; stroke: var(--diagram-6) !important; }
     #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path[stroke="none"]:not([style*="fill"]) { fill: ${bg} !important; }
-    #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: #06b6d4 !important; }
-    #${renderId} g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: #0891b2 !important; fill: #0891b2 !important; font-weight: 600 !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) { stroke: var(--diagram-6) !important; }
+    #${renderId} g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) { color: var(--diagram-6-text) !important; fill: var(--diagram-6-text) !important; font-weight: 600 !important; }
   `;
 
   if (svg.includes("</svg>")) {

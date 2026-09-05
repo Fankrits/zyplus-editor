@@ -1,11 +1,18 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { Button } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { FolderOpenIcon, FileAddIcon, FolderAddIcon, File01Icon } from "@hugeicons/core-free-icons";
+import {
+  FolderOpenIcon,
+  FileAddIcon,
+  FolderAddIcon,
+  File01Icon,
+  Settings01Icon,
+} from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
 import { Logo, Wordmark } from "../Logo";
+import { SettingsModal } from "../SettingsModal";
 
 export interface SidebarContentProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
@@ -15,6 +22,7 @@ export interface SidebarContentProps {
 
 export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: SidebarContentProps) {
   const { state, dispatch, activeTab, defaultFolder } = useWorkspace();
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const handleOpenFolder = useCallback(async () => {
     const picked = await fs.openFolderDialog();
@@ -76,8 +84,8 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
     <div className="flex h-full w-full flex-col">
       <div className="flex shrink-0 items-center justify-between gap-1 px-2 py-2">
         <span className="flex min-w-0 items-center gap-2">
-          <Logo size={16} className="shrink-0 text-black dark:text-white" />
-          <span className="truncate text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <Logo size={16} className="shrink-0 text-foreground" />
+          <span className="truncate text-xs font-medium uppercase tracking-wide text-muted">
             Projects
           </span>
         </span>
@@ -128,6 +136,18 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
         onOpenFolder={handleOpenFolder}
         onOpenFilePicker={handleOpenFilePicker}
       />
+      <div className="mt-auto shrink-0 border-t border-border p-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="w-full justify-start"
+          onPress={() => setIsSettingsOpen(true)}
+        >
+          <HugeiconsIcon icon={Settings01Icon} size={16} />
+          Settings
+        </Button>
+      </div>
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 }
@@ -140,7 +160,7 @@ export interface SidebarProps {
 export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
   if (isCollapsed) return null;
   return (
-    <aside className="hidden md:flex h-full w-64 shrink-0 flex-col border-r border-black/10 dark:border-white/10">
+    <aside className="hidden md:flex h-full w-64 shrink-0 flex-col border-r border-border">
       <SidebarContent onRequestCreate={onRequestCreate} />
     </aside>
   );
