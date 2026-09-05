@@ -256,35 +256,37 @@ export function TabBar({
         >
           <HugeiconsIcon icon={SidebarLeftIcon} size={16} strokeWidth={2} />
         </button>
-        <div role="tablist" className="flex shrink-0 items-center gap-1">
-          {state.tabs.map((tab) => (
-            <TabItem
-              key={tab.id}
-              tab={tab}
-              isActive={tab.id === state.activeTabId}
-              isDragging={tab.id === draggedId}
-              isDragOver={tab.id === dragOverId}
-              onSelect={handleSelect}
-              onRequestClose={handleRequestClose}
-              onContextMenu={handleTabContextMenu}
-              onDragStartTab={setDraggedId}
-              onDragOverTab={handleDragOverTab}
-              onDropTab={handleDropOnTab}
-              onDragEndTab={handleDragEnd}
-            />
-          ))}
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div role="tablist" className="flex shrink-0 items-center gap-1">
+            {state.tabs.map((tab) => (
+              <TabItem
+                key={tab.id}
+                tab={tab}
+                isActive={tab.id === state.activeTabId}
+                isDragging={tab.id === draggedId}
+                isDragOver={tab.id === dragOverId}
+                onSelect={handleSelect}
+                onRequestClose={handleRequestClose}
+                onContextMenu={handleTabContextMenu}
+                onDragStartTab={setDraggedId}
+                onDragOverTab={handleDragOverTab}
+                onDropTab={handleDropOnTab}
+                onDragEndTab={handleDragEnd}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            aria-label="New file"
+            disabled={!state.rootPath}
+            onClick={() => state.rootPath && onRequestCreate("file", state.rootPath)}
+            className="flex size-8 shrink-0 items-center justify-center rounded-3xl text-muted no-highlight outline-none hover:opacity-70 focus-visible:status-focused disabled:status-disabled"
+          >
+            <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2} />
+          </button>
         </div>
-        <button
-          type="button"
-          aria-label="New file"
-          disabled={!state.rootPath}
-          onClick={() => state.rootPath && onRequestCreate("file", state.rootPath)}
-          className="flex size-8 shrink-0 items-center justify-center rounded-3xl text-muted no-highlight outline-none hover:opacity-70 focus-visible:status-focused disabled:status-disabled"
-        >
-          <HugeiconsIcon icon={PlusSignIcon} size={16} strokeWidth={2} />
-        </button>
         {activeTab && (
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1 pl-1">
             <Button
               size="sm"
               isIconOnly={!isDesktop}

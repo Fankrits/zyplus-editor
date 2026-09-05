@@ -16,7 +16,17 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
 
   useEffect(() => {
     if (!rootRef.current) return;
-    const crepe = new Crepe({ root: rootRef.current, defaultValue: initialValue });
+    const crepe = new Crepe({
+      root: rootRef.current,
+      defaultValue: initialValue,
+      featureConfigs: {
+        [Crepe.Feature.BlockEdit]: {
+          blockHandle: {
+            getOffset: () => (window.innerWidth < 640 ? 4 : 12),
+          },
+        },
+      },
+    });
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
         if (markdown !== prevMarkdown) onChangeRef.current(markdown);
@@ -29,5 +39,5 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div ref={rootRef} className="h-full overflow-y-auto px-4 sm:px-8 py-4 sm:py-6" />;
+  return <div ref={rootRef} className="h-full overflow-y-auto px-1 sm:px-6 py-2 sm:py-6" />;
 }

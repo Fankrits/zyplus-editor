@@ -49,3 +49,40 @@
 .milkdown .milkdown-slash-menu .tab-group ul li {
   border-radius: 1rem;
 }
+
+/* Editor document padding & layout */
+.milkdown .ProseMirror {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 3rem 3rem 8rem 4rem;
+  box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+  .milkdown .ProseMirror {
+    padding: 2rem 1.5rem 6rem 3rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .milkdown .ProseMirror {
+    padding: 1.25rem 0.5rem 4rem 2.25rem;
+  }
+
+  /* Make block handle compact on small screens */
+  .milkdown .milkdown-block-handle {
+    gap: 1px;
+  }
+
+  .milkdown .milkdown-block-handle .operation-item {
+    width: 20px;
+    height: 20px;
+    padding: 2px;
+    border-radius: 4px;
+  }
+
+  .milkdown .milkdown-block-handle .operation-item svg {
+    width: 16px;
+    height: 16px;
+  }
+}
