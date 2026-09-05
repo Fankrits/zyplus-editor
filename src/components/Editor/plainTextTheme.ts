@@ -21,11 +21,13 @@ export const plainTextTheme: Extension = EditorView.theme({
     maxWidth: "48rem",
     margin: "0 auto",
     padding: "1.5rem 1rem 8rem 1rem",
-    "@media (min-width: 640px)": {
-      padding: "3rem 1.5rem 12rem 1.5rem",
-    },
     fontSize: "15px",
     caretColor: "var(--accent, currentColor)",
+  },
+  "@media (min-width: 640px)": {
+    ".cm-content": {
+      padding: "3rem 1.5rem 12rem 1.5rem",
+    },
   },
   ".cm-line": {
     padding: "0",
