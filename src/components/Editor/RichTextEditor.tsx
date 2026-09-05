@@ -29,5 +29,5 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div ref={rootRef} className="h-full overflow-y-auto px-8 py-6" />;
+  return <div ref={rootRef} className="h-full overflow-y-auto px-4 sm:px-8 py-4 sm:py-6" />;
 }

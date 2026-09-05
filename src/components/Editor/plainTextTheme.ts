@@ -20,7 +20,10 @@ export const plainTextTheme: Extension = EditorView.theme({
   ".cm-content": {
     maxWidth: "48rem",
     margin: "0 auto",
-    padding: "3rem 1.5rem 12rem 1.5rem",
+    padding: "1.5rem 1rem 8rem 1rem",
+    "@media (min-width: 640px)": {
+      padding: "3rem 1.5rem 12rem 1.5rem",
+    },
     fontSize: "15px",
     caretColor: "var(--accent, currentColor)",
   },
