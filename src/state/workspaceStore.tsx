@@ -34,7 +34,7 @@ export interface WorkspaceState {
   activeTabId: string | null;
 }
 
-type Action =
+export type Action =
   | { type: "OPEN_ROOT"; rootPath: string; tree: TreeNode[] }
   | { type: "SET_TREE"; tree: TreeNode[] }
   | { type: "OPEN_TAB"; tab: TabState }
@@ -45,7 +45,14 @@ type Action =
   | { type: "SET_TAB_MODE"; id: string; mode: TabMode }
   | { type: "SAVE_TAB_SUCCESS"; id: string }
   | { type: "REMAP_TAB_PATHS"; oldPrefix: string; newPrefix: string }
-  | { type: "CLOSE_TABS_UNDER"; prefix: string };
+  | { type: "CLOSE_TABS_UNDER"; prefix: string }
+  | {
+      type: "RESTORE_WORKSPACE";
+      rootPath: string | null;
+      tree: TreeNode[];
+      tabs: TabState[];
+      activeTabId: string | null;
+    };
 
 const initialState: WorkspaceState = {
   rootPath: null,
@@ -65,8 +72,15 @@ function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: string |
   return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
 }
 
-function reducer(state: WorkspaceState, action: Action): WorkspaceState {
+export function workspaceReducer(state: WorkspaceState, action: Action): WorkspaceState {
   switch (action.type) {
+    case "RESTORE_WORKSPACE":
+      return {
+        rootPath: action.rootPath,
+        tree: action.tree,
+        tabs: action.tabs,
+        activeTabId: action.activeTabId,
+      };
     case "OPEN_ROOT":
       return {
         rootPath: action.rootPath,
@@ -168,7 +182,7 @@ interface WorkspaceContextValue {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(workspaceReducer, initialState);
 
   useEffect(() => {
     if (import.meta.env.DEV && typeof window !== "undefined") {
