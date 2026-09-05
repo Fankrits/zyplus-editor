@@ -5,6 +5,7 @@ import { FolderOpenIcon, FileAddIcon, FolderAddIcon, File01Icon } from "@hugeico
 import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
+import { Logo } from "../Logo";
 
 export interface SidebarContentProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
@@ -51,6 +52,8 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
   if (!state.rootPath) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-4">
+        <Logo size={40} className="mb-1 text-black dark:text-white" />
+        <span className="mb-2 text-sm font-semibold tracking-tight">Zyplus</span>
         <Button variant="primary" onPress={handleOpenFolder}>
           <HugeiconsIcon icon={FolderOpenIcon} size={18} />
           Open Folder
@@ -66,8 +69,11 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
   return (
     <div className="flex h-full w-full flex-col">
       <div className="flex shrink-0 items-center justify-between gap-1 px-2 py-2">
-        <span className="truncate text-xs font-medium uppercase tracking-wide text-neutral-500">
-          {state.rootPath.split(/[\\/]/).pop()}
+        <span className="flex min-w-0 items-center gap-2">
+          <Logo size={16} className="shrink-0 text-black dark:text-white" />
+          <span className="truncate text-xs font-medium uppercase tracking-wide text-neutral-500">
+            {state.rootPath.split(/[\\/]/).pop()}
+          </span>
         </span>
         <div className="flex shrink-0 gap-1">
           <Button
