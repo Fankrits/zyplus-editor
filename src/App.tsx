@@ -1,26 +1,35 @@
 import { useCallback, useEffect, useState } from "react";
 import { join } from "@tauri-apps/api/path";
-import { Button, Input, Label, Modal, TextField } from "@heroui/react";
+import { Button, Drawer, Input, Label, Modal, TextField } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
 import { WorkspaceProvider, useWorkspace } from "./state/workspaceStore";
 import * as fs from "./lib/fs";
 import { loadSession, saveSession } from "./lib/sessionStorage";
-import { Sidebar } from "./components/Sidebar/Sidebar";
+import { Sidebar, SidebarContent } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
+import { useIsDesktop } from "./lib/useMediaQuery";
 
 type CreateKind = "file" | "folder" | null;
 
 function AppShell() {
   const { state, activeTab, dispatch, refreshTree } = useWorkspace();
+  const isDesktop = useIsDesktop();
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return loadSession()?.isSidebarCollapsed ?? false;
   });
+
+  useEffect(() => {
+    if (isDesktop) {
+      setIsMobileDrawerOpen(false);
+    }
+  }, [isDesktop]);
 
   useEffect(() => {
     const current = loadSession() ?? {
@@ -52,6 +61,23 @@ function AppShell() {
     setCreateKind(kind);
   }, []);
 
+  const handleOpenFileFromDrawer = useCallback(
+    async (path: string, name: string) => {
+      setIsMobileDrawerOpen(false);
+      const existing = state.tabs.find((t) => t.filePath === path);
+      if (existing) {
+        dispatch({ type: "FOCUS_TAB", id: existing.id });
+        return;
+      }
+      const content = await fs.readTextFile(path);
+      dispatch({
+        type: "OPEN_TAB",
+        tab: { id: path, filePath: path, title: name, content, isDirty: false, mode: "rich" },
+      });
+    },
+    [state.tabs, dispatch],
+  );
+
   const closeCreateModal = () => {
     setCreateKind(null);
     setCreateTargetDir(null);
@@ -80,15 +106,45 @@ function AppShell() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white text-black dark:bg-neutral-900 dark:text-white">
-      <Sidebar onRequestCreate={requestCreate} isCollapsed={isSidebarCollapsed} />
+      {isDesktop && <Sidebar onRequestCreate={requestCreate} isCollapsed={isSidebarCollapsed} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar
           onRequestCreate={requestCreate}
-          isSidebarCollapsed={isSidebarCollapsed}
-          onToggleSidebar={() => setIsSidebarCollapsed((v) => !v)}
+          isSidebarCollapsed={isDesktop ? isSidebarCollapsed : !isMobileDrawerOpen}
+          onToggleSidebar={() => {
+            if (isDesktop) {
+              setIsSidebarCollapsed((v) => !v);
+            } else {
+              setIsMobileDrawerOpen((v) => !v);
+            }
+          }}
         />
         <EditorPane />
       </div>
+
+      {!isDesktop && (
+        <Drawer isOpen={isMobileDrawerOpen} onOpenChange={setIsMobileDrawerOpen}>
+          <Drawer.Backdrop>
+            <Drawer.Content placement="left" className="w-72 max-w-[85vw] h-full p-0">
+              <Drawer.Dialog className="h-full flex flex-col bg-white dark:bg-neutral-900">
+                <Drawer.Header className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <Drawer.Heading className="text-sm font-semibold truncate">Files</Drawer.Heading>
+                  <Drawer.CloseTrigger />
+                </Drawer.Header>
+                <Drawer.Body className="flex-1 p-0 overflow-hidden">
+                  <SidebarContent
+                    onRequestCreate={(kind, targetDir) => {
+                      setIsMobileDrawerOpen(false);
+                      requestCreate(kind, targetDir);
+                    }}
+                    onOpenFile={handleOpenFileFromDrawer}
+                  />
+                </Drawer.Body>
+              </Drawer.Dialog>
+            </Drawer.Content>
+          </Drawer.Backdrop>
+        </Drawer>
+      )}
 
       <Modal>
         <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>

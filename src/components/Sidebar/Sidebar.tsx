@@ -6,12 +6,12 @@ import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
 
-interface SidebarProps {
+export interface SidebarContentProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
-  isCollapsed: boolean;
+  onOpenFile?: (path: string, name: string) => void;
 }
 
-export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
+export function SidebarContent({ onRequestCreate, onOpenFile }: SidebarContentProps) {
   const { state, dispatch } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
@@ -21,7 +21,7 @@ export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
     dispatch({ type: "OPEN_ROOT", rootPath: picked, tree });
   }, [dispatch]);
 
-  const handleOpenFile = useCallback(
+  const defaultOpenFile = useCallback(
     async (path: string, name: string) => {
       const existing = state.tabs.find((t) => t.filePath === path);
       if (existing) {
@@ -37,11 +37,11 @@ export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
     [state.tabs, dispatch],
   );
 
-  if (isCollapsed) return null;
+  const handleOpenFile = onOpenFile ?? defaultOpenFile;
 
   if (!state.rootPath) {
     return (
-      <div className="flex h-full w-64 shrink-0 flex-col items-center justify-center gap-3 border-r border-black/10 p-4 dark:border-white/10">
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-4">
         <Button variant="primary" onPress={handleOpenFolder}>
           <HugeiconsIcon icon={FolderOpenIcon} size={18} />
           Open Folder
@@ -51,7 +51,7 @@ export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
   }
 
   return (
-    <div className="flex h-full w-64 shrink-0 flex-col border-r border-black/10 dark:border-white/10">
+    <div className="flex h-full w-full flex-col">
       <div className="flex shrink-0 items-center justify-between gap-1 px-2 py-2">
         <span className="truncate text-xs font-medium uppercase tracking-wide text-neutral-500">
           {state.rootPath.split(/[\\/]/).pop()}
@@ -79,5 +79,19 @@ export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
       </div>
       <FileTree onOpenFile={handleOpenFile} onRequestCreate={onRequestCreate} />
     </div>
+  );
+}
+
+export interface SidebarProps {
+  onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
+  isCollapsed: boolean;
+}
+
+export function Sidebar({ onRequestCreate, isCollapsed }: SidebarProps) {
+  if (isCollapsed) return null;
+  return (
+    <aside className="hidden md:flex h-full w-64 shrink-0 flex-col border-r border-black/10 dark:border-white/10">
+      <SidebarContent onRequestCreate={onRequestCreate} />
+    </aside>
   );
 }
