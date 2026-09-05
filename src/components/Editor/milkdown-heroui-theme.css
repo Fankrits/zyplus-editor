@@ -100,13 +100,121 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 0.5rem;
+  padding: 1.25rem 0.75rem;
   overflow-x: auto;
 }
 
 .milkdown .milkdown-code-block .preview svg {
   max-width: 100%;
   height: auto;
+}
+
+/* Rounded corners for process rectangles */
+.milkdown .preview svg .node:not(.cluster) rect:not([rx]),
+.milkdown .preview svg .node:not(.cluster) rect[rx="0"] {
+  rx: 8px;
+  ry: 8px;
+}
+
+/* Subtle node drop-shadow */
+.milkdown .preview svg .node .label-container,
+.milkdown .preview svg .node rect,
+.milkdown .preview svg .node polygon,
+.milkdown .preview svg .node circle,
+.milkdown .preview svg .node ellipse,
+.milkdown .preview svg .node path {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.06));
+}
+
+/* Decision diamond nodes (HeroUI Warning Amber palette) */
+.milkdown .preview svg .node polygon {
+  fill: #fefce8;
+  stroke: #f5a524;
+  stroke-width: 1.5px;
+}
+.milkdown .preview svg .node:has(polygon) .label span {
+  color: #92400e;
+  font-weight: 600;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node polygon {
+  fill: #2d2006;
+  stroke: #f5a524;
+  stroke-width: 1.5px;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(polygon) .label span {
+  color: #fde047;
+}
+
+/* Start/End circle and stadium nodes (HeroUI Success Emerald palette) */
+.milkdown .preview svg .node circle,
+.milkdown .preview svg .node ellipse,
+.milkdown .preview svg .node .outer-path path:not([stroke="none"]) {
+  stroke: #17c964 !important;
+  stroke-width: 1.5px !important;
+}
+.milkdown .preview svg .node .outer-path path[stroke="none"] {
+  fill: #e8faf0 !important;
+}
+.milkdown .preview svg .node:has(circle) .label span,
+.milkdown .preview svg .node:has(ellipse) .label span,
+.milkdown .preview svg .node:has(.outer-path) .label span {
+  color: #0e793c !important;
+  font-weight: 600;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node .outer-path path[stroke="none"] {
+  fill: #062e1a !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(circle) .label span,
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(ellipse) .label span,
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(.outer-path) .label span {
+  color: #a7f3d0 !important;
+}
+
+/* Database / Cylinder nodes (HeroUI Cyan palette) */
+.milkdown .preview svg .node path.basic {
+  fill: #ecfeff;
+  stroke: #06b6d4;
+  stroke-width: 1.5px;
+}
+.milkdown .preview svg .node:has(path.basic) .label span {
+  color: #0e7490;
+  font-weight: 600;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node path.basic {
+  fill: #082f38;
+  stroke: #06b6d4;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(path.basic) .label span {
+  color: #a5f3fc;
+}
+
+/* Connectors and Arrowhead */
+.milkdown .preview svg .edgePath .path {
+  stroke-width: 1.75px !important;
+}
+
+/* Edge Labels (Pill badge styling) */
+.milkdown .preview svg .edgeLabel {
+  font-size: 12px;
+  font-weight: 500;
+}
+.milkdown .preview svg .edgeLabel rect {
+  rx: 6px;
+  ry: 6px;
+  stroke-width: 1px;
+}
+
+/* Subgraphs / Clusters (HeroUI Card appearance) */
+.milkdown .preview svg .cluster rect {
+  rx: 12px !important;
+  ry: 12px !important;
+  stroke-width: 1.5px !important;
+  stroke-dasharray: 5 4 !important;
+}
+.milkdown .preview svg .cluster .nodeLabel {
+  font-weight: 600 !important;
+  font-size: 13px !important;
+  letter-spacing: 0.025em;
 }
 
 .milkdown .katex-display {
@@ -122,3 +230,4 @@
 .milkdown .milkdown-code-block:has(.codemirror-host:not(.hidden)) .preview-panel {
   display: none !important;
 }
+
