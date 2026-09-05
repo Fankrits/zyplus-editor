@@ -27,6 +27,8 @@ import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMen
 interface FileTreeProps {
   onOpenFile: (path: string, name: string) => void;
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
+  onOpenFolder?: () => void;
+  onOpenFilePicker?: () => void;
 }
 
 function basename(path: string): string {
@@ -34,7 +36,7 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
+export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
   const { state, dispatch, refreshTree } = useWorkspace();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -169,7 +171,7 @@ export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
   const handleTreeContextMenu = useCallback(
     (e: ReactMouseEvent) => {
       if (!state.rootPath) return;
-      contextMenu.open(e, [
+      const items: ContextMenuItem[] = [
         { key: "new-file", label: "New File", icon: FileAddIcon, onSelect: () => onRequestCreate("file", state.rootPath!) },
         {
           key: "new-folder",
@@ -177,9 +179,26 @@ export function FileTree({ onOpenFile, onRequestCreate }: FileTreeProps) {
           icon: FolderAddIcon,
           onSelect: () => onRequestCreate("folder", state.rootPath!),
         },
-      ]);
+      ];
+      if (onOpenFilePicker) {
+        items.push({
+          key: "open-file",
+          label: "Open File...",
+          icon: File01Icon,
+          onSelect: onOpenFilePicker,
+        });
+      }
+      if (onOpenFolder) {
+        items.push({
+          key: "open-folder",
+          label: "Open Folder...",
+          icon: FolderOpenIcon,
+          onSelect: onOpenFolder,
+        });
+      }
+      contextMenu.open(e, items);
     },
-    [state.rootPath, onRequestCreate, contextMenu],
+    [state.rootPath, onRequestCreate, contextMenu, onOpenFilePicker, onOpenFolder],
   );
 
   const renderNode = useCallback(

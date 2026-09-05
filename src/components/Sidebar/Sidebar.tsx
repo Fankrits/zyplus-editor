@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { Button } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { FolderOpenIcon, FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
+import { FolderOpenIcon, FileAddIcon, FolderAddIcon, File01Icon } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
@@ -9,9 +9,10 @@ import { FileTree } from "./FileTree";
 export interface SidebarContentProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
   onOpenFile?: (path: string, name: string) => void;
+  onOpenFolder?: () => void;
 }
 
-export function SidebarContent({ onRequestCreate, onOpenFile }: SidebarContentProps) {
+export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: SidebarContentProps) {
   const { state, dispatch } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
@@ -19,7 +20,8 @@ export function SidebarContent({ onRequestCreate, onOpenFile }: SidebarContentPr
     if (!picked) return;
     const tree = await fs.readDirRecursive(picked);
     dispatch({ type: "OPEN_ROOT", rootPath: picked, tree });
-  }, [dispatch]);
+    onOpenFolder?.();
+  }, [dispatch, onOpenFolder]);
 
   const defaultOpenFile = useCallback(
     async (path: string, name: string) => {
@@ -39,12 +41,23 @@ export function SidebarContent({ onRequestCreate, onOpenFile }: SidebarContentPr
 
   const handleOpenFile = onOpenFile ?? defaultOpenFile;
 
+  const handleOpenFilePicker = useCallback(async () => {
+    const picked = await fs.openFileDialog();
+    if (!picked) return;
+    const name = picked.split(/[\\/]/).pop() ?? picked;
+    handleOpenFile(picked, name);
+  }, [handleOpenFile]);
+
   if (!state.rootPath) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-4">
         <Button variant="primary" onPress={handleOpenFolder}>
           <HugeiconsIcon icon={FolderOpenIcon} size={18} />
           Open Folder
+        </Button>
+        <Button variant="ghost" size="sm" onPress={handleOpenFilePicker}>
+          <HugeiconsIcon icon={File01Icon} size={16} />
+          Open File
         </Button>
       </div>
     );
@@ -75,9 +88,32 @@ export function SidebarContent({ onRequestCreate, onOpenFile }: SidebarContentPr
           >
             <HugeiconsIcon icon={FolderAddIcon} size={16} />
           </Button>
+          <Button
+            size="sm"
+            isIconOnly
+            variant="ghost"
+            aria-label="Open file"
+            onPress={handleOpenFilePicker}
+          >
+            <HugeiconsIcon icon={File01Icon} size={16} />
+          </Button>
+          <Button
+            size="sm"
+            isIconOnly
+            variant="ghost"
+            aria-label="Open folder"
+            onPress={handleOpenFolder}
+          >
+            <HugeiconsIcon icon={FolderOpenIcon} size={16} />
+          </Button>
         </div>
       </div>
-      <FileTree onOpenFile={handleOpenFile} onRequestCreate={onRequestCreate} />
+      <FileTree
+        onOpenFile={handleOpenFile}
+        onRequestCreate={onRequestCreate}
+        onOpenFolder={handleOpenFolder}
+        onOpenFilePicker={handleOpenFilePicker}
+      />
     </div>
   );
 }

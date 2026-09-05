@@ -140,6 +140,7 @@ function AppShell() {
                       requestCreate(kind, targetDir);
                     }}
                     onOpenFile={handleOpenFileFromDrawer}
+                    onOpenFolder={() => setIsMobileDrawerOpen(false)}
                   />
                 </Drawer.Body>
               </Drawer.Dialog>

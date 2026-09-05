@@ -54,6 +54,21 @@ export async function openFolderDialog(): Promise<string | null> {
   return typeof result === "string" ? result : null;
 }
 
+export async function openFileDialog(): Promise<string | null> {
+  if (!isTauri()) {
+    return "/demo-workspace/README.md";
+  }
+  const result = await openDialog({
+    directory: false,
+    multiple: false,
+    filters: [
+      { name: "Markdown & Text", extensions: ["md", "markdown", "txt"] },
+      { name: "All Files", extensions: ["*"] },
+    ],
+  });
+  return typeof result === "string" ? result : null;
+}
+
 /** Reads a directory tree top to bottom, skipping dotfiles/dot-directories. */
 export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
   if (!isTauri()) {
