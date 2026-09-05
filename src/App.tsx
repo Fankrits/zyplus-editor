@@ -23,10 +23,14 @@ function AppShell() {
   });
 
   useEffect(() => {
-    const current = loadSession();
-    if (current) {
-      saveSession({ ...current, isSidebarCollapsed });
-    }
+    const current = loadSession() ?? {
+      version: 1,
+      rootPath: null,
+      tabs: [],
+      activeFilePath: null,
+      isSidebarCollapsed: false,
+    };
+    saveSession({ ...current, isSidebarCollapsed });
   }, [isSidebarCollapsed]);
 
   useEffect(() => {

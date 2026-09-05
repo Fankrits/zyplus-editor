@@ -22,11 +22,11 @@ export function isMarkdownFile(name: string): boolean {
 // In-memory filesystem for browser development / headless tests without native Tauri IPC
 const mockFsStore = new Map<string, string>([
   [
-    "/Users/fankrits/dev/Zyplus-editor/README.md",
+    "/demo-workspace/README.md",
     "# Tauri + React + Typescript\n\nThis template should help get you started developing with Tauri, React and Typescript in Vite.\n",
   ],
   [
-    "/Users/fankrits/dev/Zyplus-editor/notes.md",
+    "/demo-workspace/notes.md",
     "## Project Notes\n\n- Support session restoration\n- Fast and responsive\n",
   ],
 ]);
@@ -48,7 +48,7 @@ function mockBasename(p: string): string {
 
 export async function openFolderDialog(): Promise<string | null> {
   if (!isTauri()) {
-    return "/Users/fankrits/dev/Zyplus-editor";
+    return "/demo-workspace";
   }
   const result = await openDialog({ directory: true });
   return typeof result === "string" ? result : null;
