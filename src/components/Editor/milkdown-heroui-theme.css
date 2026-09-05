@@ -100,8 +100,16 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 1.25rem 0.75rem;
+  padding: 1.5rem 1rem;
   overflow-x: auto;
+  background-color: #ffffff;
+  border: 1px solid #e4e4e7;
+  border-radius: 0.5rem;
+}
+
+:is(.dark, [data-theme="dark"]) .milkdown .milkdown-code-block .preview {
+  background-color: #18181b;
+  border-color: #27272a;
 }
 
 .milkdown .milkdown-code-block .preview svg {
@@ -109,11 +117,9 @@
   height: auto;
 }
 
-/* Rounded corners for process rectangles */
-.milkdown .preview svg .node:not(.cluster) rect:not([rx]),
-.milkdown .preview svg .node:not(.cluster) rect[rx="0"] {
-  rx: 8px;
-  ry: 8px;
+/* Base crisp node strokes (no rounded corners) */
+.milkdown .preview svg .node :is(rect, polygon, circle, ellipse, path.basic, .outer-path path) {
+  stroke-width: 1.75px !important;
 }
 
 /* Subtle node drop-shadow */
@@ -123,93 +129,259 @@
 .milkdown .preview svg .node circle,
 .milkdown .preview svg .node ellipse,
 .milkdown .preview svg .node path {
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.06));
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.05));
 }
 
-/* Decision diamond nodes (HeroUI Warning Amber palette) */
-.milkdown .preview svg .node polygon {
-  fill: #fefce8;
-  stroke: #f5a524;
-  stroke-width: 1.5px;
+/* Multiple vibrant colors cycled across nodes (Light Mode) */
+/* 1. Vibrant Blue */
+.milkdown .preview svg g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #eff6ff !important;
+  stroke: #006fee !important;
 }
-.milkdown .preview svg .node:has(polygon) .label span {
-  color: #92400e;
-  font-weight: 600;
+.milkdown .preview svg g > .node:nth-of-type(6n + 1) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #eff6ff !important;
 }
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node polygon {
-  fill: #2d2006;
-  stroke: #f5a524;
-  stroke-width: 1.5px;
+.milkdown .preview svg g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #006fee !important;
 }
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(polygon) .label span {
-  color: #fde047;
+.milkdown .preview svg g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #1e40af !important;
+  fill: #1e40af !important;
+  font-weight: 600 !important;
 }
 
-/* Start/End circle and stadium nodes (HeroUI Success Emerald palette) */
-.milkdown .preview svg .node circle,
-.milkdown .preview svg .node ellipse,
-.milkdown .preview svg .node .outer-path path:not([stroke="none"]) {
+/* 2. Vibrant Purple */
+.milkdown .preview svg g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #faf5ff !important;
+  stroke: #7828c8 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 2) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #faf5ff !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #7828c8 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #581c87 !important;
+  fill: #581c87 !important;
+  font-weight: 600 !important;
+}
+
+/* 3. Vibrant Emerald */
+.milkdown .preview svg g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #f0fdf4 !important;
   stroke: #17c964 !important;
-  stroke-width: 1.5px !important;
 }
-.milkdown .preview svg .node .outer-path path[stroke="none"] {
-  fill: #e8faf0 !important;
+.milkdown .preview svg g > .node:nth-of-type(6n + 3) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #f0fdf4 !important;
 }
-.milkdown .preview svg .node:has(circle) .label span,
-.milkdown .preview svg .node:has(ellipse) .label span,
-.milkdown .preview svg .node:has(.outer-path) .label span {
-  color: #0e793c !important;
-  font-weight: 600;
+.milkdown .preview svg g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #17c964 !important;
 }
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node .outer-path path[stroke="none"] {
+.milkdown .preview svg g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #14532d !important;
+  fill: #14532d !important;
+  font-weight: 600 !important;
+}
+
+/* 4. Vibrant Amber */
+.milkdown .preview svg g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #fffbeb !important;
+  stroke: #f5a524 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 4) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #fffbeb !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #f5a524 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #78350f !important;
+  fill: #78350f !important;
+  font-weight: 600 !important;
+}
+
+/* 5. Vibrant Rose */
+.milkdown .preview svg g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #fff1f2 !important;
+  stroke: #f31260 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 5) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #fff1f2 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #f31260 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #881337 !important;
+  fill: #881337 !important;
+  font-weight: 600 !important;
+}
+
+/* 6. Vibrant Cyan */
+.milkdown .preview svg g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #ecfeff !important;
+  stroke: #06b6d4 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 6) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #ecfeff !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #06b6d4 !important;
+}
+.milkdown .preview svg g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #155e75 !important;
+  fill: #155e75 !important;
+  font-weight: 600 !important;
+}
+
+/* Multiple vibrant colors cycled across nodes (Dark Mode) */
+/* 1. Dark Blue */
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 1) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #0c2b5e !important;
+  stroke: #38bdf8 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 1) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #0c2b5e !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 1) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #38bdf8 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 1) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #e0f2fe !important;
+  fill: #e0f2fe !important;
+  font-weight: 600 !important;
+}
+
+/* 2. Dark Purple */
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 2) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #2e124d !important;
+  stroke: #c084fc !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 2) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #2e124d !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 2) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #c084fc !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 2) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #f3e8ff !important;
+  fill: #f3e8ff !important;
+  font-weight: 600 !important;
+}
+
+/* 3. Dark Emerald */
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 3) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #062e1a !important;
+  stroke: #4ade80 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 3) .outer-path path[stroke="none"]:not([style*="fill"]) {
   fill: #062e1a !important;
 }
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(circle) .label span,
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(ellipse) .label span,
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(.outer-path) .label span {
-  color: #a7f3d0 !important;
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 3) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #4ade80 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 3) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #dcfce7 !important;
+  fill: #dcfce7 !important;
+  font-weight: 600 !important;
 }
 
-/* Database / Cylinder nodes (HeroUI Cyan palette) */
-.milkdown .preview svg .node path.basic {
-  fill: #ecfeff;
-  stroke: #06b6d4;
-  stroke-width: 1.5px;
+/* 4. Dark Amber */
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 4) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #2d2006 !important;
+  stroke: #fbbf24 !important;
 }
-.milkdown .preview svg .node:has(path.basic) .label span {
-  color: #0e7490;
-  font-weight: 600;
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 4) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #2d2006 !important;
 }
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node path.basic {
-  fill: #082f38;
-  stroke: #06b6d4;
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 4) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #fbbf24 !important;
 }
-:is(.dark, [data-theme="dark"]) .milkdown .preview svg .node:has(path.basic) .label span {
-  color: #a5f3fc;
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 4) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #fef3c7 !important;
+  fill: #fef3c7 !important;
+  font-weight: 600 !important;
 }
 
-/* Connectors and Arrowhead */
+/* 5. Dark Rose */
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 5) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #360c1c !important;
+  stroke: #fb7185 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 5) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #360c1c !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 5) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #fb7185 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 5) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #ffe4e6 !important;
+  fill: #ffe4e6 !important;
+  font-weight: 600 !important;
+}
+
+/* 6. Dark Cyan */
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 6) :is(rect, polygon, circle, ellipse, path.basic):not([style*="fill"]) {
+  fill: #082f38 !important;
+  stroke: #22d3ee !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 6) .outer-path path[stroke="none"]:not([style*="fill"]) {
+  fill: #082f38 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 6) .outer-path path:not([stroke="none"]):not([style*="stroke"]) {
+  stroke: #22d3ee !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg g > .node:nth-of-type(6n + 6) :is(.label span, .label text, text):not([style*="color"]):not([style*="fill"]) {
+  color: #cffafe !important;
+  fill: #cffafe !important;
+  font-weight: 600 !important;
+}
+
+/* Connectors and Arrowheads */
 .milkdown .preview svg .edgePath .path {
+  stroke: #64748b !important;
   stroke-width: 1.75px !important;
 }
+.milkdown .preview svg .marker {
+  fill: #64748b !important;
+  stroke: #64748b !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .edgePath .path {
+  stroke: #94a3b8 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .marker {
+  fill: #94a3b8 !important;
+  stroke: #94a3b8 !important;
+}
 
-/* Edge Labels (Pill badge styling) */
+/* Edge Labels (Clean badge styling) */
 .milkdown .preview svg .edgeLabel {
   font-size: 12px;
   font-weight: 500;
 }
 .milkdown .preview svg .edgeLabel rect {
-  rx: 6px;
-  ry: 6px;
+  fill: #ffffff !important;
+  stroke: #cbd5e1 !important;
   stroke-width: 1px;
 }
+.milkdown .preview svg .edgeLabel :is(span, text) {
+  color: #334155 !important;
+  fill: #334155 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .edgeLabel rect {
+  fill: #18181b !important;
+  stroke: #475569 !important;
+}
+:is(.dark, [data-theme="dark"]) .milkdown .preview svg .edgeLabel :is(span, text) {
+  color: #e2e8f0 !important;
+  fill: #e2e8f0 !important;
+}
 
-/* Subgraphs / Clusters (HeroUI Card appearance) */
+/* Subgraphs / Clusters (Crisp rectangular card without forced rounded corners) */
 .milkdown .preview svg .cluster rect {
-  rx: 12px !important;
-  ry: 12px !important;
   stroke-width: 1.5px !important;
-  stroke-dasharray: 5 4 !important;
+  stroke-dasharray: 4 4 !important;
 }
 .milkdown .preview svg .cluster .nodeLabel {
   font-weight: 600 !important;
