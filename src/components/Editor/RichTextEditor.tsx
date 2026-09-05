@@ -29,6 +29,8 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
         [Crepe.Feature.CodeMirror]: {
           languages: supportedLanguages,
           renderPreview: renderCodeBlockPreview,
+          previewOnlyByDefault: true,
+          previewToggleText: (previewOnlyMode) => (previewOnlyMode ? "Edit" : "Preview"),
         },
       },
     });
