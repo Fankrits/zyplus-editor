@@ -87,10 +87,23 @@
   }
 }
 
-/* Code block preview styling for diagrams (Mermaid) and math (KaTeX) */
+/* Clean code block: border only, no gutter or fill */
 .milkdown .milkdown-code-block {
+  border: 1px solid var(--crepe-color-outline);
   border-radius: 0.75rem;
+  background: transparent;
 }
+
+.milkdown .milkdown-code-block .cm-editor,
+.milkdown .milkdown-code-block .cm-gutters {
+  background: transparent;
+}
+
+.milkdown .milkdown-code-block .cm-gutters {
+  display: none;
+}
+
+/* Code block preview styling for diagrams (Mermaid) and math (KaTeX) */
 
 .milkdown .milkdown-code-block .preview-panel {
   padding: 0.5rem 0 0.25rem;
@@ -109,10 +122,6 @@
   overflow-x: auto;
   border: none !important;
   border-radius: 0 !important;
-}
-
-:is(.dark, [data-theme="dark"]) .milkdown .milkdown-code-block {
-  background-color: #18181b;
 }
 
 .milkdown .milkdown-code-block .preview svg {
