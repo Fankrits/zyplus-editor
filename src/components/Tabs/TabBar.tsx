@@ -80,7 +80,7 @@ const TabItem = memo(function TabItem({
       } ${isDragging ? "opacity-40" : ""} ${isDragOver ? "status-focused" : ""} focus-visible:status-focused`}
     >
       {tab.isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />}
-      <span className="max-w-[14rem] truncate">{tab.title}</span>
+      <span className="max-w-[8rem] sm:max-w-[14rem] truncate">{tab.title}</span>
       <button
         type="button"
         aria-label={`Close ${tab.title}`}
@@ -100,9 +100,17 @@ interface TabBarProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  isDesktop?: boolean;
+  isMobileDrawerOpen?: boolean;
 }
 
-export function TabBar({ onRequestCreate, isSidebarCollapsed, onToggleSidebar }: TabBarProps) {
+export function TabBar({
+  onRequestCreate,
+  isSidebarCollapsed,
+  onToggleSidebar,
+  isDesktop = true,
+  isMobileDrawerOpen = false,
+}: TabBarProps) {
   const { state, activeTab, dispatch } = useWorkspace();
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -232,10 +240,18 @@ export function TabBar({ onRequestCreate, isSidebarCollapsed, onToggleSidebar }:
       >
         <button
           type="button"
-          aria-label={isSidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
+          aria-label={
+            isDesktop
+              ? isSidebarCollapsed
+                ? "Show sidebar"
+                : "Hide sidebar"
+              : isMobileDrawerOpen
+                ? "Close file drawer"
+                : "Open file drawer"
+          }
           onClick={onToggleSidebar}
           className={`flex size-8 shrink-0 items-center justify-center rounded-3xl no-highlight outline-none hover:opacity-70 focus-visible:status-focused ${
-            isSidebarCollapsed ? "text-muted" : "text-accent"
+            (isDesktop ? !isSidebarCollapsed : isMobileDrawerOpen) ? "text-accent" : "text-muted"
           }`}
         >
           <HugeiconsIcon icon={SidebarLeftIcon} size={16} strokeWidth={2} />
@@ -271,19 +287,23 @@ export function TabBar({ onRequestCreate, isSidebarCollapsed, onToggleSidebar }:
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <Button
               size="sm"
+              isIconOnly={!isDesktop}
+              aria-label="Rich text editor"
               variant={activeTab.mode === "rich" ? "secondary" : "ghost"}
               onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "rich" })}
             >
               <HugeiconsIcon icon={TextFontIcon} size={15} />
-              Rich
+              {isDesktop && "Rich"}
             </Button>
             <Button
               size="sm"
+              isIconOnly={!isDesktop}
+              aria-label="Plain text editor"
               variant={activeTab.mode === "plain" ? "secondary" : "ghost"}
               onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "plain" })}
             >
               <HugeiconsIcon icon={SourceCodeIcon} size={15} />
-              Plain
+              {isDesktop && "Plain"}
             </Button>
           </div>
         )}

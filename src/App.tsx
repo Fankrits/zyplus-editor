@@ -110,7 +110,9 @@ function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar
           onRequestCreate={requestCreate}
-          isSidebarCollapsed={isDesktop ? isSidebarCollapsed : !isMobileDrawerOpen}
+          isSidebarCollapsed={isSidebarCollapsed}
+          isDesktop={isDesktop}
+          isMobileDrawerOpen={isMobileDrawerOpen}
           onToggleSidebar={() => {
             if (isDesktop) {
               setIsSidebarCollapsed((v) => !v);
