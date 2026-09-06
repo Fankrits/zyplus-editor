@@ -24,6 +24,7 @@ describe("workspaceReducer", () => {
         filePath: "/project/doc1.md",
         title: "doc1.md",
         content: "# Doc 1",
+        savedContent: "# Doc 1",
         isDirty: false,
         mode: "rich",
       },
@@ -32,6 +33,7 @@ describe("workspaceReducer", () => {
         filePath: "/project/doc2.md",
         title: "doc2.md",
         content: "Plain Doc",
+        savedContent: "Plain Doc",
         isDirty: false,
         mode: "plain",
       },
@@ -61,6 +63,7 @@ describe("workspaceReducer", () => {
           filePath: "/previous/doc.md",
           title: "doc.md",
           content: "content",
+          savedContent: "saved",
           isDirty: true,
           mode: "rich",
         },
@@ -112,6 +115,7 @@ describe("restoreWorkspaceFromSession", () => {
         tabs: [],
         activeFilePath: null,
         isSidebarCollapsed: false,
+        isAutosaveEnabled: false,
       }),
     ).toBeNull();
   });
@@ -139,6 +143,7 @@ describe("restoreWorkspaceFromSession", () => {
       ],
       activeFilePath: "/project/doc1.md",
       isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
     };
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);
@@ -186,6 +191,7 @@ describe("restoreWorkspaceFromSession", () => {
       ],
       activeFilePath: "/project/deleted.md", // active tab was deleted
       isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
     };
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);
@@ -211,6 +217,7 @@ describe("restoreWorkspaceFromSession", () => {
       tabs: [{ filePath: "/removed-folder/doc1.md", mode: "rich" }],
       activeFilePath: "/removed-folder/doc1.md",
       isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
     };
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);
@@ -231,6 +238,7 @@ describe("restoreWorkspaceFromSession", () => {
       tabs: [],
       activeFilePath: null,
       isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
     };
 
     const restored = await restoreWorkspaceFromSession(session, mockFs);

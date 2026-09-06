@@ -46,6 +46,7 @@ async function mountWorkspace() {
         filePath: PATH,
         title: "notes.md",
         content: await fs.readTextFile(PATH),
+        savedContent: await fs.readTextFile(PATH),
         isDirty: false,
         mode: "rich",
       },

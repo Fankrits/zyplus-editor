@@ -30,6 +30,7 @@ describe("open actions & workspace transitions", () => {
       filePath: "/external/notes.md",
       title: "notes.md",
       content: "# External notes",
+      savedContent: "# External notes",
       isDirty: false,
       mode: "rich",
     };
@@ -48,7 +49,7 @@ describe("open actions & workspace transitions", () => {
     const initial: WorkspaceState = {
       roots: ["/old-project"],
       tree: [{ id: "/old-project", name: "old-project", isFolder: true, children: [] }],
-      tabs: [{ id: "/old-project/a.md", filePath: "/old-project/a.md", title: "a.md", content: "", isDirty: false, mode: "rich" }],
+      tabs: [{ id: "/old-project/a.md", filePath: "/old-project/a.md", title: "a.md", content: "", savedContent: "", isDirty: false, mode: "rich" }],
       activeTabId: "/old-project/a.md",
     };
 
@@ -78,8 +79,8 @@ describe("open actions & workspace transitions", () => {
         { id: "/b", name: "b", isFolder: true, children: [] },
       ],
       tabs: [
-        { id: "/a/one.md", filePath: "/a/one.md", title: "one.md", content: "", isDirty: false, mode: "rich" },
-        { id: "/b/two.md", filePath: "/b/two.md", title: "two.md", content: "", isDirty: false, mode: "rich" },
+        { id: "/a/one.md", filePath: "/a/one.md", title: "one.md", content: "", savedContent: "", isDirty: false, mode: "rich" },
+        { id: "/b/two.md", filePath: "/b/two.md", title: "two.md", content: "", savedContent: "", isDirty: false, mode: "rich" },
       ],
       activeTabId: "/a/one.md",
     };

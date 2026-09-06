@@ -90,6 +90,7 @@ describe("sessionStorage", () => {
       tabs: [],
       activeFilePath: null,
       isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
     };
     saveSession(session);
     clearSession();
