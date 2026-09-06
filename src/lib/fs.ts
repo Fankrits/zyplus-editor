@@ -14,7 +14,7 @@ import {
   basename as tauriBasename,
   documentDir,
 } from "@tauri-apps/api/path";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri, invoke } from "@tauri-apps/api/core";
 import type { TreeNode } from "../state/workspaceReducer";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".txt"];
@@ -239,4 +239,16 @@ export async function saveFileAs(defaultName: string, content: string): Promise<
   }
   const path = await saveDialog({ defaultPath: defaultName });
   if (path) await writeTextFileRaw(path, content);
+}
+
+/** Files the OS handed us (double-click / "Open With"). Drains the native queue. */
+export async function takePendingFiles(): Promise<string[]> {
+  if (!isTauri()) return [];
+  return invoke<string[]>("take_pending_files");
+}
+
+/** Registers Zyplus as the system handler for Markdown. macOS only. */
+export async function setDefaultMarkdownApp(): Promise<void> {
+  if (!isTauri()) throw new Error("Only available in the desktop app.");
+  await invoke("set_default_markdown_app");
 }

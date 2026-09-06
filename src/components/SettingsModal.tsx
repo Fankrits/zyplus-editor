@@ -7,6 +7,7 @@ import {
   KeyboardIcon,
   InformationCircleIcon,
   FolderOpenIcon,
+  CheckmarkCircle02Icon,
 } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../state/workspaceStore";
 import * as fs from "../lib/fs";
@@ -108,6 +109,7 @@ export function SettingsModal({
   const section = controlledSection ?? localSection;
   const setSection = onSectionChange ?? setLocalSection;
   const [theme, setThemeState] = useState<Theme>(getTheme);
+  const [defaultAppState, setDefaultAppState] = useState<string | null>(null);
 
   const pickTheme = (next: Theme) => {
     setTheme(next);
@@ -120,6 +122,15 @@ export function SettingsModal({
     setDefaultFolder(picked);
     if (!state.roots.includes(picked)) {
       dispatch({ type: "ADD_ROOT", rootPath: picked, node: await fs.readProjectNode(picked) });
+    }
+  };
+
+  const makeDefaultApp = async () => {
+    try {
+      await fs.setDefaultMarkdownApp();
+      setDefaultAppState("done");
+    } catch (err) {
+      setDefaultAppState(String(err));
     }
   };
 
@@ -174,6 +185,31 @@ export function SettingsModal({
                           <Button size="sm" variant="secondary" onPress={pickDefaultFolder}>
                             Change
                           </Button>
+                        </div>
+                      </Field>
+                      <Field
+                        label="Default Markdown app"
+                        hint={
+                          isMac
+                            ? "Open .md files with Zyplus when you double-click them."
+                            : "Set Zyplus as the handler for .md in your system's default apps settings."
+                        }
+                      >
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            isDisabled={!isMac || defaultAppState === "done"}
+                            onPress={makeDefaultApp}
+                          >
+                            {defaultAppState === "done" ? "Zyplus is the default" : "Make default"}
+                          </Button>
+                          {defaultAppState === "done" && (
+                            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-accent" />
+                          )}
+                          {defaultAppState && defaultAppState !== "done" && (
+                            <span className="text-xs text-danger">{defaultAppState}</span>
+                          )}
                         </div>
                       </Field>
                       <Field label="Autosave" hint="Saves open files a moment after you stop typing.">

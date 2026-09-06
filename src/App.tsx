@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { join } from "@tauri-apps/api/path";
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Button, Drawer, Input, Label, Modal, TextField } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
@@ -46,6 +48,25 @@ function AppShell() {
       setIsMobileDrawerOpen(false);
     }
   }, [isDesktop]);
+
+  // Files opened from the OS (double-click, "Open With") once we're registered as a handler.
+  useEffect(() => {
+    if (!isHydrated) return;
+    let cancelled = false;
+    const drain = async () => {
+      for (const path of await fs.takePendingFiles()) {
+        if (cancelled) return;
+        await openFile(path);
+      }
+    };
+    drain();
+    if (!isTauri()) return;
+    const unlisten = listen("open-files", drain);
+    return () => {
+      cancelled = true;
+      unlisten.then((off) => off());
+    };
+  }, [isHydrated, openFile]);
 
   useEffect(() => {
     const current = loadSession() ?? {

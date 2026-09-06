@@ -5160,6 +5160,7 @@ dependencies = [
 name = "zyplus-editor"
 version = "0.1.0"
 dependencies = [
+ "core-foundation",
  "serde",
  "serde_json",
  "tauri",
