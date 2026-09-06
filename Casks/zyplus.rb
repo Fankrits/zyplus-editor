@@ -8,7 +8,7 @@ cask "zyplus" do
   homepage "https://github.com/Fankrits/zyplus-editor"
 
   auto_updates true
-  depends_on macos: ">= :big_sur"
+  depends_on macos: :big_sur
 
   app "Zyplus.app"
 
