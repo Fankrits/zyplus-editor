@@ -70,7 +70,7 @@ irm https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.ps1 | 
 | macOS (Apple silicon + Intel) | `brew` or `install.sh` — universal build |
 | Linux x86_64 / arm64 | `install.sh` — AppImage; `.deb` / `.rpm` on the release page |
 | Windows x64 | `install.ps1` |
-| Windows arm64 | no build yet — the x64 installer runs under emulation |
+| Windows arm64 | `install.ps1` falls back to the x64 build under emulation — Bun has no Windows-arm64 release, so no native build |
 
 ## Development
 
