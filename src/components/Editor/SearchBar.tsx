@@ -45,13 +45,14 @@ interface SearchBarProps {
   mode: TabMode;
   /** The element holding the rendered document, searched directly in rich mode. */
   containerRef: RefObject<HTMLDivElement | null>;
+  initialShowReplace?: boolean;
   onClose: () => void;
 }
 
-export function SearchBar({ mode, containerRef, onClose }: SearchBarProps) {
+export function SearchBar({ mode, containerRef, initialShowReplace = false, onClose }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [replacement, setReplacement] = useState("");
-  const [showReplace, setShowReplace] = useState(false);
+  const [showReplace, setShowReplace] = useState(initialShowReplace);
   const [revision, setRevision] = useState(0);
   const [index, setIndex] = useState(0);
   const [total, setTotal] = useState(0);

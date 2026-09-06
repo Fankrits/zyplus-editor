@@ -4,29 +4,19 @@ import { RichTextEditor } from "./RichTextEditor";
 import { PlainTextEditor } from "./PlainTextEditor";
 import { SearchBar } from "./SearchBar";
 import { Wordmark } from "../Logo";
-
-/** Anything that wants to open the find bar fires this on `window`. */
-export const FIND_EVENT = "zyplus:find";
+import { FIND_EVENT } from "../../lib/commands";
 
 export function EditorPane() {
   const { activeTab, dispatch } = useWorkspace();
   const contentRef = useRef<HTMLDivElement>(null);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [search, setSearch] = useState<{ replace: boolean } | null>(null);
 
   useEffect(() => {
-    const open = () => setIsSearchOpen(true);
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
-        e.preventDefault();
-        open();
-      }
+    const open = (e: Event) => {
+      setSearch({ replace: (e as CustomEvent<{ replace?: boolean }>).detail?.replace ?? false });
     };
     window.addEventListener(FIND_EVENT, open);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener(FIND_EVENT, open);
-      window.removeEventListener("keydown", onKeyDown);
-    };
+    return () => window.removeEventListener(FIND_EVENT, open);
   }, []);
 
   const handleChange = useCallback(
@@ -48,12 +38,13 @@ export function EditorPane() {
 
   return (
     <div className="relative flex h-full flex-1 min-w-0 flex-col">
-      {isSearchOpen && (
+      {search && (
         <SearchBar
           key={activeTab.id + activeTab.mode}
           mode={activeTab.mode}
+          initialShowReplace={search.replace}
           containerRef={contentRef}
-          onClose={() => setIsSearchOpen(false)}
+          onClose={() => setSearch(null)}
         />
       )}
       <div ref={contentRef} className="print-target min-h-0 flex-1">

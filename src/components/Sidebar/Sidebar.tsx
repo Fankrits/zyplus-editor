@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { Button } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -12,7 +12,7 @@ import { useWorkspace } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
 import { Logo, Wordmark } from "../Logo";
-import { SettingsModal } from "../SettingsModal";
+import { emit, SETTINGS_EVENT } from "../../lib/commands";
 
 export interface SidebarContentProps {
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
@@ -21,34 +21,13 @@ export interface SidebarContentProps {
 }
 
 export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: SidebarContentProps) {
-  const { state, dispatch, activeTab, defaultFolder } = useWorkspace();
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const { state, activeTab, defaultFolder, openFile, addFolder } = useWorkspace();
 
   const handleOpenFolder = useCallback(async () => {
-    const picked = await fs.openFolderDialog();
-    if (!picked) return;
-    const node = await fs.readProjectNode(picked);
-    dispatch({ type: "ADD_ROOT", rootPath: picked, node });
-    onOpenFolder?.();
-  }, [dispatch, onOpenFolder]);
+    if (await addFolder()) onOpenFolder?.();
+  }, [addFolder, onOpenFolder]);
 
-  const defaultOpenFile = useCallback(
-    async (path: string, name: string) => {
-      const existing = state.tabs.find((t) => t.filePath === path);
-      if (existing) {
-        dispatch({ type: "FOCUS_TAB", id: existing.id });
-        return;
-      }
-      const content = await fs.readTextFile(path);
-      dispatch({
-        type: "OPEN_TAB",
-        tab: { id: path, filePath: path, title: name, content, isDirty: false, mode: "rich" },
-      });
-    },
-    [state.tabs, dispatch],
-  );
-
-  const handleOpenFile = onOpenFile ?? defaultOpenFile;
+  const handleOpenFile = onOpenFile ?? openFile;
 
   const handleOpenFilePicker = useCallback(async () => {
     const picked = await fs.openFileDialog();
@@ -141,13 +120,12 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
           size="sm"
           variant="ghost"
           className="w-full justify-start"
-          onPress={() => setIsSettingsOpen(true)}
+          onPress={() => emit(SETTINGS_EVENT)}
         >
           <HugeiconsIcon icon={Settings01Icon} size={16} />
           Settings
         </Button>
       </div>
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 }

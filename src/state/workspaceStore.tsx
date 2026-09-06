@@ -8,9 +8,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { readProjectNode, writeTextFile } from "../lib/fs";
+import {
+  openFileDialog,
+  openFolderDialog,
+  readProjectNode,
+  readTextFile,
+  writeTextFile,
+} from "../lib/fs";
 import { loadSession, saveSession } from "../lib/sessionStorage";
 import {
+  basenameOf,
   workspaceReducer,
   restoreWorkspaceFromSession,
   initialState,
@@ -29,6 +36,12 @@ interface WorkspaceContextValue {
   dispatch: React.Dispatch<Action>;
   activeTab: TabState | null;
   refreshTree: () => Promise<void>;
+  /** Opens a file in a tab, focusing it if already open. */
+  openFile: (path: string, name?: string) => Promise<void>;
+  /** Prompts for a folder and adds it as a project root. Returns the picked path. */
+  addFolder: () => Promise<string | null>;
+  /** Prompts for a file and opens it in a tab. Returns the picked path. */
+  openFilePicker: () => Promise<string | null>;
   /** False until the stored session has been read back. */
   isHydrated: boolean;
   /** Folder created on first run; where the header's "new file" lands. */
@@ -133,6 +146,44 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SET_TREE", tree });
   }, [state.roots]);
 
+  const openFile = useCallback(
+    async (path: string, name?: string) => {
+      const existing = state.tabs.find((t) => t.filePath === path);
+      if (existing) {
+        dispatch({ type: "FOCUS_TAB", id: existing.id });
+        return;
+      }
+      const content = await readTextFile(path);
+      dispatch({
+        type: "OPEN_TAB",
+        tab: {
+          id: path,
+          filePath: path,
+          title: name ?? basenameOf(path),
+          content,
+          isDirty: false,
+          mode: "rich",
+        },
+      });
+    },
+    [state.tabs],
+  );
+
+  const addFolder = useCallback(async () => {
+    const picked = await openFolderDialog();
+    if (!picked) return null;
+    const node = await readProjectNode(picked);
+    dispatch({ type: "ADD_ROOT", rootPath: picked, node });
+    return picked;
+  }, []);
+
+  const openFilePicker = useCallback(async () => {
+    const picked = await openFileDialog();
+    if (!picked) return null;
+    await openFile(picked);
+    return picked;
+  }, [openFile]);
+
   const activeTab = useMemo(
     () => state.tabs.find((t) => t.id === state.activeTabId) ?? null,
     [state.tabs, state.activeTabId],
@@ -144,13 +195,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       dispatch,
       activeTab,
       refreshTree,
+      openFile,
+      addFolder,
+      openFilePicker,
       isHydrated,
       defaultFolder,
       setDefaultFolder,
       isAutosaveEnabled,
       setIsAutosaveEnabled,
     }),
-    [state, activeTab, refreshTree, isHydrated, defaultFolder, isAutosaveEnabled],
+    [
+      state,
+      activeTab,
+      refreshTree,
+      openFile,
+      addFolder,
+      openFilePicker,
+      isHydrated,
+      defaultFolder,
+      isAutosaveEnabled,
+    ],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

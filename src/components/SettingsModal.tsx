@@ -11,6 +11,7 @@ import {
 import { useWorkspace } from "../state/workspaceStore";
 import * as fs from "../lib/fs";
 import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
+import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL, isMac } from "../lib/shortcuts";
 import { Logo } from "./Logo";
 
 const SECTIONS = [
@@ -22,14 +23,22 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
-const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(hone|ad)/.test(navigator.userAgent);
-const MOD = IS_MAC ? "⌘" : "Ctrl";
+const SHORTCUT_GROUPS = [...new Set(SHORTCUTS.map((s) => s.group))];
 
-const SHORTCUTS: { keys: string[]; label: string }[] = [
-  { keys: [MOD, "S"], label: "Save the current file" },
-  { keys: [MOD, "N"], label: "New file" },
-  { keys: [MOD, "B"], label: "Toggle sidebar" },
-];
+function Keys({ keys }: { keys: string[] }) {
+  return (
+    <span className="flex shrink-0 gap-1">
+      {keys.map((k, i) => (
+        <kbd
+          key={i}
+          className="min-w-6 rounded-md border border-border bg-surface-secondary px-1.5 py-0.5 text-center text-xs text-muted"
+        >
+          {k}
+        </kbd>
+      ))}
+    </span>
+  );
+}
 
 const THEME_IDS = Object.keys(THEMES) as Theme[];
 const THEME_GROUPS = [...new Set(THEME_IDS.map((t) => THEMES[t].group))];
@@ -80,10 +89,24 @@ function ThemePreview({ theme }: { theme: Theme }) {
   );
 }
 
-export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export type { SectionId as SettingsSection };
+
+export function SettingsModal({
+  isOpen,
+  onClose,
+  section: controlledSection,
+  onSectionChange,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  section?: SectionId;
+  onSectionChange?: (section: SectionId) => void;
+}) {
   const { state, dispatch, defaultFolder, setDefaultFolder, isAutosaveEnabled, setIsAutosaveEnabled } =
     useWorkspace();
-  const [section, setSection] = useState<SectionId>("general");
+  const [localSection, setLocalSection] = useState<SectionId>("general");
+  const section = controlledSection ?? localSection;
+  const setSection = onSectionChange ?? setLocalSection;
   const [theme, setThemeState] = useState<Theme>(getTheme);
 
   const pickTheme = (next: Theme) => {
@@ -201,23 +224,29 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
                   )}
 
                   {section === "shortcuts" && (
-                    <ul className="flex flex-col divide-y divide-border">
-                      {SHORTCUTS.map((s) => (
-                        <li key={s.label} className="flex items-center justify-between gap-4 py-2.5">
-                          <span className="text-foreground">{s.label}</span>
-                          <span className="flex shrink-0 gap-1">
-                            {s.keys.map((k) => (
-                              <kbd
-                                key={k}
-                                className="min-w-6 rounded-md border border-border bg-surface-secondary px-1.5 py-0.5 text-center text-xs text-muted"
-                              >
-                                {k}
-                              </kbd>
+                    <div className="flex flex-col gap-5">
+                      {SHORTCUT_GROUPS.map((group) => (
+                        <div key={group} className="flex flex-col gap-1">
+                          <div className="text-xs font-medium tracking-wide text-muted uppercase">
+                            {group}
+                          </div>
+                          <ul className="flex flex-col divide-y divide-border">
+                            {SHORTCUTS.filter((s) => s.group === group).map((s) => (
+                              <li key={s.id} className="flex items-center justify-between gap-4 py-2.5">
+                                <span className="text-foreground">{s.label}</span>
+                                <Keys keys={formatCombo(s.combos[0])} />
+                              </li>
                             ))}
-                          </span>
-                        </li>
+                            {group === "Tabs" && (
+                              <li className="flex items-center justify-between gap-4 py-2.5">
+                                <span className="text-foreground">{TAB_DIGIT_LABEL}</span>
+                                <Keys keys={[isMac ? "⌘" : "Ctrl", "1–9"]} />
+                              </li>
+                            )}
+                          </ul>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   )}
 
                   {section === "about" && (

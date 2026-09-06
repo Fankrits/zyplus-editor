@@ -11,18 +11,32 @@ import { Sidebar, SidebarContent } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { Welcome } from "./components/Welcome";
+import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { useIsDesktop } from "./lib/useMediaQuery";
+import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
+import { isMac, matchShortcut, type CommandId } from "./lib/shortcuts";
 
 type CreateKind = "file" | "folder" | null;
 
 function AppShell() {
-  const { state, activeTab, dispatch, refreshTree, isHydrated, defaultFolder, setDefaultFolder } =
-    useWorkspace();
+  const {
+    state,
+    activeTab,
+    dispatch,
+    refreshTree,
+    isHydrated,
+    defaultFolder,
+    setDefaultFolder,
+    openFile,
+    addFolder,
+    openFilePicker,
+  } = useWorkspace();
   const isDesktop = useIsDesktop();
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     return loadSession()?.isSidebarCollapsed ?? false;
   });
@@ -51,45 +65,116 @@ function AppShell() {
     setCreateKind(kind);
   }, []);
 
+  const stepTab = useCallback(
+    (delta: number) => {
+      const { tabs, activeTabId } = state;
+      if (tabs.length < 2) return;
+      const i = tabs.findIndex((t) => t.id === activeTabId);
+      const next = tabs[(((i === -1 ? 0 : i) + delta) % tabs.length + tabs.length) % tabs.length];
+      dispatch({ type: "FOCUS_TAB", id: next.id });
+    },
+    [state, dispatch],
+  );
+
+  const runCommand = useCallback(
+    (id: CommandId) => {
+      // Commands needing a document are no-ops without one.
+      const tab = activeTab;
+      switch (id) {
+        case "save":
+          if (!tab?.isDirty) return;
+          fs.writeTextFile(tab.filePath, tab.content).then(() => {
+            dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id });
+          });
+          return;
+        case "export-md":
+          if (tab) fs.saveFileAs(tab.title.replace(/\.[^.]+$/, "") + ".md", tab.content);
+          return;
+        case "export-pdf":
+          window.print();
+          return;
+        case "new-file":
+        case "new-folder": {
+          const activeDir = tab?.filePath?.replace(/[\\/][^\\/]*$/, "");
+          const targetDir = activeDir || defaultFolder || state.roots[0];
+          if (targetDir) requestCreate(id === "new-file" ? "file" : "folder", targetDir);
+          return;
+        }
+        case "open-folder":
+          addFolder();
+          return;
+        case "open-file":
+          openFilePicker();
+          return;
+        case "close-tab":
+          emit(CLOSE_TAB_EVENT);
+          return;
+        case "next-tab":
+          stepTab(1);
+          return;
+        case "prev-tab":
+          stepTab(-1);
+          return;
+        case "toggle-sidebar":
+          if (isDesktop) setIsSidebarCollapsed((v) => !v);
+          else setIsMobileDrawerOpen((v) => !v);
+          return;
+        case "toggle-mode":
+          if (tab) dispatch({ type: "SET_TAB_MODE", id: tab.id, mode: tab.mode === "rich" ? "plain" : "rich" });
+          return;
+        case "settings":
+          setSettingsSection("general");
+          return;
+        case "shortcuts":
+          setSettingsSection("shortcuts");
+          return;
+        case "find":
+          if (tab) emit(FIND_EVENT, { replace: false });
+          return;
+        case "replace":
+          if (tab) emit(FIND_EVENT, { replace: true });
+          return;
+        case "copy-markdown":
+          if (tab) navigator.clipboard.writeText(tab.content);
+          return;
+        case "copy-path":
+          if (tab) navigator.clipboard.writeText(tab.filePath);
+          return;
+      }
+    },
+    [activeTab, dispatch, defaultFolder, state.roots, requestCreate, addFolder, openFilePicker, stepTab, isDesktop],
+  );
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!e.metaKey && !e.ctrlKey) return;
-      if (e.key === "s") {
+      // ⌘1–9 jumps to the nth tab, 9 being the last one.
+      if ((isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
         e.preventDefault();
-        if (!activeTab || !activeTab.isDirty) return;
-        fs.writeTextFile(activeTab.filePath, activeTab.content).then(() => {
-          dispatch({ type: "SAVE_TAB_SUCCESS", id: activeTab.id });
-        });
-      } else if (e.key === "n") {
-        e.preventDefault();
-        const activeDir = activeTab?.filePath?.replace(/[\\/][^\\/]*$/, "");
-        const targetDir = activeDir || defaultFolder || state.roots[0];
-        if (targetDir) requestCreate("file", targetDir);
-      } else if (e.key === "b") {
-        e.preventDefault();
-        if (isDesktop) setIsSidebarCollapsed((v) => !v);
-        else setIsMobileDrawerOpen((v) => !v);
+        const n = Number(e.code.slice(5));
+        const tab = n === 9 ? state.tabs[state.tabs.length - 1] : state.tabs[n - 1];
+        if (tab) dispatch({ type: "FOCUS_TAB", id: tab.id });
+        return;
       }
+      const command = matchShortcut(e);
+      if (!command) return;
+      e.preventDefault();
+      runCommand(command);
     };
+    const openSettings = () => setSettingsSection("general");
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTab, dispatch, defaultFolder, state.roots, isDesktop, requestCreate]);
+    window.addEventListener(SETTINGS_EVENT, openSettings);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(SETTINGS_EVENT, openSettings);
+    };
+  }, [runCommand, state.tabs, dispatch]);
 
   const handleOpenFileFromDrawer = useCallback(
     async (path: string, name: string) => {
       setIsMobileDrawerOpen(false);
-      const existing = state.tabs.find((t) => t.filePath === path);
-      if (existing) {
-        dispatch({ type: "FOCUS_TAB", id: existing.id });
-        return;
-      }
-      const content = await fs.readTextFile(path);
-      dispatch({
-        type: "OPEN_TAB",
-        tab: { id: path, filePath: path, title: name, content, isDirty: false, mode: "rich" },
-      });
+      await openFile(path, name);
     },
-    [state.tabs, dispatch],
+    [openFile],
   );
 
   const closeCreateModal = () => {
@@ -177,6 +262,13 @@ function AppShell() {
           </Drawer.Backdrop>
         </Drawer>
       )}
+
+      <SettingsModal
+        isOpen={settingsSection !== null}
+        section={settingsSection ?? "general"}
+        onSectionChange={setSettingsSection}
+        onClose={() => setSettingsSection(null)}
+      />
 
       <Modal>
         <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>

@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Button, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -22,7 +22,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
 import { writeTextFile, saveFileAs } from "../../lib/fs";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
-import { FIND_EVENT } from "../Editor/EditorPane";
+import { emit, CLOSE_TAB_EVENT, FIND_EVENT } from "../../lib/commands";
 
 interface TabItemProps {
   tab: Pick<TabState, "id" | "title" | "isDirty">;
@@ -164,6 +164,15 @@ export function TabBar({
     [state.tabs, dispatch],
   );
 
+  // ⌘W is handled globally, but the unsaved-changes prompt lives here.
+  useEffect(() => {
+    const onCloseRequest = () => {
+      if (state.activeTabId) handleRequestClose(state.activeTabId);
+    };
+    window.addEventListener(CLOSE_TAB_EVENT, onCloseRequest);
+    return () => window.removeEventListener(CLOSE_TAB_EVENT, onCloseRequest);
+  }, [state.activeTabId, handleRequestClose]);
+
   const handleSave = useCallback(
     async (id: string) => {
       const tab = state.tabs.find((t) => t.id === id);
@@ -229,7 +238,7 @@ export function TabBar({
           key: "find",
           label: "Find in document",
           icon: Search01Icon,
-          onSelect: () => window.dispatchEvent(new Event(FIND_EVENT)),
+          onSelect: () => emit(FIND_EVENT),
         },
         {
           key: "copy-markdown",
