@@ -7,15 +7,19 @@
     <title>Zyplus</title>
     <script>
       // Resolve the theme before first paint, otherwise dark-mode launches flash white.
+      // theme-base is written by setTheme(); "" means follow the OS.
       (function () {
         try {
           var t = localStorage.getItem("zyplus:theme");
+          var base = localStorage.getItem("zyplus:theme-base");
         } catch (e) {}
-        var dark =
-          t === "dark" ||
-          (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.dataset.theme = dark ? "dark" : "light";
-        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        var dark = base
+          ? base === "dark"
+          : matchMedia("(prefers-color-scheme: dark)").matches;
+        var root = document.documentElement;
+        root.dataset.theme = dark ? "dark" : "light";
+        root.style.colorScheme = dark ? "dark" : "light";
+        if (base && t) root.dataset.palette = t;
       })();
     </script>
   </head>

@@ -10,7 +10,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { useWorkspace } from "../state/workspaceStore";
 import * as fs from "../lib/fs";
-import { getTheme, setTheme, type Theme } from "../lib/theme";
+import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { Logo } from "./Logo";
 
 const SECTIONS = [
@@ -31,7 +31,8 @@ const SHORTCUTS: { keys: string[]; label: string }[] = [
   { keys: [MOD, "B"], label: "Toggle sidebar" },
 ];
 
-const THEME_LABELS: Record<Theme, string> = { system: "System", light: "Light", dark: "Dark" };
+const THEME_IDS = Object.keys(THEMES) as Theme[];
+const THEME_GROUPS = [...new Set(THEME_IDS.map((t) => THEMES[t].group))];
 
 function Field({
   label,
@@ -55,19 +56,26 @@ function Field({
 
 /** Miniature app window, so each theme option shows what it does. */
 function ThemePreview({ theme }: { theme: Theme }) {
-  const swatch = (dark: boolean) => (
+  const [bg, surface, accent] = THEMES[theme].swatch;
+  // "System" has no palette of its own; show the two it switches between.
+  const halves = theme === "system" ? ["#ffffff", "#18181b"] : [bg, bg];
+  return (
     <span
-      className={`flex h-full flex-1 gap-0.5 p-1 ${dark ? "bg-neutral-900" : "bg-white"}`}
+      className="flex h-10 w-full overflow-hidden rounded-md border border-border"
       aria-hidden="true"
     >
-      <span className={`w-1/3 rounded-sm ${dark ? "bg-white/20" : "bg-black/10"}`} />
-      <span className={`flex-1 rounded-sm ${dark ? "bg-white/10" : "bg-black/5"}`} />
-    </span>
-  );
-  return (
-    <span className="flex h-10 w-full overflow-hidden rounded-md border border-border">
-      {theme !== "dark" && swatch(false)}
-      {theme !== "light" && swatch(true)}
+      {halves.map((half, i) => (
+        <span key={i} className="flex h-full flex-1 gap-0.5 p-1" style={{ background: half }}>
+          <span
+            className="w-1/3 rounded-sm"
+            style={{ background: theme === "system" ? (i ? "#ffffff33" : "#00000018") : surface }}
+          />
+          <span
+            className="flex-1 rounded-sm"
+            style={{ background: theme === "system" ? (i ? "#ffffff1a" : "#0000000d") : accent }}
+          />
+        </span>
+      ))}
     </span>
   );
 }
@@ -160,24 +168,33 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
 
                   {section === "theme" && (
                     <Field label="Appearance" hint="System follows your OS setting.">
-                      <div className="grid grid-cols-3 gap-3">
-                        {(Object.keys(THEME_LABELS) as Theme[]).map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => pickTheme(t)}
-                            aria-pressed={theme === t}
-                            className={`flex flex-col gap-2 rounded-xl border p-2 text-left transition-colors ${
-                              theme === t
-                                ? "border-accent ring-1 ring-accent"
-                                : "border-border hover:bg-surface-hover"
-                            }`}
-                          >
-                            <ThemePreview theme={t} />
-                            <span className="px-0.5 text-xs font-medium text-foreground">
-                              {THEME_LABELS[t]}
-                            </span>
-                          </button>
+                      <div className="flex flex-col gap-4">
+                        {THEME_GROUPS.map((group) => (
+                          <div key={group} className="flex flex-col gap-2">
+                            <div className="text-xs font-medium tracking-wide text-muted uppercase">
+                              {group}
+                            </div>
+                            <div className="grid grid-cols-3 gap-3">
+                              {THEME_IDS.filter((t) => THEMES[t].group === group).map((t) => (
+                                <button
+                                  key={t}
+                                  type="button"
+                                  onClick={() => pickTheme(t)}
+                                  aria-pressed={theme === t}
+                                  className={`flex flex-col gap-2 rounded-xl border p-2 text-left transition-colors ${
+                                    theme === t
+                                      ? "border-accent ring-1 ring-accent"
+                                      : "border-border hover:bg-surface-hover"
+                                  }`}
+                                >
+                                  <ThemePreview theme={t} />
+                                  <span className="truncate px-0.5 text-xs font-medium text-foreground">
+                                    {THEMES[t].label}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </Field>

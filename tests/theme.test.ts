@@ -35,6 +35,18 @@ describe("theme", () => {
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
+  it("applies a palette on top of its base theme, and clears it again", () => {
+    setTheme("mocha");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.dataset.palette).toBe("mocha");
+    expect(localStorage.getItem("zyplus:theme-base")).toBe("dark");
+    setTheme("latte");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    setTheme("system");
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+    expect(localStorage.getItem("zyplus:theme-base")).toBe("");
+  });
+
   it("resolves system against the OS preference", () => {
     mockSystemDark(true);
     applyTheme("system");

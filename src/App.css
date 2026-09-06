@@ -15,7 +15,7 @@ body,
  * One surface for chrome and document: white in light, near-black in dark
  * (the dark canvas already reads as such, so only light needs overriding).
  */
-:root:not([data-theme="dark"]) {
+:root:not([data-theme="dark"]):not([data-palette]) {
   --background: var(--white);
 }
 
@@ -64,4 +64,153 @@ body,
   --diagram-5-text: #fb7185;
   --diagram-6: #22d3ee;
   --diagram-6-text: #22d3ee;
+}
+
+/*
+ * Ported palettes (catppuccin/catppuccin, wixdaq/Tokyo-Night-Themes). Each one
+ * only restates the base tokens — HeroUI derives hovers, soft variants and
+ * borders from these with color-mix, and `data-theme` still carries the
+ * light/dark base so untouched tokens and Tailwind's `dark:` keep working.
+ */
+:root[data-palette="latte"] {
+  --background: #eff1f5;
+  --foreground: #4c4f69;
+  --surface: #eff1f5;
+  --surface-secondary: #e6e9ef;
+  --surface-tertiary: #ccd0da;
+  --overlay: #e6e9ef;
+  --field-background: #e6e9ef;
+  --muted: #6c6f85;
+  --default: #ccd0da;
+  --default-foreground: #4c4f69;
+  --border: #bcc0cc;
+  --separator: #ccd0da;
+  --accent: #1e66f5;
+  --success: #40a02b;
+  --warning: #df8e1d;
+  --danger: #d20f39;
+}
+
+:root[data-palette="frappe"] {
+  --background: #303446;
+  --foreground: #c6d0f5;
+  --surface: #303446;
+  --surface-secondary: #292c3c;
+  --surface-tertiary: #414559;
+  --overlay: #292c3c;
+  --field-background: #292c3c;
+  --field-foreground: #c6d0f5;
+  --muted: #a5adce;
+  --default: #414559;
+  --default-foreground: #c6d0f5;
+  --border: #414559;
+  --separator: #414559;
+  --accent: #8caaee;
+  --accent-foreground: #232634;
+  --success: #a6d189;
+  --warning: #e5c890;
+  --danger: #e78284;
+}
+
+:root[data-palette="macchiato"] {
+  --background: #24273a;
+  --foreground: #cad3f5;
+  --surface: #24273a;
+  --surface-secondary: #1e2030;
+  --surface-tertiary: #363a4f;
+  --overlay: #1e2030;
+  --field-background: #1e2030;
+  --field-foreground: #cad3f5;
+  --muted: #a5adcb;
+  --default: #363a4f;
+  --default-foreground: #cad3f5;
+  --border: #363a4f;
+  --separator: #363a4f;
+  --accent: #8aadf4;
+  --accent-foreground: #181926;
+  --success: #a6da95;
+  --warning: #eed49f;
+  --danger: #ed8796;
+}
+
+:root[data-palette="mocha"] {
+  --background: #1e1e2e;
+  --foreground: #cdd6f4;
+  --surface: #1e1e2e;
+  --surface-secondary: #181825;
+  --surface-tertiary: #313244;
+  --overlay: #181825;
+  --field-background: #181825;
+  --field-foreground: #cdd6f4;
+  --muted: #a6adc8;
+  --default: #313244;
+  --default-foreground: #cdd6f4;
+  --border: #313244;
+  --separator: #313244;
+  --accent: #89b4fa;
+  --accent-foreground: #11111b;
+  --success: #a6e3a1;
+  --warning: #f9e2af;
+  --danger: #f38ba8;
+}
+
+:root[data-palette="tokyo-night"] {
+  --background: #1a1b26;
+  --foreground: #c0caf5;
+  --surface: #1a1b26;
+  --surface-secondary: #16161e;
+  --surface-tertiary: #292e42;
+  --overlay: #16161e;
+  --field-background: #16161e;
+  --field-foreground: #c0caf5;
+  --muted: #787c99;
+  --default: #292e42;
+  --default-foreground: #c0caf5;
+  --border: #292e42;
+  --separator: #292e42;
+  --accent: #7aa2f7;
+  --accent-foreground: #16161e;
+  --success: #9ece6a;
+  --warning: #e0af68;
+  --danger: #f7768e;
+}
+
+:root[data-palette="tokyo-storm"] {
+  --background: #24283b;
+  --foreground: #c0caf5;
+  --surface: #24283b;
+  --surface-secondary: #1f2335;
+  --surface-tertiary: #2f334d;
+  --overlay: #1f2335;
+  --field-background: #1f2335;
+  --field-foreground: #c0caf5;
+  --muted: #8b91b4;
+  --default: #2f334d;
+  --default-foreground: #c0caf5;
+  --border: #2f334d;
+  --separator: #2f334d;
+  --accent: #7aa2f7;
+  --accent-foreground: #1f2335;
+  --success: #9ece6a;
+  --warning: #e0af68;
+  --danger: #f7768e;
+}
+
+:root[data-palette="tokyo-day"] {
+  --background: #e1e2e7;
+  --foreground: #3760bf;
+  --surface: #e1e2e7;
+  --surface-secondary: #d5d6db;
+  --surface-tertiary: #c4c8da;
+  --overlay: #e9e9ed;
+  --field-background: #e9e9ed;
+  --muted: #6172b0;
+  --default: #c4c8da;
+  --default-foreground: #3760bf;
+  --border: #b6bac9;
+  --separator: #c4c8da;
+  --accent: #2e7de9;
+  --success: #587539;
+  --warning: #8c6c3e;
+  --danger: #f52a65;
 }
