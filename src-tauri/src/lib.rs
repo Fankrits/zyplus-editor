@@ -202,9 +202,7 @@ async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Result
     printed
 }
 
-/// LaunchServices bindings + the UTIs a .md file can carry.
-/// `public.markdown` is not a real system UTI (setting it returns -50); the one
-/// macOS actually assigns to .md/.markdown is `net.daringfireball.markdown`.
+/// LaunchServices bindings + the UTI a .md file carries (`net.daringfireball.markdown`).
 #[cfg(target_os = "macos")]
 mod launch_services {
     use core_foundation::base::TCFType;
@@ -222,44 +220,68 @@ mod launch_services {
             role: u32,
         ) -> CFStringRef;
     }
-    const ROLE_EDITOR: u32 = 2;
-    const MARKDOWN_UTIS: [&str; 2] = ["net.daringfireball.markdown", "public.markdown"];
+    // LaunchServices role masks:
+    // kLSRolesViewer = 0x00000002
+    // kLSRolesEditor = 0x00000004
+    // kLSRolesAll    = 0xFFFFFFFF
+    const ROLE_ALL: u32 = 0xFFFF_FFFF;
+    const ROLE_EDITOR: u32 = 0x0000_0004;
+    const MARKDOWN_UTI: &str = "net.daringfireball.markdown";
 
-    /// Claims every markdown UTI the system knows. Succeeds if at least one took —
-    /// the others may not exist on this macOS version, which is not an error.
+    /// Claims Markdown UTI for this app bundle.
     pub fn claim_markdown(bundle_id: &str) -> Result<(), String> {
         let handler = CFString::new(bundle_id);
-        let mut last = 0;
-        for uti in MARKDOWN_UTIS {
-            last = unsafe {
-                LSSetDefaultRoleHandlerForContentType(
-                    CFString::new(uti).as_concrete_TypeRef(),
-                    ROLE_EDITOR,
-                    handler.as_concrete_TypeRef(),
-                )
-            };
-            if last == 0 && is_default(bundle_id) {
-                return Ok(());
-            }
+        let uti = CFString::new(MARKDOWN_UTI);
+
+        // Set both editor and all-roles handler
+        let _ = unsafe {
+            LSSetDefaultRoleHandlerForContentType(
+                uti.as_concrete_TypeRef(),
+                ROLE_EDITOR,
+                handler.as_concrete_TypeRef(),
+            )
+        };
+        let status = unsafe {
+            LSSetDefaultRoleHandlerForContentType(
+                uti.as_concrete_TypeRef(),
+                ROLE_ALL,
+                handler.as_concrete_TypeRef(),
+            )
+        };
+
+        if status == 0 && is_default(bundle_id) {
+            return Ok(());
         }
-        Err(format!(
-            "macOS would not hand Markdown to {bundle_id} (LaunchServices status {last}). \
-             This works from the installed .app, not a dev build."
-        ))
+
+        if status != 0 {
+            Err(format!(
+                "macOS LaunchServices failed to set {bundle_id} as default Markdown app (status {status})."
+            ))
+        } else {
+            Err(format!(
+                "macOS did not set {bundle_id} as default Markdown app. \
+                 Please ensure Zyplus is installed in /Applications."
+            ))
+        }
     }
 
     pub fn is_default(bundle_id: &str) -> bool {
-        MARKDOWN_UTIS.iter().any(|uti| unsafe {
-            let current = LSCopyDefaultRoleHandlerForContentType(
-                CFString::new(uti).as_concrete_TypeRef(),
-                ROLE_EDITOR,
-            );
-            if current.is_null() {
-                return false;
+        let uti = CFString::new(MARKDOWN_UTI);
+        for &role in &[ROLE_ALL, ROLE_EDITOR] {
+            let current = unsafe {
+                LSCopyDefaultRoleHandlerForContentType(
+                    uti.as_concrete_TypeRef(),
+                    role,
+                )
+            };
+            if !current.is_null() {
+                let current_str = unsafe { CFString::wrap_under_create_rule(current).to_string() };
+                if current_str.eq_ignore_ascii_case(bundle_id) {
+                    return true;
+                }
             }
-            let current = CFString::wrap_under_create_rule(current).to_string();
-            current.eq_ignore_ascii_case(bundle_id)
-        })
+        }
+        false
     }
 }
 
@@ -357,4 +379,17 @@ pub fn run() {
                 let _ = (app, event);
             }
         });
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::launch_services::*;
+
+    #[test]
+    fn test_claim_markdown_and_is_default() {
+        let bundle_id = "com.fankrits.zyplus-editor";
+        let res = claim_markdown(bundle_id);
+        assert!(res.is_ok(), "claim_markdown failed: {:?}", res.err());
+        assert!(is_default(bundle_id), "is_default returned false after successful claim");
+    }
 }
