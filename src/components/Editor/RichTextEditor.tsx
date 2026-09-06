@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Crepe } from "@milkdown/crepe";
+import { editorViewCtx } from "@milkdown/kit/core";
+import type { EditorView } from "@milkdown/kit/prose/view";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/classic.css";
 import "./milkdown-heroui-theme.css";
@@ -8,6 +10,18 @@ import { supportedLanguages, renderCodeBlockPreview } from "./codeBlockPreview";
 interface RichTextEditorProps {
   initialValue: string;
   onChange: (markdown: string) => void;
+}
+
+/** The mounted editor, module-level so callers (the find bar) need no ref plumbing. */
+let liveCrepe: Crepe | null = null;
+
+/** The rich editor's ProseMirror view, or null before it finishes mounting. */
+export function findRichEditor(): EditorView | null {
+  try {
+    return liveCrepe?.editor.action((ctx) => ctx.get(editorViewCtx)) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) {
@@ -44,7 +58,9 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
       });
     });
     crepe.create();
+    liveCrepe = crepe;
     return () => {
+      if (liveCrepe === crepe) liveCrepe = null;
       crepe.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
