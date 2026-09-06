@@ -1,6 +1,4 @@
-import katex from "katex";
 import { isDarkTheme } from "../../lib/theme";
-import mermaid from "mermaid";
 import { LanguageDescription } from "@codemirror/language";
 import { languages as defaultLanguages } from "@codemirror/language-data";
 import { markdown } from "@codemirror/lang-markdown";
@@ -274,6 +272,31 @@ function injectMulticolorStyles(svg: string, renderId: string): string {
   return svg;
 }
 
+/**
+ * KaTeX and Mermaid are the two heaviest dependencies in the app and most documents
+ * use neither, so they load on first use instead of at startup. Both loaders are
+ * cached by the import itself; `mermaidConfigTheme` reinitializes only on theme flips.
+ */
+async function loadKatex() {
+  const [katex] = await Promise.all([
+    import("katex").then((m) => m.default),
+    import("katex/dist/katex.min.css"),
+  ]);
+  return katex;
+}
+
+let mermaidConfigTheme: boolean | null = null;
+
+async function loadMermaid() {
+  const mermaid = (await import("mermaid")).default;
+  const dark = isDarkTheme();
+  if (mermaidConfigTheme !== dark) {
+    mermaid.initialize(getMermaidConfig());
+    mermaidConfigTheme = dark;
+  }
+  return mermaid;
+}
+
 export function renderCodeBlockPreview(
   language: string,
   content: string,
@@ -285,22 +308,18 @@ export function renderCodeBlockPreview(
   const lang = language.trim().toLowerCase();
 
   if (MATH_LANGUAGES.has(lang)) {
-    try {
-      return katex.renderToString(trimmed, {
-        throwOnError: false,
-        displayMode: true,
-      });
-    } catch {
-      return null;
-    }
+    loadKatex()
+      .then((katex) =>
+        applyPreview(katex.renderToString(trimmed, { throwOnError: false, displayMode: true })),
+      )
+      .catch(() => applyPreview(null));
+    return undefined;
   }
 
   if (DIAGRAM_LANGUAGES.has(lang)) {
-    mermaid.initialize(getMermaidConfig());
-
     const renderId = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-    mermaid
-      .render(renderId, trimmed)
+    loadMermaid()
+      .then((mermaid) => mermaid.render(renderId, trimmed))
       .then(({ svg }) => {
         applyPreview(injectMulticolorStyles(svg, renderId));
       })

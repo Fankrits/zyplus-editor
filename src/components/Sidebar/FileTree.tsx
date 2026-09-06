@@ -21,7 +21,7 @@ import {
   Cancel01Icon,
   Alert01Icon,
 } from "@hugeicons/core-free-icons";
-import { useWorkspace, type TreeNode } from "../../state/workspaceStore";
+import { useWorkspaceActions, useWorkspaceTree, type TreeNode } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
 
@@ -38,7 +38,8 @@ function basename(path: string): string {
 }
 
 export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
-  const { state, dispatch, refreshTree } = useWorkspace();
+  const state = useWorkspaceTree();
+  const { dispatch, refreshTree } = useWorkspaceActions();
   const isRoot = useCallback((id: string) => state.roots.includes(id), [state.roots]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useWorkspace } from "../../state/workspaceStore";
+import { useWorkspaceActions, useWorkspaceTabs } from "../../state/workspaceStore";
 import { RichTextEditor } from "./RichTextEditor";
 import { PlainTextEditor } from "./PlainTextEditor";
 import { SearchBar } from "./SearchBar";
@@ -7,7 +7,8 @@ import { Wordmark } from "../Logo";
 import { FIND_EVENT } from "../../lib/commands";
 
 export function EditorPane() {
-  const { activeTab, dispatch } = useWorkspace();
+  const { activeTab } = useWorkspaceTabs();
+  const { dispatch } = useWorkspaceActions();
   const contentRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState<{ replace: boolean } | null>(null);
 

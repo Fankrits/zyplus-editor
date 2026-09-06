@@ -8,7 +8,11 @@ import {
   File01Icon,
   Settings01Icon,
 } from "@hugeicons/core-free-icons";
-import { useWorkspace } from "../../state/workspaceStore";
+import {
+  useWorkspaceActions,
+  useWorkspaceSession,
+  useWorkspaceTree,
+} from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
 import { FileTree } from "./FileTree";
 import { Logo, Wordmark } from "../Logo";
@@ -21,7 +25,9 @@ export interface SidebarContentProps {
 }
 
 export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: SidebarContentProps) {
-  const { state, activeTab, defaultFolder, openFile, addFolder } = useWorkspace();
+  const state = useWorkspaceTree();
+  const { defaultFolder, activeTabId } = useWorkspaceSession();
+  const { openFile, addFolder } = useWorkspaceActions();
 
   const handleOpenFolder = useCallback(async () => {
     if (await addFolder()) onOpenFolder?.();
@@ -38,7 +44,8 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
 
   // Header-level "new file/folder" land next to the file you're editing; falling back to
   // the default project folder, then the first open one.
-  const activeDir = activeTab?.filePath?.replace(/[\\/][^\\/]*$/, "");
+  // A tab's id is its path.
+  const activeDir = activeTabId?.replace(/[\\/][^\\/]*$/, "");
   const primaryDir =
     activeDir ||
     (defaultFolder && state.roots.includes(defaultFolder) ? defaultFolder : state.roots[0]);

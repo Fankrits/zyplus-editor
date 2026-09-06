@@ -19,9 +19,14 @@ import {
   Pdf01Icon,
 } from "@hugeicons/core-free-icons";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { useWorkspace, type TabState } from "../../state/workspaceStore";
+import {
+  useWorkspaceActions,
+  useWorkspaceSession,
+  useWorkspaceTabs,
+  useWorkspaceTree,
+  type TabState,
+} from "../../state/workspaceStore";
 import { writeTextFile, saveFileAs } from "../../lib/fs";
-import { exportPdf } from "../../lib/exportPdf";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { emit, CLOSE_TAB_EVENT, FIND_EVENT } from "../../lib/commands";
 
@@ -118,9 +123,13 @@ export function TabBar({
   isDesktop = true,
   isMobileDrawerOpen = false,
 }: TabBarProps) {
-  const { state, activeTab, dispatch, defaultFolder } = useWorkspace();
+  const { roots } = useWorkspaceTree();
+  const state = useWorkspaceTabs();
+  const { defaultFolder } = useWorkspaceSession();
+  const { dispatch, getState } = useWorkspaceActions();
+  const activeTab = state.activeTab;
   const newFileDir =
-    defaultFolder && state.roots.includes(defaultFolder) ? defaultFolder : state.roots[0];
+    defaultFolder && roots.includes(defaultFolder) ? defaultFolder : roots[0];
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -154,7 +163,7 @@ export function TabBar({
 
   const handleRequestClose = useCallback(
     (id: string) => {
-      const tab = state.tabs.find((t) => t.id === id);
+      const tab = getState().tabs.find((t) => t.id === id);
       if (!tab) return;
       if (!tab.isDirty) {
         dispatch({ type: "CLOSE_TAB", id });
@@ -162,7 +171,7 @@ export function TabBar({
       }
       setPendingCloseId(id);
     },
-    [state.tabs, dispatch],
+    [getState, dispatch],
   );
 
   // ⌘W is handled globally, but the unsaved-changes prompt lives here.
@@ -176,30 +185,34 @@ export function TabBar({
 
   const handleSave = useCallback(
     async (id: string) => {
-      const tab = state.tabs.find((t) => t.id === id);
+      const tab = getState().tabs.find((t) => t.id === id);
       if (!tab) return;
       await writeTextFile(tab.filePath, tab.content);
       dispatch({ type: "SAVE_TAB_SUCCESS", id });
     },
-    [state.tabs, dispatch],
+    [getState, dispatch],
   );
 
   // Bulk close only ever affects clean tabs — dirty tabs are left open rather than
   // risking silently discarded work; use the single "Close" action to be prompted per-tab.
   const handleCloseOthers = useCallback(
     (keepId: string) => {
-      state.tabs.filter((t) => t.id !== keepId && !t.isDirty).forEach((t) => dispatch({ type: "CLOSE_TAB", id: t.id }));
+      getState()
+        .tabs.filter((t) => t.id !== keepId && !t.isDirty)
+        .forEach((t) => dispatch({ type: "CLOSE_TAB", id: t.id }));
     },
-    [state.tabs, dispatch],
+    [getState, dispatch],
   );
 
   const handleCloseAll = useCallback(() => {
-    state.tabs.filter((t) => !t.isDirty).forEach((t) => dispatch({ type: "CLOSE_TAB", id: t.id }));
-  }, [state.tabs, dispatch]);
+    getState()
+      .tabs.filter((t) => !t.isDirty)
+      .forEach((t) => dispatch({ type: "CLOSE_TAB", id: t.id }));
+  }, [getState, dispatch]);
 
   const handleTabContextMenu = useCallback(
     (e: ReactMouseEvent, id: string) => {
-      const tab = state.tabs.find((t) => t.id === id);
+      const tab = getState().tabs.find((t) => t.id === id);
       if (!tab) return;
       const items: ContextMenuItem[] = [
         { key: "save", label: "Save", icon: FloppyDiskIcon, disabled: !tab.isDirty, onSelect: () => handleSave(id) },
@@ -221,7 +234,7 @@ export function TabBar({
       ];
       contextMenu.open(e, items);
     },
-    [state.tabs, handleSave, handleRequestClose, handleCloseOthers, handleCloseAll, contextMenu],
+    [getState, handleSave, handleRequestClose, handleCloseOthers, handleCloseAll, contextMenu],
   );
 
   const handleActionsMenu = useCallback(
@@ -264,7 +277,8 @@ export function TabBar({
           key: "export-pdf",
           label: "Export as PDF…",
           icon: Pdf01Icon,
-          onSelect: () => exportPdf(activeTab.title, activeTab.content),
+          onSelect: () =>
+            import("../../lib/exportPdf").then((m) => m.exportPdf(activeTab.title, activeTab.content)),
         },
         {
           key: "reveal",

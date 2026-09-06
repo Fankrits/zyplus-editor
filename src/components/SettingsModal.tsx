@@ -9,7 +9,7 @@ import {
   FolderOpenIcon,
   CheckmarkCircle02Icon,
 } from "@hugeicons/core-free-icons";
-import { useWorkspace } from "../state/workspaceStore";
+import { useWorkspaceActions, useWorkspaceSession, useWorkspaceTree } from "../state/workspaceStore";
 import * as fs from "../lib/fs";
 import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL, isMac } from "../lib/shortcuts";
@@ -104,8 +104,9 @@ export function SettingsModal({
   section?: SectionId;
   onSectionChange?: (section: SectionId) => void;
 }) {
-  const { state, dispatch, defaultFolder, setDefaultFolder, isAutosaveEnabled, setIsAutosaveEnabled } =
-    useWorkspace();
+  const state = useWorkspaceTree();
+  const { defaultFolder, isAutosaveEnabled } = useWorkspaceSession();
+  const { dispatch, setDefaultFolder, setIsAutosaveEnabled } = useWorkspaceActions();
   const [localSection, setLocalSection] = useState<SectionId>("general");
   const section = controlledSection ?? localSection;
   const setSection = onSectionChange ?? setLocalSection;

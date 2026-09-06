@@ -6,9 +6,13 @@ import { Button, Drawer, Input, Label, Modal, TextField } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
-import { WorkspaceProvider, useWorkspace } from "./state/workspaceStore";
+import {
+  WorkspaceProvider,
+  useWorkspaceActions,
+  useWorkspaceSession,
+  useWorkspaceTree,
+} from "./state/workspaceStore";
 import * as fs from "./lib/fs";
-import { loadSession, saveSession } from "./lib/sessionStorage";
 import { Sidebar, SidebarContent } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
@@ -17,32 +21,31 @@ import { SettingsModal, type SettingsSection } from "./components/SettingsModal"
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { isMac, matchShortcut, type CommandId } from "./lib/shortcuts";
-import { exportPdf } from "./lib/exportPdf";
 
 type CreateKind = "file" | "folder" | null;
 
 function AppShell() {
   const {
-    state,
-    activeTab,
     dispatch,
+    getState,
     refreshTree,
-    isHydrated,
-    defaultFolder,
     setDefaultFolder,
+    setIsSidebarCollapsed,
     openFile,
     addFolder,
     openFilePicker,
-  } = useWorkspace();
+  } = useWorkspaceActions();
+  // The shell deliberately does not subscribe to tab content: it would re-render
+  // the sidebar, tab bar and editor on every keystroke. Commands read the live
+  // state through getState() instead.
+  const { roots } = useWorkspaceTree();
+  const { isHydrated, defaultFolder, isSidebarCollapsed } = useWorkspaceSession();
   const isDesktop = useIsDesktop();
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [createKind, setCreateKind] = useState<CreateKind>(null);
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
-    return loadSession()?.isSidebarCollapsed ?? false;
-  });
 
   useEffect(() => {
     if (isDesktop) {
@@ -69,19 +72,6 @@ function AppShell() {
     };
   }, [isHydrated, openFile]);
 
-  useEffect(() => {
-    const current = loadSession() ?? {
-      version: 2 as const,
-      roots: [],
-      defaultFolder: null,
-      tabs: [],
-      activeFilePath: null,
-      isSidebarCollapsed: false,
-      isAutosaveEnabled: false,
-    };
-    saveSession({ ...current, isSidebarCollapsed });
-  }, [isSidebarCollapsed]);
-
   const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
     setCreateTargetDir(targetDir);
     setCreateKind(kind);
@@ -89,19 +79,20 @@ function AppShell() {
 
   const stepTab = useCallback(
     (delta: number) => {
-      const { tabs, activeTabId } = state;
+      const { tabs, activeTabId } = getState();
       if (tabs.length < 2) return;
       const i = tabs.findIndex((t) => t.id === activeTabId);
       const next = tabs[(((i === -1 ? 0 : i) + delta) % tabs.length + tabs.length) % tabs.length];
       dispatch({ type: "FOCUS_TAB", id: next.id });
     },
-    [state, dispatch],
+    [getState, dispatch],
   );
 
   const runCommand = useCallback(
     (id: CommandId) => {
       // Commands needing a document are no-ops without one.
-      const tab = activeTab;
+      const { tabs, activeTabId, roots } = getState();
+      const tab = tabs.find((t) => t.id === activeTabId) ?? null;
       switch (id) {
         case "save":
           if (!tab?.isDirty) return;
@@ -113,12 +104,13 @@ function AppShell() {
           if (tab) fs.saveFileAs(tab.title.replace(/\.[^.]+$/, "") + ".md", tab.content);
           return;
         case "export-pdf":
-          if (tab) exportPdf(tab.title, tab.content);
+          // `marked` only matters when exporting, so it stays out of the startup bundle.
+          if (tab) import("./lib/exportPdf").then((m) => m.exportPdf(tab.title, tab.content));
           return;
         case "new-file":
         case "new-folder": {
           const activeDir = tab?.filePath?.replace(/[\\/][^\\/]*$/, "");
-          const targetDir = activeDir || defaultFolder || state.roots[0];
+          const targetDir = activeDir || defaultFolder || roots[0];
           if (targetDir) requestCreate(id === "new-file" ? "file" : "folder", targetDir);
           return;
         }
@@ -164,7 +156,7 @@ function AppShell() {
           return;
       }
     },
-    [activeTab, dispatch, defaultFolder, state.roots, requestCreate, addFolder, openFilePicker, stepTab, isDesktop],
+    [getState, dispatch, defaultFolder, requestCreate, addFolder, openFilePicker, stepTab, isDesktop, setIsSidebarCollapsed],
   );
 
   useEffect(() => {
@@ -173,7 +165,8 @@ function AppShell() {
       if ((isMac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey && /^Digit[1-9]$/.test(e.code)) {
         e.preventDefault();
         const n = Number(e.code.slice(5));
-        const tab = n === 9 ? state.tabs[state.tabs.length - 1] : state.tabs[n - 1];
+        const { tabs } = getState();
+        const tab = n === 9 ? tabs[tabs.length - 1] : tabs[n - 1];
         if (tab) dispatch({ type: "FOCUS_TAB", id: tab.id });
         return;
       }
@@ -189,7 +182,7 @@ function AppShell() {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener(SETTINGS_EVENT, openSettings);
     };
-  }, [runCommand, state.tabs, dispatch]);
+  }, [runCommand, getState, dispatch]);
 
   const handleOpenFileFromDrawer = useCallback(
     async (path: string, name: string) => {
@@ -215,7 +208,7 @@ function AppShell() {
   );
 
   const handleCreate = async () => {
-    const targetDir = createTargetDir ?? defaultFolder ?? state.roots[0];
+    const targetDir = createTargetDir ?? defaultFolder ?? roots[0];
     if (!targetDir || !newName.trim() || !createKind) return;
     const trimmed = newName.trim();
     const name = createKind === "file" && !/\.[^./\\]+$/.test(trimmed) ? `${trimmed}.md` : trimmed;
@@ -236,7 +229,7 @@ function AppShell() {
 
   if (!isHydrated) return <div className="h-screen w-screen bg-background" />;
 
-  if (!defaultFolder && state.roots.length === 0) {
+  if (!defaultFolder && roots.length === 0) {
     return <Welcome onReady={handleFirstFolder} />;
   }
 
