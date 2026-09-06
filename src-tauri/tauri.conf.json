@@ -54,6 +54,15 @@
         "role": "Editor",
         "mimeType": "text/plain"
       }
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Fankrits/zyplus-editor/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNEMDQzOThGREZGNDA0RDAKUldUUUJQVGZqemtFUFRkbnYxMVpwZllBY0dhT2pjN1lCVXlBcjB6Z2tHOVlGdlN3akJJQ3lXcG4K"
+    }
   }
 }

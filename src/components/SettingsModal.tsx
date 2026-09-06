@@ -14,6 +14,7 @@ import * as fs from "../lib/fs";
 import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL, isMac } from "../lib/shortcuts";
 import { Logo } from "./Logo";
+import { UpdateButton } from "./UpdateButton";
 
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings01Icon },
@@ -295,6 +296,7 @@ export function SettingsModal({
                       <p className="max-w-xs text-xs text-muted">
                         A local-first markdown editor. Your files stay on your machine.
                       </p>
+                      <UpdateButton />
                     </div>
                   )}
                 </div>
