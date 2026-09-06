@@ -309,6 +309,7 @@ export function SettingsModal({
 
                                 <div className="shrink-0 flex items-center">
                                   <Switch
+                                    aria-label={`Enable ${manifest.name}`}
                                     isSelected={isInstalled}
                                     isDisabled={isDownloading}
                                     onChange={(checked) => {
@@ -319,9 +320,11 @@ export function SettingsModal({
                                       }
                                     }}
                                   >
-                                    <Switch.Control>
-                                      <Switch.Thumb />
-                                    </Switch.Control>
+                                    <Switch.Content>
+                                      <Switch.Control>
+                                        <Switch.Thumb />
+                                      </Switch.Control>
+                                    </Switch.Content>
                                   </Switch>
                                 </div>
                               </div>
@@ -352,17 +355,30 @@ export function SettingsModal({
                                   )}
                                 </div>
 
-                                {isInstalled && (
-                                  <button
-                                    type="button"
-                                    onClick={() => uninstallAndRemove(manifest.id)}
-                                    className="flex items-center gap-1 text-muted hover:text-danger text-[11px] transition-colors cursor-pointer"
-                                    title="Delete from device"
-                                  >
-                                    <HugeiconsIcon icon={Delete02Icon} size={13} />
-                                    <span>Remove</span>
-                                  </button>
-                                )}
+                                <div className="flex items-center gap-2">
+                                  {status === "uninstalled" && (
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      isDisabled={isDownloading}
+                                      onPress={() => downloadAndInstall(manifest.id)}
+                                      className="h-6 px-2.5 text-[11px]"
+                                    >
+                                      Install
+                                    </Button>
+                                  )}
+                                  {isInstalled && (
+                                    <button
+                                      type="button"
+                                      onClick={() => uninstallAndRemove(manifest.id)}
+                                      className="flex items-center gap-1 text-muted hover:text-danger text-[11px] transition-colors cursor-pointer"
+                                      title="Delete from device"
+                                    >
+                                      <HugeiconsIcon icon={Delete02Icon} size={13} />
+                                      <span>Remove</span>
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           );
