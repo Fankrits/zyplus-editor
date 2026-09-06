@@ -203,7 +203,7 @@ function AppShell() {
       await refreshTree();
       dispatch({
         type: "OPEN_TAB",
-        tab: { id: path, filePath: path, title: name, content: "", isDirty: false, mode: "rich" },
+        tab: { id: path, filePath: path, title: name, content: "", savedContent: "", isDirty: false, mode: "rich" },
       });
     } else {
       await fs.createFolder(path);

@@ -161,6 +161,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           filePath: path,
           title: name ?? basenameOf(path),
           content,
+          savedContent: content,
           isDirty: false,
           mode: "rich",
         },

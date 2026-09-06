@@ -15,6 +15,8 @@ export interface TabState {
   filePath: string;
   title: string;
   content: string;
+  /** Last content known to be on disk. `isDirty` is `content !== savedContent`. */
+  savedContent: string;
   isDirty: boolean;
   mode: TabMode;
 }
@@ -134,7 +136,9 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
       return {
         ...state,
         tabs: state.tabs.map((t) =>
-          t.id === action.id ? { ...t, content: action.content, isDirty: true } : t,
+          t.id === action.id
+            ? { ...t, content: action.content, isDirty: action.content !== t.savedContent }
+            : t,
         ),
       };
     case "SET_TAB_MODE":
@@ -145,12 +149,13 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
     case "SAVE_TAB_SUCCESS":
       return {
         ...state,
-        // `content` (autosave) keeps edits made while the write was in flight dirty.
-        tabs: state.tabs.map((t) =>
-          t.id === action.id && (action.content === undefined || action.content === t.content)
-            ? { ...t, isDirty: false }
-            : t,
-        ),
+        tabs: state.tabs.map((t) => {
+          if (t.id !== action.id) return t;
+          // `content` (autosave) is what actually reached disk; edits made while
+          // the write was in flight keep the tab dirty.
+          const saved = action.content ?? t.content;
+          return { ...t, savedContent: saved, isDirty: t.content !== saved };
+        }),
       };
     case "REMAP_TAB_PATHS": {
       const { oldPrefix, newPrefix } = action;
@@ -212,6 +217,7 @@ export async function restoreWorkspaceFromSession(
         filePath: tab.filePath,
         title: basenameOf(tab.filePath),
         content,
+        savedContent: content,
         isDirty: false,
         mode: tab.mode,
       });

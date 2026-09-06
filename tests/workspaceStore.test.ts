@@ -151,6 +151,7 @@ describe("restoreWorkspaceFromSession", () => {
       filePath: "/project/doc1.md",
       title: "doc1.md",
       content: "# Doc 1",
+      savedContent: "# Doc 1",
       isDirty: false,
       mode: "rich",
     });
@@ -159,6 +160,7 @@ describe("restoreWorkspaceFromSession", () => {
       filePath: "/project/doc2.md",
       title: "doc2.md",
       content: "Plain text 2",
+      savedContent: "Plain text 2",
       isDirty: false,
       mode: "plain",
     });
@@ -245,6 +247,7 @@ describe("SAVE_TAB_SUCCESS", () => {
     filePath: "/p/a.md",
     title: "a.md",
     content: "typed more",
+    savedContent: "typed",
     isDirty: true,
     mode: "rich" as const,
   };
@@ -271,5 +274,29 @@ describe("SAVE_TAB_SUCCESS", () => {
       content: "typed",
     });
     expect(next.tabs[0].isDirty).toBe(true);
+  });
+});
+
+describe("UPDATE_TAB_CONTENT", () => {
+  const tab = {
+    id: "/p/a.md",
+    filePath: "/p/a.md",
+    title: "a.md",
+    content: "on disk",
+    savedContent: "on disk",
+    isDirty: false,
+    mode: "rich" as const,
+  };
+  const state: WorkspaceState = { roots: [], tree: [], tabs: [tab], activeTabId: tab.id };
+
+  it("marks the tab dirty when the content differs from disk", () => {
+    const next = workspaceReducer(state, { type: "UPDATE_TAB_CONTENT", id: tab.id, content: "edited" });
+    expect(next.tabs[0].isDirty).toBe(true);
+  });
+
+  it("goes clean again when an edit is undone back to the saved content", () => {
+    const edited = workspaceReducer(state, { type: "UPDATE_TAB_CONTENT", id: tab.id, content: "edited" });
+    const undone = workspaceReducer(edited, { type: "UPDATE_TAB_CONTENT", id: tab.id, content: "on disk" });
+    expect(undone.tabs[0].isDirty).toBe(false);
   });
 });
