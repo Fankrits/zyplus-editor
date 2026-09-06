@@ -14,7 +14,7 @@ Built with Tauri&nbsp;2, React&nbsp;19 and TypeScript.
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Downloads](https://img.shields.io/github/downloads/Fankrits/zyplus-editor/total?style=flat-square&color=3b82f6)](https://github.com/Fankrits/zyplus-editor/releases)
 
-[Download](https://github.com/Fankrits/zyplus-editor/releases/latest) ·
+[Install](#install) ·
 [Development](#development) ·
 [Layout](#layout)
 
@@ -39,7 +39,17 @@ exactly as you left it.
 
 ## Install
 
-**Homebrew** (macOS):
+Every method installs the same build from the same
+[GitHub release](https://github.com/Fankrits/zyplus-editor/releases/latest),
+and the app self-updates from then on regardless of how it got there.
+
+| Platform | Terminal install |
+|---|---|
+| macOS — Apple silicon + Intel | Homebrew, or `install.sh` (universal build) |
+| Linux — x86_64 + arm64 | `install.sh` (AppImage), or `.deb` / `.rpm` by hand |
+| Windows — x64 + arm64 | `install.ps1` |
+
+### Homebrew (macOS)
 
 ```sh
 brew tap fankrits/zyplus https://github.com/Fankrits/zyplus-editor
@@ -47,30 +57,40 @@ brew trust fankrits/zyplus     # Homebrew requires this for third-party casks
 brew install --cask zyplus
 ```
 
-**Script** (macOS, Linux):
+The repo is its own tap, so there is no separate `homebrew-tap` to add. The
+cask is bumped automatically on every release. Uninstall with
+`brew uninstall --cask zyplus`.
+
+### Script (macOS, Linux)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.sh | sh
 ```
 
-macOS installs `/Applications/Zyplus.app`; Linux drops the AppImage in
-`~/.local/bin/zyplus`. Pin a build with `ZYPLUS_VERSION=0.1.0`.
+macOS installs `/Applications/Zyplus.app`. Linux drops the AppImage at
+`~/.local/bin/zyplus` — override with `ZYPLUS_BIN_DIR`. Pin a build with
+`ZYPLUS_VERSION=0.1.0`. Uninstall by deleting the app or the binary.
 
-**PowerShell** (Windows x64):
+### PowerShell (Windows)
 
 ```powershell
 irm https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.ps1 | iex
 ```
 
-**Manual:** installers for every platform are on the
+Runs the NSIS installer silently, per user. Pin a build with
+`$env:ZYPLUS_VERSION = '0.1.0'`. Windows on arm64 gets the x64
+build under emulation — Bun publishes no Windows-arm64 release, so there is
+nothing to build a native one with. Uninstall from Add or Remove Programs.
+
+### Manual
+
+Installers for every platform — `.dmg`, `.AppImage`, `.deb`, `.rpm`, `.msi`,
+`.exe` — are attached to the
 [latest release](https://github.com/Fankrits/zyplus-editor/releases/latest).
 
-| Platform | Terminal install |
-|---|---|
-| macOS (Apple silicon + Intel) | `brew` or `install.sh` — universal build |
-| Linux x86_64 / arm64 | `install.sh` — AppImage; `.deb` / `.rpm` on the release page |
-| Windows x64 | `install.ps1` |
-| Windows arm64 | `install.ps1` falls back to the x64 build under emulation — Bun has no Windows-arm64 release, so no native build |
+> The app is not code-signed or notarized yet. Homebrew and `install.sh` clear
+> the macOS quarantine flag for you; a manually downloaded `.dmg` needs
+> **right-click → Open** the first time.
 
 ## Development
 
@@ -109,8 +129,9 @@ bindings and the in-app shortcut sheet (`⌘/`) read the same table.
 
 Push a `v*` tag and [`release.yml`](.github/workflows/release.yml) stamps the
 version into `package.json`, `tauri.conf.json` and `Cargo.toml`, builds signed
-bundles for macOS (universal), Linux and Windows, and publishes them alongside
-the `latest.json` the in-app updater reads.
+bundles for macOS (universal), Linux (x86_64 + arm64) and Windows, publishes
+them alongside the `latest.json` the in-app updater reads, and bumps
+[`Casks/zyplus.rb`](Casks/zyplus.rb) to the new version and checksum.
 
 ## License
 
