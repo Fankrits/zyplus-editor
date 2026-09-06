@@ -2,6 +2,7 @@ use std::sync::Mutex;
 
 use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_fs::FsExt;
 
 /// Files the OS asked us to open before the webview was ready to listen.
 #[derive(Default)]
@@ -17,9 +18,23 @@ struct PrintDoc {
 
 const PRINT_WINDOW: &str = "print";
 
+fn allow_paths_in_scope<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M, paths: &[String]) {
+    let fs_scope = manager.fs_scope();
+    for path in paths {
+        let p = std::path::Path::new(path);
+        if p.is_file() {
+            let _ = fs_scope.allow_file(p);
+        } else if p.is_dir() {
+            let _ = fs_scope.allow_directory(p, true);
+        }
+    }
+}
+
 #[tauri::command]
-fn take_pending_files(pending: tauri::State<PendingFiles>) -> Vec<String> {
-    std::mem::take(&mut *pending.0.lock().unwrap())
+fn take_pending_files(app: tauri::AppHandle, pending: tauri::State<PendingFiles>) -> Vec<String> {
+    let files = std::mem::take(&mut *pending.0.lock().unwrap());
+    allow_paths_in_scope(&app, &files);
+    files
 }
 
 /// Starts a silent print job on a WKWebView, writing a paginated PDF to `path`.
@@ -319,7 +334,7 @@ fn resolve_file_arg(arg: &str, cwd: Option<&std::path::Path>) -> Option<String> 
     } else {
         p.to_path_buf()
     };
-    if candidate.is_file() {
+    if candidate.is_file() || candidate.is_dir() {
         Some(
             candidate
                 .canonicalize()
@@ -355,6 +370,7 @@ pub fn run() {
                 .collect();
 
             if !paths.is_empty() {
+                allow_paths_in_scope(app, &paths);
                 app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
                 let _ = app.emit("open-files", ());
             }
@@ -409,9 +425,11 @@ pub fn run() {
                 if paths.is_empty() {
                     return;
                 }
+                allow_paths_in_scope(app, &paths);
                 // Queue first, then nudge: the webview may not be listening yet at launch,
                 // so the frontend always drains the queue rather than trusting the payload.
                 app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
+
                 let _ = app.emit("open-files", ());
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.unminimize();
