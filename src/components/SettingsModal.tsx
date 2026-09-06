@@ -8,7 +8,7 @@ import {
   InformationCircleIcon,
   FolderOpenIcon,
   CheckmarkCircle02Icon,
-  AppStoreIcon,
+  PuzzleIcon,
   Delete02Icon,
   AlertCircleIcon,
 } from "@hugeicons/core-free-icons";
@@ -24,7 +24,7 @@ import { formatBytes } from "../extensions/catalog";
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings01Icon },
   { id: "theme", label: "Theme", icon: PaintBoardIcon },
-  { id: "extensions", label: "Extensions", icon: AppStoreIcon },
+  { id: "extensions", label: "Extensions", icon: PuzzleIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "about", label: "About", icon: InformationCircleIcon },
 ] as const;
