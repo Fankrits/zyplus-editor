@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 
-use tauri::{Emitter, Manager};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use tauri::Emitter;
+use tauri::Manager;
 
 /// Files the OS asked us to open before the webview was ready to listen.
 #[derive(Default)]
