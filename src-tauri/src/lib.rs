@@ -268,12 +268,8 @@ mod launch_services {
     pub fn is_default(bundle_id: &str) -> bool {
         let uti = CFString::new(MARKDOWN_UTI);
         for &role in &[ROLE_ALL, ROLE_EDITOR] {
-            let current = unsafe {
-                LSCopyDefaultRoleHandlerForContentType(
-                    uti.as_concrete_TypeRef(),
-                    role,
-                )
-            };
+            let current =
+                unsafe { LSCopyDefaultRoleHandlerForContentType(uti.as_concrete_TypeRef(), role) };
             if !current.is_null() {
                 let current_str = unsafe { CFString::wrap_under_create_rule(current).to_string() };
                 if current_str.eq_ignore_ascii_case(bundle_id) {
@@ -390,6 +386,9 @@ mod tests {
         let bundle_id = "com.fankrits.zyplus-editor";
         let res = claim_markdown(bundle_id);
         assert!(res.is_ok(), "claim_markdown failed: {:?}", res.err());
-        assert!(is_default(bundle_id), "is_default returned false after successful claim");
+        assert!(
+            is_default(bundle_id),
+            "is_default returned false after successful claim"
+        );
     }
 }
