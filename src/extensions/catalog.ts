@@ -1,5 +1,14 @@
 import type { ExtensionManifest } from "./types";
 
+const isDev = Boolean(typeof import.meta !== "undefined" && import.meta.env?.DEV);
+
+function getAssetUrl(filename: string): string {
+  if (isDev) {
+    return `/extensions-dist/${filename}`;
+  }
+  return `https://raw.githubusercontent.com/Fankrits/zyplus-editor/extension/extensions/dist/${filename}`;
+}
+
 export const EXTENSION_CATALOG: ExtensionManifest[] = [
   {
     id: "mermaid",
@@ -10,8 +19,7 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     author: "Zyplus",
     sizeBytesEstimate: 3_670_000,
     languages: ["mermaid", "flowchart", "diagram"],
-    downloadUrl:
-      "https://raw.githubusercontent.com/Fankrits/zyplus-editor/extension/extensions/dist/mermaid.js",
+    downloadUrl: getAssetUrl("mermaid.js"),
   },
   {
     id: "katex",
@@ -22,10 +30,8 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     author: "Zyplus",
     sizeBytesEstimate: 1_520_000,
     languages: ["latex", "math", "katex", "tex"],
-    downloadUrl:
-      "https://raw.githubusercontent.com/Fankrits/zyplus-editor/extension/extensions/dist/katex.js",
-    cssUrl:
-      "https://raw.githubusercontent.com/Fankrits/zyplus-editor/extension/extensions/dist/katex.css",
+    downloadUrl: getAssetUrl("katex.js"),
+    cssUrl: getAssetUrl("katex.css"),
   },
 ];
 
