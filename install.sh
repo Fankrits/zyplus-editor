@@ -31,19 +31,21 @@ case "$(uname -s)" in
     ;;
   Linux)
     case "$(uname -m)" in
-      x86_64|amd64) ;;
-      *) echo "only x86_64 Linux builds are published" >&2; exit 1 ;;
+      x86_64|amd64) ASSET="Zyplus_${VERSION}_amd64.AppImage" ;;
+      aarch64|arm64) ASSET="Zyplus_${VERSION}_aarch64.AppImage" ;;
+      *) echo "no Linux build published for $(uname -m)" >&2; exit 1 ;;
     esac
     BIN="${ZYPLUS_BIN_DIR:-$HOME/.local/bin}"
     mkdir -p "$BIN"
-    dl "Zyplus_${VERSION}_amd64.AppImage" "$TMP/zyplus"
+    dl "$ASSET" "$TMP/zyplus"
     chmod +x "$TMP/zyplus"
     mv "$TMP/zyplus" "$BIN/zyplus"
     echo "Installed $BIN/zyplus"
     case ":$PATH:" in *":$BIN:"*) ;; *) echo "Add $BIN to your PATH." ;; esac
     ;;
   *)
-    echo "Unsupported OS. Download from https://github.com/$REPO/releases" >&2
+    echo "Unsupported OS. On Windows use install.ps1; otherwise see" >&2
+    echo "https://github.com/$REPO/releases" >&2
     exit 1
     ;;
 esac

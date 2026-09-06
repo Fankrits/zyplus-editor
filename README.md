@@ -47,7 +47,7 @@ brew trust fankrits/zyplus     # Homebrew requires this for third-party casks
 brew install --cask zyplus
 ```
 
-**Script** (macOS, Linux x86_64):
+**Script** (macOS, Linux):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.sh | sh
@@ -56,8 +56,21 @@ curl -fsSL https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install
 macOS installs `/Applications/Zyplus.app`; Linux drops the AppImage in
 `~/.local/bin/zyplus`. Pin a build with `ZYPLUS_VERSION=0.1.0`.
 
-**Manual:** installers for macOS, Linux and Windows are on the
+**PowerShell** (Windows x64):
+
+```powershell
+irm https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.ps1 | iex
+```
+
+**Manual:** installers for every platform are on the
 [latest release](https://github.com/Fankrits/zyplus-editor/releases/latest).
+
+| Platform | Terminal install |
+|---|---|
+| macOS (Apple silicon + Intel) | `brew` or `install.sh` — universal build |
+| Linux x86_64 / arm64 | `install.sh` — AppImage; `.deb` / `.rpm` on the release page |
+| Windows x64 | `install.ps1` |
+| Windows arm64 | no build yet — the x64 installer runs under emulation |
 
 ## Development
 
