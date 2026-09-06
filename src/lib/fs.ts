@@ -252,3 +252,9 @@ export async function setDefaultMarkdownApp(): Promise<void> {
   if (!isTauri()) throw new Error("Only available in the desktop app.");
   await invoke("set_default_markdown_app");
 }
+
+/** Whether Markdown already opens in Zyplus. */
+export async function isDefaultMarkdownApp(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("is_default_markdown_app");
+}

@@ -200,45 +200,91 @@ async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Result
     printed
 }
 
+/// LaunchServices bindings + the UTIs a .md file can carry.
+/// `public.markdown` is not a real system UTI (setting it returns -50); the one
+/// macOS actually assigns to .md/.markdown is `net.daringfireball.markdown`.
+#[cfg(target_os = "macos")]
+mod launch_services {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::{CFString, CFStringRef};
+
+    #[link(name = "CoreServices", kind = "framework")]
+    extern "C" {
+        fn LSSetDefaultRoleHandlerForContentType(
+            content_type: CFStringRef,
+            role: u32,
+            handler_bundle_id: CFStringRef,
+        ) -> i32;
+        fn LSCopyDefaultRoleHandlerForContentType(
+            content_type: CFStringRef,
+            role: u32,
+        ) -> CFStringRef;
+    }
+    const ROLE_EDITOR: u32 = 2;
+    const MARKDOWN_UTIS: [&str; 2] = ["net.daringfireball.markdown", "public.markdown"];
+
+    /// Claims every markdown UTI the system knows. Succeeds if at least one took —
+    /// the others may not exist on this macOS version, which is not an error.
+    pub fn claim_markdown(bundle_id: &str) -> Result<(), String> {
+        let handler = CFString::new(bundle_id);
+        let mut last = 0;
+        for uti in MARKDOWN_UTIS {
+            last = unsafe {
+                LSSetDefaultRoleHandlerForContentType(
+                    CFString::new(uti).as_concrete_TypeRef(),
+                    ROLE_EDITOR,
+                    handler.as_concrete_TypeRef(),
+                )
+            };
+            if last == 0 && is_default(bundle_id) {
+                return Ok(());
+            }
+        }
+        Err(format!(
+            "macOS would not hand Markdown to {bundle_id} (LaunchServices status {last}). \
+             This works from the installed .app, not a dev build."
+        ))
+    }
+
+    pub fn is_default(bundle_id: &str) -> bool {
+        MARKDOWN_UTIS.iter().any(|uti| unsafe {
+            let current =
+                LSCopyDefaultRoleHandlerForContentType(CFString::new(uti).as_concrete_TypeRef(), ROLE_EDITOR);
+            if current.is_null() {
+                return false;
+            }
+            let current = CFString::wrap_under_create_rule(current).to_string();
+            current.eq_ignore_ascii_case(bundle_id)
+        })
+    }
+}
+
 /// Registers this app as the system handler for Markdown files.
 /// macOS only — Windows/Linux have no API for this, the user picks it in OS settings.
 #[tauri::command]
 fn set_default_markdown_app(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        use core_foundation::base::TCFType;
-        use core_foundation::string::{CFString, CFStringRef};
-
-        #[link(name = "CoreServices", kind = "framework")]
-        extern "C" {
-            fn LSSetDefaultRoleHandlerForContentType(
-                content_type: CFStringRef,
-                role: u32,
-                handler_bundle_id: CFStringRef,
-            ) -> i32;
-        }
-        const K_LS_ROLES_EDITOR: u32 = 2;
-
-        let bundle_id = CFString::new(&app.config().identifier);
-        // .md maps to either UTI depending on macOS version; claim both.
-        for uti in ["public.markdown", "net.daringfireball.markdown"] {
-            let status = unsafe {
-                LSSetDefaultRoleHandlerForContentType(
-                    CFString::new(uti).as_concrete_TypeRef(),
-                    K_LS_ROLES_EDITOR,
-                    bundle_id.as_concrete_TypeRef(),
-                )
-            };
-            if status != 0 {
-                return Err(format!("LaunchServices refused {uti} (status {status})"));
-            }
-        }
-        Ok(())
+        launch_services::claim_markdown(&app.config().identifier)
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = app;
         Err("Set Zyplus as the default app for .md in your system settings.".into())
+    }
+}
+
+/// Whether Markdown already opens in this app, so the UI can say so up front.
+#[tauri::command]
+fn is_default_markdown_app(app: tauri::AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        launch_services::is_default(&app.config().identifier)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        false
     }
 }
 
@@ -280,6 +326,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             take_pending_files,
             set_default_markdown_app,
+            is_default_markdown_app,
             export_pdf
         ])
         .build(tauri::generate_context!())

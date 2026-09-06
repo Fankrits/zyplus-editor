@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Label, Modal, Switch } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -125,6 +125,12 @@ export function SettingsModal({
       dispatch({ type: "ADD_ROOT", rootPath: picked, node: await fs.readProjectNode(picked) });
     }
   };
+
+  // The OS is the source of truth: another app may have taken .md since last time.
+  useEffect(() => {
+    if (!isOpen) return;
+    fs.isDefaultMarkdownApp().then((yes) => setDefaultAppState(yes ? "done" : null));
+  }, [isOpen]);
 
   const makeDefaultApp = async () => {
     try {
