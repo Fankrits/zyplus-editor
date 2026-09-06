@@ -20,6 +20,10 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
     const crepe = new Crepe({
       root: rootRef.current,
       defaultValue: initialValue,
+      // Crepe's LaTeX feature treats any "$...$" span as inline math, so prose like
+      // "$12.9 billion ($13B value)" renders as italic KaTeX. Most markdown tools
+      // don't do that; math still works in a ```latex fenced block (see codeBlockPreview).
+      features: { [Crepe.Feature.Latex]: false },
       featureConfigs: {
         [Crepe.Feature.BlockEdit]: {
           blockHandle: {
