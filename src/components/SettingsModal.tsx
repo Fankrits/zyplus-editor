@@ -8,6 +8,9 @@ import {
   InformationCircleIcon,
   FolderOpenIcon,
   CheckmarkCircle02Icon,
+  PuzzleIcon,
+  Delete02Icon,
+  AlertCircleIcon,
 } from "@hugeicons/core-free-icons";
 import { useWorkspaceActions, useWorkspaceSession, useWorkspaceTree } from "../state/workspaceStore";
 import * as fs from "../lib/fs";
@@ -15,10 +18,13 @@ import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL, isMac } from "../lib/shortcuts";
 import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
+import { useExtensions } from "../extensions/useExtensions";
+import { formatBytes } from "../extensions/catalog";
 
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings01Icon },
   { id: "theme", label: "Theme", icon: PaintBoardIcon },
+  { id: "extensions", label: "Extensions", icon: PuzzleIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "about", label: "About", icon: InformationCircleIcon },
 ] as const;
@@ -112,6 +118,7 @@ export function SettingsModal({
   const setSection = onSectionChange ?? setLocalSection;
   const [theme, setThemeState] = useState<Theme>(getTheme);
   const [defaultAppState, setDefaultAppState] = useState<string | null>(null);
+  const { states: extensionStates, downloadAndInstall, uninstallAndRemove } = useExtensions();
 
   const pickTheme = (next: Theme) => {
     setTheme(next);
@@ -265,6 +272,119 @@ export function SettingsModal({
                         ))}
                       </div>
                     </Field>
+                  )}
+
+                  {section === "extensions" && (
+                    <div className="flex flex-col gap-4">
+                      <div className="text-xs text-muted leading-relaxed">
+                        Extensions add rich capabilities to Zyplus on demand. When enabled, the extension bundle is fetched from GitHub. When disabled, it is completely removed from your device to keep disk usage zero.
+                      </div>
+
+                      <div className="flex flex-col gap-3">
+                        {extensionStates.map(({ manifest, status, errorMessage, downloadProgress }) => {
+                          const isInstalled = status === "installed";
+                          const isDownloading = status === "downloading";
+                          return (
+                            <div
+                              key={manifest.id}
+                              className="flex flex-col gap-2 rounded-xl border border-border bg-surface-secondary p-3.5 transition-colors"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-semibold text-foreground">
+                                      {manifest.name}
+                                    </span>
+                                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted border border-border">
+                                      v{manifest.version}
+                                    </span>
+                                    <span className="rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted border border-border">
+                                      ~{formatBytes(manifest.sizeBytesEstimate)}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-muted leading-relaxed">
+                                    {manifest.description}
+                                  </p>
+                                </div>
+
+                                <div className="shrink-0 flex items-center">
+                                  <Switch
+                                    aria-label={`Enable ${manifest.name}`}
+                                    isSelected={isInstalled}
+                                    isDisabled={isDownloading}
+                                    onChange={(checked) => {
+                                      if (checked) {
+                                        downloadAndInstall(manifest.id);
+                                      } else {
+                                        uninstallAndRemove(manifest.id);
+                                      }
+                                    }}
+                                  >
+                                    <Switch.Content>
+                                      <Switch.Control>
+                                        <Switch.Thumb />
+                                      </Switch.Control>
+                                    </Switch.Content>
+                                  </Switch>
+                                </div>
+                              </div>
+
+                              {/* Status footer */}
+                              <div className="flex items-center justify-between pt-1 border-t border-border/50 text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  {isInstalled && (
+                                    <>
+                                      <HugeiconsIcon icon={CheckmarkCircle02Icon} size={14} className="text-accent" />
+                                      <span className="text-accent font-medium">Installed & active</span>
+                                    </>
+                                  )}
+                                  {isDownloading && (
+                                    <span className="text-accent flex items-center gap-1.5">
+                                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                                      <span>Downloading from GitHub... {downloadProgress ? `${downloadProgress}%` : ""}</span>
+                                    </span>
+                                  )}
+                                  {status === "uninstalled" && (
+                                    <span className="text-muted">Not downloaded (0 KB on device)</span>
+                                  )}
+                                  {status === "error" && (
+                                    <div className="flex items-center gap-1 text-danger">
+                                      <HugeiconsIcon icon={AlertCircleIcon} size={14} />
+                                      <span>{errorMessage || "Download failed. Check connection."}</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {status === "uninstalled" && (
+                                    <Button
+                                      size="sm"
+                                      variant="secondary"
+                                      isDisabled={isDownloading}
+                                      onPress={() => downloadAndInstall(manifest.id)}
+                                      className="h-6 px-2.5 text-[11px]"
+                                    >
+                                      Install
+                                    </Button>
+                                  )}
+                                  {isInstalled && (
+                                    <button
+                                      type="button"
+                                      onClick={() => uninstallAndRemove(manifest.id)}
+                                      className="flex items-center gap-1 text-muted hover:text-danger text-[11px] transition-colors cursor-pointer"
+                                      title="Delete from device"
+                                    >
+                                      <HugeiconsIcon icon={Delete02Icon} size={13} />
+                                      <span>Remove</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   )}
 
                   {section === "shortcuts" && (

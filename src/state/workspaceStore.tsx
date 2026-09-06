@@ -65,6 +65,7 @@ interface WorkspaceSessionValue {
   isAutosaveEnabled: boolean;
   isSidebarCollapsed: boolean;
   activeTabId: string | null;
+  hasTabs: boolean;
 }
 
 interface WorkspaceActionsValue {
@@ -118,7 +119,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const stored = loadSession();
       if (stored?.defaultFolder) setDefaultFolder(stored.defaultFolder);
       if (stored?.isAutosaveEnabled) setIsAutosaveEnabled(true);
-      if (stored && stored.roots.length > 0) {
+      if (stored && (stored.roots.length > 0 || stored.tabs.length > 0)) {
         try {
           const restored = await restoreWorkspaceFromSession(stored);
           if (!isMounted) return;
@@ -219,19 +220,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "FOCUS_TAB", id: existing.id });
       return;
     }
-    const content = await readTextFile(path);
-    dispatch({
-      type: "OPEN_TAB",
-      tab: {
-        id: path,
-        filePath: path,
-        title: name ?? basenameOf(path),
-        content,
-        savedContent: content,
-        isDirty: false,
-        mode: "rich",
-      },
-    });
+    try {
+      const content = await readTextFile(path);
+      dispatch({
+        type: "OPEN_TAB",
+        tab: {
+          id: path,
+          filePath: path,
+          title: name ?? basenameOf(path),
+          content,
+          savedContent: content,
+          isDirty: false,
+          mode: "rich",
+        },
+      });
+    } catch (err) {
+      console.error(`Failed to open file at "${path}":`, err);
+    }
   }, []);
 
   const addFolder = useCallback(async () => {
@@ -264,6 +269,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [state.tabs, state.activeTabId, activeTab],
   );
 
+  const hasTabs = state.tabs.length > 0;
   const sessionValue = useMemo(
     () => ({
       isHydrated,
@@ -271,8 +277,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       isAutosaveEnabled,
       isSidebarCollapsed,
       activeTabId: state.activeTabId,
+      hasTabs,
     }),
-    [isHydrated, defaultFolder, isAutosaveEnabled, isSidebarCollapsed, state.activeTabId],
+    [isHydrated, defaultFolder, isAutosaveEnabled, isSidebarCollapsed, state.activeTabId, hasTabs],
   );
 
   const actionsValue = useMemo(

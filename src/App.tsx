@@ -18,6 +18,7 @@ import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { Welcome } from "./components/Welcome";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { extensionManager } from "./extensions/extensionManager";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { isMac, matchShortcut, type CommandId } from "./lib/shortcuts";
@@ -39,7 +40,7 @@ function AppShell() {
   // the sidebar, tab bar and editor on every keystroke. Commands read the live
   // state through getState() instead.
   const { roots } = useWorkspaceTree();
-  const { isHydrated, defaultFolder, isSidebarCollapsed } = useWorkspaceSession();
+  const { isHydrated, defaultFolder, isSidebarCollapsed, hasTabs } = useWorkspaceSession();
   const isDesktop = useIsDesktop();
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
   const [createKind, setCreateKind] = useState<CreateKind>(null);
@@ -48,27 +49,45 @@ function AppShell() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
 
   useEffect(() => {
+    extensionManager.initialize();
+  }, []);
+
+  useEffect(() => {
     if (isDesktop) {
       setIsMobileDrawerOpen(false);
     }
   }, [isDesktop]);
 
-  // Files opened from the OS (double-click, "Open With") once we're registered as a handler.
+  // Files opened from the OS (double-click, "Open With", CLI) once we're registered as a handler.
   useEffect(() => {
     if (!isHydrated) return;
     let cancelled = false;
     const drain = async () => {
-      for (const path of await fs.takePendingFiles()) {
-        if (cancelled) return;
-        await openFile(path);
+      try {
+        const pending = await fs.takePendingFiles();
+        for (const path of pending) {
+          if (cancelled) return;
+          await openFile(path);
+        }
+      } catch (err) {
+        console.error("Error opening pending files:", err);
       }
     };
+
+    let unlisten: Promise<() => void> | null = null;
+    if (isTauri()) {
+      unlisten = listen("open-files", () => {
+        if (!cancelled) drain();
+      });
+    }
+
     drain();
-    if (!isTauri()) return;
-    const unlisten = listen("open-files", drain);
+
     return () => {
       cancelled = true;
-      unlisten.then((off) => off());
+      if (unlisten) {
+        unlisten.then((off) => off());
+      }
     };
   }, [isHydrated, openFile]);
 
@@ -229,8 +248,15 @@ function AppShell() {
 
   if (!isHydrated) return <div className="h-screen w-screen bg-background" />;
 
-  if (!defaultFolder && roots.length === 0) {
-    return <Welcome onReady={handleFirstFolder} />;
+  if (!defaultFolder && roots.length === 0 && !hasTabs) {
+    return (
+      <Welcome
+        onReady={handleFirstFolder}
+        onSkip={() => setDefaultFolder("")}
+        onOpenFile={openFilePicker}
+        onOpenFolder={addFolder}
+      />
+    );
   }
 
   return (

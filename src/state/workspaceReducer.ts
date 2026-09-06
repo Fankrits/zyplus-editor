@@ -195,7 +195,7 @@ export async function restoreWorkspaceFromSession(
     readTextFile: (path: string) => Promise<string>;
   } = { readProjectNode, readTextFile },
 ): Promise<WorkspaceState | null> {
-  if (!stored || stored.roots.length === 0) return null;
+  if (!stored || (stored.roots.length === 0 && stored.tabs.length === 0)) return null;
 
   const roots: string[] = [];
   const tree: TreeNode[] = [];
