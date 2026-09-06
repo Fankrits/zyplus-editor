@@ -21,6 +21,7 @@ import {
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
 import { writeTextFile, saveFileAs } from "../../lib/fs";
+import { exportPdf } from "../../lib/exportPdf";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
 import { emit, CLOSE_TAB_EVENT, FIND_EVENT } from "../../lib/commands";
 
@@ -259,11 +260,11 @@ export function TabBar({
           onSelect: () => saveFileAs(activeTab.title.replace(/\.[^.]+$/, "") + ".md", activeTab.content),
         },
         {
-          // Print dialog: every platform's own "Save as PDF" is better than any renderer we would ship.
+          // Asks where to save, then writes the PDF there — no print dialog.
           key: "export-pdf",
           label: "Export as PDF…",
           icon: Pdf01Icon,
-          onSelect: () => window.print(),
+          onSelect: () => exportPdf(activeTab.title, activeTab.content),
         },
         {
           key: "reveal",

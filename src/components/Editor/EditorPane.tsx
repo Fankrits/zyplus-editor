@@ -47,7 +47,7 @@ export function EditorPane() {
           onClose={() => setSearch(null)}
         />
       )}
-      <div ref={contentRef} className="print-target min-h-0 flex-1">
+      <div ref={contentRef} className="min-h-0 flex-1">
         {activeTab.mode === "rich" ? (
           <RichTextEditor key={activeTab.id} initialValue={activeTab.content} onChange={handleChange} />
         ) : (

@@ -27,6 +27,7 @@
     "@uiw/react-codemirror": "^4.25.11",
     "framer-motion": "^13.2.0",
     "katex": "^0.18.5",
+    "marked": "^16.4.2",
     "mermaid": "^11.17.2",
     "react": "^19.1.0",
     "react-arborist": "^3.16.0",

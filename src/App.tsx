@@ -17,6 +17,7 @@ import { SettingsModal, type SettingsSection } from "./components/SettingsModal"
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { isMac, matchShortcut, type CommandId } from "./lib/shortcuts";
+import { exportPdf } from "./lib/exportPdf";
 
 type CreateKind = "file" | "folder" | null;
 
@@ -112,7 +113,7 @@ function AppShell() {
           if (tab) fs.saveFileAs(tab.title.replace(/\.[^.]+$/, "") + ".md", tab.content);
           return;
         case "export-pdf":
-          window.print();
+          if (tab) exportPdf(tab.title, tab.content);
           return;
         case "new-file":
         case "new-folder": {
