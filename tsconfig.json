@@ -21,6 +21,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["bun-types"]
   },
-  "include": ["src", "tests"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src", "tests", "vite.config.ts"]
 }
