@@ -86,7 +86,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
         <span className="flex min-w-0 items-center gap-2">
           <Logo size={16} className="shrink-0 text-foreground" />
           <span className="truncate text-xs font-medium uppercase tracking-wide text-muted">
-            Projects
+            Zyplus
           </span>
         </span>
         <div className="flex shrink-0 gap-1">
