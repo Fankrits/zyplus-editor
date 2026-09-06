@@ -43,6 +43,7 @@ exactly as you left it.
 
 ```sh
 brew tap fankrits/zyplus https://github.com/Fankrits/zyplus-editor
+brew trust fankrits/zyplus     # Homebrew requires this for third-party casks
 brew install --cask zyplus
 ```
 
