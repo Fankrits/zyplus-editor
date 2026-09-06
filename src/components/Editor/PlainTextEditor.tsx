@@ -1,6 +1,7 @@
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
+import { search } from "@codemirror/search";
 import { plainTextTheme, plainTextHighlighting } from "./plainTextTheme";
 import { supportedLanguages } from "./codeBlockPreview";
 
@@ -13,6 +14,8 @@ interface PlainTextEditorProps {
 // scrollbar whose unstyled corner shows up as a stray black square.
 const extensions = [
   markdown({ codeLanguages: supportedLanguages }),
+  // State only — our own SearchBar drives it, so CodeMirror's stock panel stays out.
+  search(),
   EditorView.lineWrapping,
   plainTextTheme,
   plainTextHighlighting,
@@ -25,6 +28,7 @@ export function PlainTextEditor({ initialValue, onChange }: PlainTextEditorProps
       onChange={onChange}
       extensions={extensions}
       basicSetup={{
+        searchKeymap: false,
         lineNumbers: false,
         foldGutter: false,
         highlightActiveLineGutter: false,
@@ -37,4 +41,10 @@ export function PlainTextEditor({ initialValue, onChange }: PlainTextEditorProps
       className="h-full"
     />
   );
+}
+
+/** The editor's CodeMirror instance, found through the DOM so callers need no ref plumbing. */
+export function findPlainEditor(): EditorView | null {
+  const el = document.querySelector<HTMLElement>(".cm-editor");
+  return el ? (EditorView.findFromDOM(el) ?? null) : null;
 }

@@ -214,3 +214,36 @@ body,
   --warning: #8c6c3e;
   --danger: #f52a65;
 }
+
+/* Printing (also how "Export as PDF" works): hide the app chrome and let the
+   editor's scroll containers grow to their full height so every page prints. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-target,
+  .print-target * {
+    visibility: visible;
+  }
+  .print-target {
+    position: absolute;
+    inset: 0 0 auto 0;
+  }
+  .print-target,
+  .print-target * {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    color: #000 !important;
+    background: transparent !important;
+  }
+}
+
+/* Rich-mode find matches (CSS Custom Highlight API, painted by SearchBar). */
+::highlight(zy-search) {
+  background-color: var(--warning-soft, rgba(245, 165, 36, 0.25));
+}
+::highlight(zy-search-active) {
+  background-color: var(--warning, #f5a524);
+  color: var(--background, #fff);
+}

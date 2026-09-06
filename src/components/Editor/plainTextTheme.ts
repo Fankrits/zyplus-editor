@@ -39,6 +39,14 @@ export const plainTextTheme: Extension = EditorView.theme({
   "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
     backgroundColor: "var(--accent-soft, rgba(0, 111, 238, 0.15)) !important",
   },
+  ".cm-searchMatch": {
+    backgroundColor: "var(--warning-soft, rgba(245, 165, 36, 0.25))",
+    borderRadius: "3px",
+  },
+  ".cm-searchMatch-selected, .cm-searchMatch.cm-searchMatch-selected": {
+    backgroundColor: "var(--warning, #f5a524)",
+    color: "var(--background, #fff)",
+  },
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--accent, #006fee)",
     borderLeftWidth: "2px",

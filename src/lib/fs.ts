@@ -1,4 +1,4 @@
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   readDir,
   readTextFile as readTextFileRaw,
@@ -226,4 +226,17 @@ export async function duplicateFile(path: string): Promise<string> {
   }
   await writeTextFileRaw(newPath, content);
   return newPath;
+}
+
+/** Writes `content` to a path the user picks. Outside Tauri, falls back to a browser download. */
+export async function saveFileAs(defaultName: string, content: string): Promise<void> {
+  if (!isTauri()) {
+    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
+    const link = Object.assign(document.createElement("a"), { href: url, download: defaultName });
+    link.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  const path = await saveDialog({ defaultPath: defaultName });
+  if (path) await writeTextFileRaw(path, content);
 }

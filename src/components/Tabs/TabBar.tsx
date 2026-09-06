@@ -12,11 +12,17 @@ import {
   TextFontIcon,
   SourceCodeIcon,
   SidebarLeftIcon,
+  MoreHorizontalIcon,
+  Search01Icon,
+  Copy01Icon,
+  FileExportIcon,
+  Pdf01Icon,
 } from "@hugeicons/core-free-icons";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useWorkspace, type TabState } from "../../state/workspaceStore";
-import { writeTextFile } from "../../lib/fs";
+import { writeTextFile, saveFileAs } from "../../lib/fs";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
+import { FIND_EVENT } from "../Editor/EditorPane";
 
 interface TabItemProps {
   tab: Pick<TabState, "id" | "title" | "isDirty">;
@@ -118,6 +124,7 @@ export function TabBar({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const contextMenu = useContextMenu();
+  const actionsMenu = useContextMenu();
 
   const handleDragOverTab = useCallback((id: string) => {
     setDragOverId((prev) => (prev === id ? prev : id));
@@ -205,6 +212,60 @@ export function TabBar({
       contextMenu.open(e, items);
     },
     [state.tabs, handleSave, handleRequestClose, handleCloseOthers, handleCloseAll, contextMenu],
+  );
+
+  const handleActionsMenu = useCallback(
+    (e: ReactMouseEvent) => {
+      if (!activeTab) return;
+      const items: ContextMenuItem[] = [
+        {
+          key: "save",
+          label: "Save",
+          icon: FloppyDiskIcon,
+          disabled: !activeTab.isDirty,
+          onSelect: () => handleSave(activeTab.id),
+        },
+        {
+          key: "find",
+          label: "Find in document",
+          icon: Search01Icon,
+          onSelect: () => window.dispatchEvent(new Event(FIND_EVENT)),
+        },
+        {
+          key: "copy-markdown",
+          label: "Copy Markdown",
+          icon: Copy01Icon,
+          onSelect: () => navigator.clipboard.writeText(activeTab.content),
+        },
+        {
+          key: "copy-path",
+          label: "Copy Path",
+          icon: ClipboardIcon,
+          onSelect: () => navigator.clipboard.writeText(activeTab.filePath),
+        },
+        {
+          key: "export-md",
+          label: "Export as .md",
+          icon: FileExportIcon,
+          onSelect: () => saveFileAs(activeTab.title.replace(/\.[^.]+$/, "") + ".md", activeTab.content),
+        },
+        {
+          // Print dialog: every platform's own "Save as PDF" is better than any renderer we would ship.
+          key: "export-pdf",
+          label: "Export as PDF…",
+          icon: Pdf01Icon,
+          onSelect: () => window.print(),
+        },
+        {
+          key: "reveal",
+          label: "Reveal in Finder",
+          icon: FolderOpenIcon,
+          onSelect: () => revealItemInDir(activeTab.filePath),
+        },
+      ];
+      actionsMenu.open(e, items);
+    },
+    [activeTab, handleSave, actionsMenu],
   );
 
   const pendingTab = state.tabs.find((t) => t.id === pendingCloseId) ?? null;
@@ -309,11 +370,21 @@ export function TabBar({
               <HugeiconsIcon icon={SourceCodeIcon} size={15} />
               {isDesktop && "Plain"}
             </Button>
+            <button
+              type="button"
+              aria-label="Document actions"
+              aria-haspopup="menu"
+              onClick={handleActionsMenu}
+              className="flex size-8 shrink-0 items-center justify-center rounded-3xl text-muted no-highlight outline-none hover:opacity-70 focus-visible:status-focused"
+            >
+              <HugeiconsIcon icon={MoreHorizontalIcon} size={16} strokeWidth={2} />
+            </button>
           </div>
         )}
       </div>
 
       <ContextMenu state={contextMenu.state} onClose={contextMenu.close} />
+      <ContextMenu state={actionsMenu.state} onClose={actionsMenu.close} />
 
       <Modal>
         <Modal.Backdrop isOpen={pendingTab !== null} onOpenChange={(open) => !open && setPendingCloseId(null)}>
