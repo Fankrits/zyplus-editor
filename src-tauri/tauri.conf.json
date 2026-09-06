@@ -12,10 +12,12 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Zyplus",
         "width": 800,
         "height": 600,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "devtools": true
       }
     ],
     "security": {
@@ -61,6 +63,9 @@
     "createUpdaterArtifacts": true
   },
   "plugins": {
+    "fs": {
+      "requireLiteralLeadingDot": false
+    },
     "updater": {
       "endpoints": [
         "https://github.com/Fankrits/zyplus-editor/releases/latest/download/latest.json"
@@ -69,3 +74,4 @@
     }
   }
 }
+

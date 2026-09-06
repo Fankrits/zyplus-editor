@@ -16,6 +16,7 @@ import {
   readTextFile,
   writeTextFile,
 } from "../lib/fs";
+
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
   basenameOf,
@@ -73,12 +74,13 @@ interface WorkspaceActionsValue {
   /** Current state, for event handlers that would otherwise close over it. */
   getState: () => WorkspaceState;
   refreshTree: () => Promise<void>;
-  /** Opens a file in a tab, focusing it if already open. */
-  openFile: (path: string, name?: string) => Promise<void>;
-  /** Prompts for a folder and adds it as a project root. Returns the picked path. */
-  addFolder: () => Promise<string | null>;
+  /** Opens a file in a tab, focusing it if already open. Returns true if opened successfully. */
+  openFile: (path: string, name?: string) => Promise<boolean>;
+  /** Prompts for a folder or adds the specified directory as a project root. Returns the path. */
+  addFolder: (dir?: string) => Promise<string | null>;
   /** Prompts for a file and opens it in a tab. Returns the picked path. */
   openFilePicker: () => Promise<string | null>;
+
   setDefaultFolder: (path: string) => void;
   setIsAutosaveEnabled: (enabled: boolean) => void;
   setIsSidebarCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -214,11 +216,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SET_TREE", tree });
   }, []);
 
-  const openFile = useCallback(async (path: string, name?: string) => {
-    const existing = stateRef.current.tabs.find((t) => t.filePath === path);
+  const openFile = useCallback(async (path: string, name?: string): Promise<boolean> => {
+    const { tabs } = getState();
+    const existing = tabs.find((t) => t.filePath === path);
     if (existing) {
       dispatch({ type: "FOCUS_TAB", id: existing.id });
-      return;
+      return true;
     }
     try {
       const content = await readTextFile(path);
@@ -234,17 +237,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           mode: "rich",
         },
       });
+      return true;
     } catch (err) {
       console.error(`Failed to open file at "${path}":`, err);
+      return false;
     }
   }, []);
 
-  const addFolder = useCallback(async () => {
-    const picked = await openFolderDialog();
+
+  const addFolder = useCallback(async (dir?: string) => {
+    const picked = dir ?? (await openFolderDialog());
     if (!picked) return null;
-    const node = await readProjectNode(picked);
-    dispatch({ type: "ADD_ROOT", rootPath: picked, node });
-    return picked;
+    try {
+      const node = await readProjectNode(picked);
+      dispatch({ type: "ADD_ROOT", rootPath: picked, node });
+      return picked;
+    } catch (err) {
+      console.error(`Failed to open folder at "${picked}":`, err);
+      return null;
+    }
   }, []);
 
   const openFilePicker = useCallback(async () => {

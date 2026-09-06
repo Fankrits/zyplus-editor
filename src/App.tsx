@@ -67,7 +67,10 @@ function AppShell() {
         const pending = await fs.takePendingFiles();
         for (const path of pending) {
           if (cancelled) return;
-          await openFile(path);
+          const ok = await openFile(path);
+          if (!ok) {
+            await addFolder(path);
+          }
         }
       } catch (err) {
         console.error("Error opening pending files:", err);
@@ -89,7 +92,8 @@ function AppShell() {
         unlisten.then((off) => off());
       }
     };
-  }, [isHydrated, openFile]);
+  }, [isHydrated, openFile, addFolder]);
+
 
   const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
     setCreateTargetDir(targetDir);
