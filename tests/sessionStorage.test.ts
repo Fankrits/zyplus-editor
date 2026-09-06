@@ -61,6 +61,7 @@ describe("sessionStorage", () => {
       ],
       activeFilePath: "/path/to/project/note2.md",
       isSidebarCollapsed: true,
+      isAutosaveEnabled: true,
     };
 
     saveSession(session);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Modal } from "@heroui/react";
+import { Button, Label, Modal, Switch } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Settings01Icon,
@@ -73,7 +73,8 @@ function ThemePreview({ theme }: { theme: Theme }) {
 }
 
 export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { state, dispatch, defaultFolder, setDefaultFolder } = useWorkspace();
+  const { state, dispatch, defaultFolder, setDefaultFolder, isAutosaveEnabled, setIsAutosaveEnabled } =
+    useWorkspace();
   const [section, setSection] = useState<SectionId>("general");
   const [theme, setThemeState] = useState<Theme>(getTheme);
 
@@ -129,20 +130,32 @@ export function SettingsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm">
                   {section === "general" && (
-                    <Field label="Default folder" hint="Where new files land when nothing is open.">
-                      <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
-                        <HugeiconsIcon icon={FolderOpenIcon} size={16} className="shrink-0 text-muted" />
-                        <span
-                          className="min-w-0 flex-1 truncate text-foreground"
-                          title={defaultFolder ?? undefined}
-                        >
-                          {defaultFolder ?? "Not set"}
-                        </span>
-                        <Button size="sm" variant="secondary" onPress={pickDefaultFolder}>
-                          Change
-                        </Button>
-                      </div>
-                    </Field>
+                    <div className="flex flex-col gap-5">
+                      <Field label="Default folder" hint="Where new files land when nothing is open.">
+                        <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+                          <HugeiconsIcon icon={FolderOpenIcon} size={16} className="shrink-0 text-muted" />
+                          <span
+                            className="min-w-0 flex-1 truncate text-foreground"
+                            title={defaultFolder ?? undefined}
+                          >
+                            {defaultFolder ?? "Not set"}
+                          </span>
+                          <Button size="sm" variant="secondary" onPress={pickDefaultFolder}>
+                            Change
+                          </Button>
+                        </div>
+                      </Field>
+                      <Field label="Autosave" hint="Saves open files a moment after you stop typing.">
+                        <Switch isSelected={isAutosaveEnabled} onChange={setIsAutosaveEnabled}>
+                          <Switch.Content>
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                            <Label>Save automatically</Label>
+                          </Switch.Content>
+                        </Switch>
+                      </Field>
+                    </div>
                   )}
 
                   {section === "theme" && (

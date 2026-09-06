@@ -15,6 +15,8 @@ export interface PersistedWorkspaceSession {
   tabs: PersistedTab[];
   activeFilePath: string | null;
   isSidebarCollapsed: boolean;
+  /** Write dirty tabs to disk shortly after typing stops. */
+  isAutosaveEnabled: boolean;
 }
 
 export function loadSession(): PersistedWorkspaceSession | null {
@@ -56,6 +58,7 @@ export function loadSession(): PersistedWorkspaceSession | null {
       tabs: validatedTabs,
       activeFilePath: typeof parsed.activeFilePath === "string" ? parsed.activeFilePath : null,
       isSidebarCollapsed: Boolean(parsed.isSidebarCollapsed),
+      isAutosaveEnabled: Boolean(parsed.isAutosaveEnabled),
     };
   } catch {
     return null;

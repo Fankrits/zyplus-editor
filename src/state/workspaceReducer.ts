@@ -37,7 +37,7 @@ export type Action =
   | { type: "REORDER_TAB"; id: string; targetId: string | null }
   | { type: "UPDATE_TAB_CONTENT"; id: string; content: string }
   | { type: "SET_TAB_MODE"; id: string; mode: TabMode }
-  | { type: "SAVE_TAB_SUCCESS"; id: string }
+  | { type: "SAVE_TAB_SUCCESS"; id: string; content?: string }
   | { type: "REMAP_TAB_PATHS"; oldPrefix: string; newPrefix: string }
   | { type: "CLOSE_TABS_UNDER"; prefix: string }
   | {
@@ -145,7 +145,12 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
     case "SAVE_TAB_SUCCESS":
       return {
         ...state,
-        tabs: state.tabs.map((t) => (t.id === action.id ? { ...t, isDirty: false } : t)),
+        // `content` (autosave) keeps edits made while the write was in flight dirty.
+        tabs: state.tabs.map((t) =>
+          t.id === action.id && (action.content === undefined || action.content === t.content)
+            ? { ...t, isDirty: false }
+            : t,
+        ),
       };
     case "REMAP_TAB_PATHS": {
       const { oldPrefix, newPrefix } = action;

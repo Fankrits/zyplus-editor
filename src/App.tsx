@@ -41,6 +41,7 @@ function AppShell() {
       tabs: [],
       activeFilePath: null,
       isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
     };
     saveSession({ ...current, isSidebarCollapsed });
   }, [isSidebarCollapsed]);

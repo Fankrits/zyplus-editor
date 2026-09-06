@@ -238,3 +238,38 @@ describe("restoreWorkspaceFromSession", () => {
   });
 });
 
+
+describe("SAVE_TAB_SUCCESS", () => {
+  const dirtyTab = {
+    id: "/p/a.md",
+    filePath: "/p/a.md",
+    title: "a.md",
+    content: "typed more",
+    isDirty: true,
+    mode: "rich" as const,
+  };
+  const state: WorkspaceState = {
+    roots: [],
+    tree: [],
+    tabs: [dirtyTab],
+    activeTabId: dirtyTab.id,
+  };
+
+  it("clears the dirty flag when the saved content is still current", () => {
+    const next = workspaceReducer(state, {
+      type: "SAVE_TAB_SUCCESS",
+      id: dirtyTab.id,
+      content: "typed more",
+    });
+    expect(next.tabs[0].isDirty).toBe(false);
+  });
+
+  it("stays dirty when the tab changed while the write was in flight", () => {
+    const next = workspaceReducer(state, {
+      type: "SAVE_TAB_SUCCESS",
+      id: dirtyTab.id,
+      content: "typed",
+    });
+    expect(next.tabs[0].isDirty).toBe(true);
+  });
+});
