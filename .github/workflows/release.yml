@@ -58,3 +58,23 @@ jobs:
           releaseDraft: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+  cask:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Bump Homebrew cask
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Zyplus_${V}_universal.dmg"
+          SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+          sed -i -e "s/^  version .*/  version \"$V\"/" -e "s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/zyplus.rb
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git commit -am "chore(cask): zyplus $V" && git push

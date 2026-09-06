@@ -39,7 +39,23 @@ exactly as you left it.
 
 ## Install
 
-Grab an installer for macOS, Linux or Windows from the
+**Homebrew** (macOS):
+
+```sh
+brew tap fankrits/zyplus https://github.com/Fankrits/zyplus-editor
+brew install --cask zyplus
+```
+
+**Script** (macOS, Linux x86_64):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.sh | sh
+```
+
+macOS installs `/Applications/Zyplus.app`; Linux drops the AppImage in
+`~/.local/bin/zyplus`. Pin a build with `ZYPLUS_VERSION=0.1.0`.
+
+**Manual:** installers for macOS, Linux and Windows are on the
 [latest release](https://github.com/Fankrits/zyplus-editor/releases/latest).
 
 ## Development
