@@ -248,8 +248,10 @@ mod launch_services {
 
     pub fn is_default(bundle_id: &str) -> bool {
         MARKDOWN_UTIS.iter().any(|uti| unsafe {
-            let current =
-                LSCopyDefaultRoleHandlerForContentType(CFString::new(uti).as_concrete_TypeRef(), ROLE_EDITOR);
+            let current = LSCopyDefaultRoleHandlerForContentType(
+                CFString::new(uti).as_concrete_TypeRef(),
+                ROLE_EDITOR,
+            );
             if current.is_null() {
                 return false;
             }
