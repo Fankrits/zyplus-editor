@@ -11,6 +11,7 @@ cask "zyplus" do
   depends_on macos: :big_sur
 
   app "Zyplus.app"
+  binary "#{appdir}/Zyplus.app/Contents/MacOS/zyplus-editor", target: "zyplus"
 
   zap trash: [
     "~/Library/Application Support/com.fankrits.zyplus-editor",

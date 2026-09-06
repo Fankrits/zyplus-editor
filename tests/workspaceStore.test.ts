@@ -105,7 +105,7 @@ describe("restoreWorkspaceFromSession", () => {
     ],
   };
 
-  it("returns null when session is null or has no roots", async () => {
+  it("returns null when session is null or has neither roots nor tabs", async () => {
     expect(await restoreWorkspaceFromSession(null)).toBeNull();
     expect(
       await restoreWorkspaceFromSession({
@@ -118,6 +118,32 @@ describe("restoreWorkspaceFromSession", () => {
         isAutosaveEnabled: false,
       }),
     ).toBeNull();
+  });
+
+  it("restores standalone tabs even when roots list is empty", async () => {
+    const mockFs = {
+      readProjectNode: async () => projectNode,
+      readTextFile: async (path: string) => `# Standalone: ${path}`,
+    };
+
+    const session: PersistedWorkspaceSession = {
+      version: 2,
+      roots: [],
+      defaultFolder: null,
+      tabs: [{ filePath: "/home/user/note.md", mode: "rich" }],
+      activeFilePath: "/home/user/note.md",
+      isSidebarCollapsed: false,
+      isAutosaveEnabled: false,
+    };
+
+    const restored = await restoreWorkspaceFromSession(session, mockFs);
+    expect(restored).not.toBeNull();
+    expect(restored?.roots).toEqual([]);
+    expect(restored?.tree).toEqual([]);
+    expect(restored?.tabs.length).toBe(1);
+    expect(restored?.tabs[0].filePath).toBe("/home/user/note.md");
+    expect(restored?.tabs[0].content).toBe("# Standalone: /home/user/note.md");
+    expect(restored?.activeTabId).toBe("/home/user/note.md");
   });
 
   it("restores tree and tabs when all files exist", async () => {

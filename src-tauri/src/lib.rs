@@ -1,6 +1,5 @@
 use std::sync::Mutex;
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -310,17 +309,62 @@ fn is_default_markdown_app(app: tauri::AppHandle) -> bool {
     }
 }
 
-/// Paths passed on the command line (Windows/Linux double-click).
+/// Canonicalizes a path argument relative to `cwd` if relative.
+fn resolve_file_arg(arg: &str, cwd: Option<&std::path::Path>) -> Option<String> {
+    let p = std::path::Path::new(arg);
+    let candidate = if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Some(cwd) = cwd {
+        cwd.join(p)
+    } else {
+        p.to_path_buf()
+    };
+    if candidate.is_file() {
+        Some(
+            candidate
+                .canonicalize()
+                .unwrap_or(candidate)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    } else {
+        None
+    }
+}
+
+/// Paths passed on the command line. Resolves relative paths against the process working directory.
 fn cli_file_args() -> Vec<String> {
+    let cwd = std::env::current_dir().ok();
     std::env::args()
         .skip(1)
-        .filter(|a| !a.starts_with('-') && std::path::Path::new(a).is_file())
+        .filter(|a| !a.starts_with('-'))
+        .filter_map(|a| resolve_file_arg(&a, cwd.as_deref()))
         .collect()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let cwd_path = std::path::Path::new(&cwd);
+            let paths: Vec<String> = argv
+                .iter()
+                .skip(1)
+                .filter(|a| !a.starts_with('-'))
+                .filter_map(|a| resolve_file_arg(a, Some(cwd_path)))
+                .collect();
+
+            if !paths.is_empty() {
+                app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
+                let _ = app.emit("open-files", ());
+            }
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
@@ -360,7 +404,7 @@ pub fn run() {
                 let paths: Vec<String> = urls
                     .iter()
                     .filter_map(|u| u.to_file_path().ok())
-                    .map(|p| p.to_string_lossy().into_owned())
+                    .map(|p| p.canonicalize().unwrap_or(p).to_string_lossy().into_owned())
                     .collect();
                 if paths.is_empty() {
                     return;
@@ -369,6 +413,11 @@ pub fn run() {
                 // so the frontend always drains the queue rather than trusting the payload.
                 app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
                 let _ = app.emit("open-files", ());
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
             #[cfg(not(any(target_os = "macos", target_os = "ios")))]
             {
