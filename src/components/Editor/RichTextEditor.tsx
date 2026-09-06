@@ -6,6 +6,7 @@ import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/classic.css";
 import "./milkdown-heroui-theme.css";
 import { supportedLanguages, renderCodeBlockPreview } from "./codeBlockPreview";
+import { githubAlerts } from "./githubAlerts";
 
 interface RichTextEditorProps {
   initialValue: string;
@@ -52,6 +53,7 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
         },
       },
     });
+    crepe.editor.use(githubAlerts);
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown, prevMarkdown) => {
         if (markdown !== prevMarkdown) onChangeRef.current(markdown);

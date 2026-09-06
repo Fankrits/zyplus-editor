@@ -328,3 +328,37 @@
   display: none !important;
 }
 
+
+/* GitHub-style alerts ("> [!NOTE] ..."), decorated by githubAlerts.ts.
+   The literal marker stays in the doc for round-tripping, but is hidden
+   behind an icon + label badge. */
+.milkdown .gh-alert {
+  border-left-color: var(--gh-alert-color);
+}
+.milkdown .gh-alert-note { --gh-alert-color: var(--accent); }
+.milkdown .gh-alert-tip { --gh-alert-color: var(--success); }
+.milkdown .gh-alert-important { --gh-alert-color: var(--accent); }
+.milkdown .gh-alert-warning { --gh-alert-color: var(--warning); }
+.milkdown .gh-alert-caution { --gh-alert-color: var(--danger); }
+
+.milkdown .gh-alert-marker {
+  display: none;
+}
+
+.milkdown .gh-alert-badge {
+  /* Block-level flex inside the paragraph: the badge gets its own line and the
+     body text flows underneath, like GitHub renders alerts. */
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: fit-content;
+  margin-bottom: 0.25rem;
+  color: var(--gh-alert-color);
+  font-weight: 600;
+  user-select: none;
+}
+.milkdown .gh-alert-badge svg {
+  width: 1em;
+  height: 1em;
+  transform: translateY(0.1em);
+}
