@@ -158,7 +158,11 @@ export async function readTextFile(path: string): Promise<string> {
     if (content !== undefined) return content;
     try {
       const res = await fetch(path);
-      if (res.ok) return await res.text();
+      // The dev server answers *any* unknown path with index.html and a 200, so
+      // `res.ok` alone would "open" a document whose content is the app's own
+      // markup. Only a non-HTML body is a real file here.
+      const type = res.headers.get("content-type") ?? "";
+      if (res.ok && !type.includes("text/html")) return await res.text();
     } catch {}
     throw new Error(`File not found: ${path}`);
   }
