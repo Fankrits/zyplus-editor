@@ -47,6 +47,21 @@ describe("theme", () => {
     expect(localStorage.getItem("zyplus:theme-base")).toBe("");
   });
 
+  it("tags only real palettes, so the base themes keep the plain canvas", () => {
+    // App.css paints the light canvas white via `:not([data-palette])`; a
+    // data-palette on "light" silently opted it out and made explicit Light
+    // look different from System resolving to light.
+    setTheme("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+
+    setTheme("dark");
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+
+    setTheme("tokyo-night");
+    expect(document.documentElement.dataset.palette).toBe("tokyo-night");
+  });
+
   it("resolves system against the OS preference", () => {
     mockSystemDark(true);
     applyTheme("system");

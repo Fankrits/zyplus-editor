@@ -20,6 +20,19 @@ function clearRichHighlights() {
 }
 
 /**
+ * Shows the current match as an ordinary selection where `::highlight()` is
+ * not available — WebKitGTK before 2.44 and Safari before 17.2, both of which
+ * are still shipping targets (the Linux bundles are built on ubuntu-22.04).
+ * Without a fallback the bar counts matches the user can neither see nor reach.
+ */
+function selectRange(range: Range): void {
+  const selection = document.getSelection();
+  if (!selection) return;
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+/**
  * Matches inside the rendered rich-text DOM. ponytail: per text node, so a match
  * split across inline marks ("**wor**d") is missed — good enough until it isn't.
  */
@@ -106,11 +119,20 @@ export function SearchBar({ mode, containerRef, initialShowReplace = false, onCl
       return;
     }
     const ranges = richMatches.current;
-    if (!highlights || !HighlightCtor) return;
     if (ranges.length === 0) return clearRichHighlights();
-    highlights.set(HIGHLIGHT_ALL, new HighlightCtor(...ranges));
-    highlights.set(HIGHLIGHT_ACTIVE, new HighlightCtor(ranges[index]));
-    ranges[index]?.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const current = ranges[index];
+    if (!current) return;
+
+    if (highlights && HighlightCtor) {
+      highlights.set(HIGHLIGHT_ALL, new HighlightCtor(...ranges));
+      highlights.set(HIGHLIGHT_ACTIVE, new HighlightCtor(current));
+    } else {
+      selectRange(current);
+    }
+    // Scrolling is deliberately outside that branch: it is how the match is
+    // reached at all, and skipping it left older webviews with a match count
+    // pointing at something off screen.
+    current.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [index, total, mode, revision]);
 
   // Leave no highlight or lingering query behind when the bar closes.
