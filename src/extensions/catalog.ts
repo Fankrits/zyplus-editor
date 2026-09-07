@@ -2,11 +2,20 @@ import type { ExtensionManifest } from "./types";
 
 const isDev = Boolean(typeof import.meta !== "undefined" && import.meta.env?.DEV);
 
+/**
+ * Release builds fetch the bundles straight out of the repository, so this has
+ * to name a ref that exists. It used to say `extension` — a branch deleted
+ * after it merged — which made every install in every shipped build a 404, and
+ * with it Mermaid and KaTeX. Renaming or deleting the ref breaks installs for
+ * users already running an older build, so it tracks the default branch.
+ */
+export const ASSET_REF = "main";
+
 function getAssetUrl(filename: string): string {
   if (isDev) {
     return `/extensions-dist/${filename}`;
   }
-  return `https://raw.githubusercontent.com/Fankrits/zyplus-editor/extension/extensions/dist/${filename}`;
+  return `https://raw.githubusercontent.com/Fankrits/zyplus-editor/${ASSET_REF}/extensions/dist/${filename}`;
 }
 
 export const EXTENSION_CATALOG: ExtensionManifest[] = [

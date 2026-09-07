@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { EXTENSION_CATALOG, formatBytes } from "../src/extensions/catalog";
+import { ASSET_REF, EXTENSION_CATALOG, formatBytes } from "../src/extensions/catalog";
 import { extensionManager } from "../src/extensions/extensionManager";
 import { isExtensionInstalledLocally } from "../src/extensions/loader";
 
@@ -27,6 +27,22 @@ describe("Extension System", () => {
 
     expect(formatBytes(1024)).toBe("1.0 KB");
     expect(formatBytes(3_500_000)).toBe("3.3 MB");
+  });
+
+  // Every asset URL is fetched at runtime from a real ref. Pointing them at a
+  // branch that had been deleted made Mermaid and KaTeX un-installable in every
+  // shipped build, and nothing failed until a user clicked Install.
+  it("points every bundle at a ref that exists in the repository", () => {
+    expect(ASSET_REF).toBe("main");
+    const urls = EXTENSION_CATALOG.flatMap((e) => [e.downloadUrl, e.cssUrl].filter(Boolean));
+    expect(urls.length).toBeGreaterThanOrEqual(3);
+    for (const url of urls) {
+      // Dev serves these locally; a release build must resolve to the repo.
+      if (url!.startsWith("/")) continue;
+      expect(url).toStartWith(
+        `https://raw.githubusercontent.com/Fankrits/zyplus-editor/${ASSET_REF}/extensions/dist/`,
+      );
+    }
   });
 
   it("should have extensions uninstalled by default", () => {
