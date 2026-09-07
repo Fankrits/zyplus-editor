@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 import { dirname, join } from "@tauri-apps/api/path";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button, Input, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -23,7 +22,14 @@ import {
 } from "@hugeicons/core-free-icons";
 import { useWorkspaceActions, useWorkspaceTree, type TreeNode } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
-import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
+import {
+  ContextMenu,
+  useContextMenu,
+  useLongPress,
+  type ContextMenuItem,
+  type ContextMenuOrigin,
+} from "../ContextMenu";
+import { REVEAL_LABEL } from "../../lib/platform";
 
 interface FileTreeProps {
   onOpenFile: (path: string, name: string) => void;
@@ -152,7 +158,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
         items.push({ key: "duplicate", label: "Duplicate", icon: Copy01Icon, onSelect: () => handleDuplicate(node) });
       }
       items.push(
-        { key: "reveal", label: "Reveal in Finder", icon: FolderOpenIcon, onSelect: () => revealItemInDir(node.data.id) },
+        { key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => fs.revealPath(node.data.id) },
         {
           key: "copy-path",
           label: "Copy Path",
@@ -174,7 +180,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   );
 
   const handleNodeContextMenu = useCallback(
-    (e: ReactMouseEvent, node: NodeApi<TreeNode>) => {
+    (e: ContextMenuOrigin, node: NodeApi<TreeNode>) => {
       if (!node.isSelected) node.select();
       contextMenu.open(e, buildNodeMenuItems(node));
     },
@@ -282,7 +288,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 }
 
 interface NodeProps extends NodeRendererProps<TreeNode> {
-  onNodeContextMenu: (e: ReactMouseEvent, node: NodeApi<TreeNode>) => void;
+  onNodeContextMenu: (e: ContextMenuOrigin, node: NodeApi<TreeNode>) => void;
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
   isRoot: boolean;
 }
@@ -291,6 +297,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu, onRequestCreate, isR
   // `style.paddingLeft` already equals node.level * the Tree's `indent` prop (react-arborist
   // computes this for us) — just add a small constant base inset on top of it.
   const rowStyle = { ...style, paddingLeft: (style.paddingLeft as number | undefined ?? 0) + 8 };
+  const longPress = useLongPress((origin) => onNodeContextMenu(origin, node));
 
   if (node.isEditing) {
     const isFile = !node.data.isFolder;
@@ -342,6 +349,7 @@ function Node({ node, style, dragHandle, onNodeContextMenu, onRequestCreate, isR
       ref={dragHandle}
       onDoubleClick={() => (isRoot ? node.toggle() : node.edit())}
       onContextMenu={(e) => onNodeContextMenu(e, node)}
+      {...longPress}
       className={`group mx-1 my-0.5 flex h-[calc(100%-4px)] cursor-default items-center gap-2 rounded-2xl pr-1 text-sm select-none ${
         node.isSelected ? "bg-accent-soft text-accent-soft-foreground" : "hover:bg-default"
       }`}
@@ -367,7 +375,9 @@ function Node({ node, style, dragHandle, onNodeContextMenu, onRequestCreate, isR
       />
       <span className={`min-w-0 flex-1 truncate ${isRoot ? "font-semibold" : ""}`}>{node.data.name}</span>
       {node.data.isFolder && (
-        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        // Hover reveals these on a pointer device; where there is no hover they
+        // are simply always on, or touch users could never reach them.
+        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
           <RowAction
             label="New file here"
             icon={FileAddIcon}

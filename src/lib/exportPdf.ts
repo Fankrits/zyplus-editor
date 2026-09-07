@@ -1,6 +1,7 @@
 import { marked } from "marked";
 import { isTauri, invoke } from "@tauri-apps/api/core";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { save as saveDialog, message } from "@tauri-apps/plugin-dialog";
+import { isMac } from "./platform";
 
 /**
  * "Export as PDF" builds a standalone HTML document and prints *that* straight
@@ -76,10 +77,28 @@ export function renderPrintDocument(title: string, markdown: string): string {
 }
 
 /**
+ * The native exporter is implemented against AppKit's `NSPrintOperation`
+ * (see `start_print_to_pdf` in src-tauri/src/lib.rs), which has no Windows or
+ * Linux counterpart — `export_pdf` refuses on those platforms. Checking here
+ * too means a user who picks the action gets told that instead of being walked
+ * through a save dialog whose file never appears.
+ */
+export const isPdfExportSupported = (): boolean => !isTauri() || isMac;
+
+/**
  * Asks where to put the PDF, then writes it there. Resolves once the file
- * exists; rejects with the reason if it could not be written.
+ * exists, or once the failure has been reported to the user — every caller is
+ * fire-and-forget, so a rejection here would surface as nothing at all.
  */
 export async function exportPdf(title: string, markdown: string): Promise<void> {
+  try {
+    await runExport(title, markdown);
+  } catch (err) {
+    await reportFailure(err);
+  }
+}
+
+async function runExport(title: string, markdown: string): Promise<void> {
   const html = renderPrintDocument(title, markdown);
   const defaultName = title.replace(/\.[^.]+$/, "") + ".pdf";
 
@@ -93,10 +112,33 @@ export async function exportPdf(title: string, markdown: string): Promise<void> 
     return;
   }
 
+  if (!isPdfExportSupported()) {
+    await message(
+      "Exporting to PDF is only available on macOS right now. " +
+        "Use \u201cExport as .md\u201d to save the document, or print it from another app.",
+      { title: "Export as PDF", kind: "warning" },
+    );
+    return;
+  }
+
   const path = await saveDialog({
     defaultPath: defaultName,
     filters: [{ name: "PDF", extensions: ["pdf"] }],
   });
   if (!path) return; // cancelled
   await invoke("export_pdf", { html, path });
+}
+
+async function reportFailure(err: unknown): Promise<void> {
+  const detail = err instanceof Error ? err.message : String(err);
+  console.error("Export as PDF failed:", err);
+  if (!isTauri()) return;
+  try {
+    await message(`The PDF could not be written.\n\n${detail}`, {
+      title: "Export as PDF",
+      kind: "error",
+    });
+  } catch {
+    // The dialog itself failing is not worth a second failure path.
+  }
 }

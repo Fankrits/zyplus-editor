@@ -18,7 +18,6 @@ import {
   FileExportIcon,
   Pdf01Icon,
 } from "@hugeicons/core-free-icons";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   useWorkspaceActions,
   useWorkspaceSession,
@@ -26,8 +25,15 @@ import {
   useWorkspaceTree,
   type TabState,
 } from "../../state/workspaceStore";
-import { writeTextFile, saveFileAs } from "../../lib/fs";
-import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ContextMenu";
+import { saveDocument, saveFileAs, revealPath } from "../../lib/fs";
+import { REVEAL_LABEL } from "../../lib/platform";
+import {
+  ContextMenu,
+  useContextMenu,
+  useLongPress,
+  type ContextMenuItem,
+  type ContextMenuOrigin,
+} from "../ContextMenu";
 import { emit, CLOSE_TAB_EVENT, FIND_EVENT } from "../../lib/commands";
 
 interface TabItemProps {
@@ -37,7 +43,7 @@ interface TabItemProps {
   isDragOver: boolean;
   onSelect: (id: string) => void;
   onRequestClose: (id: string) => void;
-  onContextMenu: (e: ReactMouseEvent, id: string) => void;
+  onContextMenu: (e: ContextMenuOrigin, id: string) => void;
   onDragStartTab: (id: string) => void;
   onDragOverTab: (id: string) => void;
   onDropTab: (id: string) => void;
@@ -57,6 +63,8 @@ const TabItem = memo(function TabItem({
   onDropTab,
   onDragEndTab,
 }: TabItemProps) {
+  const longPress = useLongPress((origin) => onContextMenu(origin, tab.id));
+
   return (
     <div
       role="tab"
@@ -87,6 +95,7 @@ const TabItem = memo(function TabItem({
         }
       }}
       onContextMenu={(e) => onContextMenu(e, tab.id)}
+      {...longPress}
       className={`group flex h-8 shrink-0 cursor-default items-center gap-2 rounded-3xl px-3 text-sm font-medium no-highlight outline-none ${
         isActive ? "bg-accent-soft text-accent-soft-foreground" : "text-muted hover:opacity-70"
       } ${isDragging ? "opacity-40" : ""} ${isDragOver ? "status-focused" : ""} focus-visible:status-focused`}
@@ -100,7 +109,7 @@ const TabItem = memo(function TabItem({
           e.stopPropagation();
           onRequestClose(tab.id);
         }}
-        className="rounded-full p-0.5 opacity-0 group-hover:opacity-100 hover:bg-foreground/10"
+        className="rounded-full p-0.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-foreground/10 [@media(hover:none)]:opacity-100"
       >
         <HugeiconsIcon icon={Cancel01Icon} size={13} strokeWidth={2} />
       </button>
@@ -187,8 +196,9 @@ export function TabBar({
     async (id: string) => {
       const tab = getState().tabs.find((t) => t.id === id);
       if (!tab) return;
-      await writeTextFile(tab.filePath, tab.content);
-      dispatch({ type: "SAVE_TAB_SUCCESS", id });
+      if (await saveDocument(tab.filePath, tab.content)) {
+        dispatch({ type: "SAVE_TAB_SUCCESS", id });
+      }
     },
     [getState, dispatch],
   );
@@ -211,7 +221,7 @@ export function TabBar({
   }, [getState, dispatch]);
 
   const handleTabContextMenu = useCallback(
-    (e: ReactMouseEvent, id: string) => {
+    (e: ContextMenuOrigin, id: string) => {
       const tab = getState().tabs.find((t) => t.id === id);
       if (!tab) return;
       const items: ContextMenuItem[] = [
@@ -224,7 +234,7 @@ export function TabBar({
           onSelect: () => handleCloseOthers(id),
         },
         { key: "close-all", label: "Close All", icon: MultiplicationSignIcon, onSelect: () => handleCloseAll() },
-        { key: "reveal", label: "Reveal in Finder", icon: FolderOpenIcon, onSelect: () => revealItemInDir(tab.filePath) },
+        { key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => revealPath(tab.filePath) },
         {
           key: "copy-path",
           label: "Copy Path",
@@ -282,9 +292,9 @@ export function TabBar({
         },
         {
           key: "reveal",
-          label: "Reveal in Finder",
+          label: REVEAL_LABEL,
           icon: FolderOpenIcon,
-          onSelect: () => revealItemInDir(activeTab.filePath),
+          onSelect: () => revealPath(activeTab.filePath),
         },
       ];
       actionsMenu.open(e, items);
@@ -301,7 +311,9 @@ export function TabBar({
 
   const handleSaveAndClose = async () => {
     if (pendingTab) {
-      await writeTextFile(pendingTab.filePath, pendingTab.content);
+      // A failed write must not close the tab: that would discard exactly the
+      // changes the user just asked to keep. The prompt stays up instead.
+      if (!(await saveDocument(pendingTab.filePath, pendingTab.content))) return;
       dispatch({ type: "SAVE_TAB_SUCCESS", id: pendingTab.id });
       dispatch({ type: "CLOSE_TAB", id: pendingTab.id });
     }

@@ -1,17 +1,11 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { applyTheme, getTheme, setTheme } from "../src/lib/theme";
 
-const store: Record<string, string> = {};
+// Only the OS preference is faked; the DOM and localStorage are the shared ones
+// from tests/setup.ts. Stubbing `document` here instead would replace it for
+// every test file loaded after this one — see that file's comment.
 const g = globalThis as Record<string, unknown>;
-g.localStorage = {
-  getItem: (k: string) => store[k] ?? null,
-  setItem: (k: string, v: string) => void (store[k] = v),
-  removeItem: (k: string) => void delete store[k],
-  clear: () => Object.keys(store).forEach((k) => delete store[k]),
-};
-g.document = { documentElement: { dataset: {} as Record<string, string>, style: {} } };
-g.window = g;
-
-const { applyTheme, getTheme, setTheme } = await import("../src/lib/theme");
+const realMatchMedia = g.matchMedia;
 
 function mockSystemDark(isDark: boolean) {
   g.matchMedia = () => ({ matches: isDark, addEventListener: () => {} });
@@ -20,7 +14,13 @@ function mockSystemDark(isDark: boolean) {
 describe("theme", () => {
   beforeEach(() => {
     localStorage.clear();
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.palette;
     mockSystemDark(false);
+  });
+
+  afterEach(() => {
+    g.matchMedia = realMatchMedia;
   });
 
   it("defaults to system and ignores junk", () => {

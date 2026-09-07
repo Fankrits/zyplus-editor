@@ -1,4 +1,4 @@
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog, message } from "@tauri-apps/plugin-dialog";
 import {
   readDir,
   readTextFile as readTextFileRaw,
@@ -15,6 +15,7 @@ import {
   documentDir,
 } from "@tauri-apps/api/path";
 import { isTauri, invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { TreeNode } from "../state/workspaceReducer";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".txt"];
@@ -125,6 +126,16 @@ export async function readProjectNode(dirPath: string): Promise<TreeNode> {
 
 export const DEFAULT_FOLDER_NAME = "Zyplus";
 
+/**
+ * Joins for display only, using the separator `parent` already uses — Windows
+ * hands back `C:\\Users\\me\\Documents`, and pasting a "/" onto that renders a
+ * path the user has never seen. Real paths still go through Tauri's `join`.
+ */
+export function displayJoin(parent: string, name: string): string {
+  const sep = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
+  return parent.endsWith(sep) ? `${parent}${name}` : `${parent}${sep}${name}`;
+}
+
 /** Suggested parent for the default folder (Documents on desktop). */
 export async function defaultFolderParent(): Promise<string> {
   if (!isTauri()) return "/demo";
@@ -160,6 +171,35 @@ export async function writeTextFile(path: string, content: string): Promise<void
     return;
   }
   await writeTextFileRaw(path, content);
+}
+
+/**
+ * Writes a document the user explicitly asked to save, reporting a failure
+ * instead of dropping it. Returns whether the write landed, so callers do not
+ * mark a tab clean — or close it — over a file that never made it to disk.
+ *
+ * Autosave deliberately does not go through here: a background write that keeps
+ * failing should stay a console warning, not a dialog on a timer.
+ */
+export async function saveDocument(path: string, content: string): Promise<boolean> {
+  try {
+    await writeTextFile(path, content);
+    return true;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`Could not save "${path}":`, err);
+    if (isTauri()) {
+      try {
+        await message(`"${path}" could not be saved.\n\n${detail}`, {
+          title: "Save failed",
+          kind: "error",
+        });
+      } catch {
+        // Reporting the failure failing is not worth a second failure path.
+      }
+    }
+    return false;
+  }
 }
 
 export async function createFile(path: string): Promise<void> {
@@ -239,6 +279,20 @@ export async function saveFileAs(defaultName: string, content: string): Promise<
   }
   const path = await saveDialog({ defaultPath: defaultName });
   if (path) await writeTextFileRaw(path, content);
+}
+
+/**
+ * Shows `path` in the OS file manager. A no-op in the browser build, and a
+ * logged warning rather than an unhandled rejection when the OS declines —
+ * every caller is a fire-and-forget menu item.
+ */
+export async function revealPath(path: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await revealItemInDir(path);
+  } catch (err) {
+    console.error(`Could not reveal "${path}":`, err);
+  }
 }
 
 /** Files the OS handed us (double-click / "Open With"). Drains the native queue. */

@@ -324,36 +324,62 @@ fn is_default_markdown_app(app: tauri::AppHandle) -> bool {
     }
 }
 
+/// A canonicalized path as the rest of the app should see it.
+///
+/// `canonicalize` returns extended-length paths on Windows (`\\?\\C:\\notes\\a.md`,
+/// or `\\\\?\\UNC\\server\\share` for a network share). They are valid, but they
+/// become the tab's id and title and are matched against the fs scope, so the
+/// prefix is stripped back off to the path the user actually typed or clicked.
+fn display_path(path: std::path::PathBuf) -> String {
+    let s = path.to_string_lossy().into_owned();
+    // Only Windows produces these, and only Windows should have them removed:
+    // on Unix `\\?\` is an ordinary (if bizarre) filename, not a prefix.
+    #[cfg(windows)]
+    return strip_verbatim_prefix(&s);
+    #[cfg(not(windows))]
+    s
+}
+
+/// `\\?\C:\notes` → `C:\notes`, `\\?\UNC\server\share` → `\\server\share`.
+/// Compiled everywhere so the tests below cover it off a Windows runner too.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn strip_verbatim_prefix(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => s.to_string(),
+    }
+}
+
 /// Canonicalizes a path argument relative to `cwd` if relative.
-fn resolve_file_arg(arg: &str, cwd: Option<&std::path::Path>) -> Option<String> {
-    let p = std::path::Path::new(arg);
-    let candidate = if p.is_absolute() {
-        p.to_path_buf()
+fn resolve_file_arg(arg: &std::path::Path, cwd: Option<&std::path::Path>) -> Option<String> {
+    let candidate = if arg.is_absolute() {
+        arg.to_path_buf()
     } else if let Some(cwd) = cwd {
-        cwd.join(p)
+        cwd.join(arg)
     } else {
-        p.to_path_buf()
+        arg.to_path_buf()
     };
     if candidate.is_file() || candidate.is_dir() {
-        Some(
-            candidate
-                .canonicalize()
-                .unwrap_or(candidate)
-                .to_string_lossy()
-                .into_owned(),
-        )
+        Some(display_path(candidate.canonicalize().unwrap_or(candidate)))
     } else {
         None
     }
 }
 
 /// Paths passed on the command line. Resolves relative paths against the process working directory.
+///
+/// `args_os`, not `args`: the latter panics on an argument that is not valid
+/// Unicode, which on Linux and macOS is any filename the filesystem happens to
+/// hold — the app would die on launch rather than open the file.
 fn cli_file_args() -> Vec<String> {
     let cwd = std::env::current_dir().ok();
-    std::env::args()
+    std::env::args_os()
         .skip(1)
-        .filter(|a| !a.starts_with('-'))
-        .filter_map(|a| resolve_file_arg(&a, cwd.as_deref()))
+        .filter(|a| !a.to_string_lossy().starts_with('-'))
+        .filter_map(|a| resolve_file_arg(std::path::Path::new(&a), cwd.as_deref()))
         .collect()
 }
 
@@ -366,7 +392,7 @@ pub fn run() {
                 .iter()
                 .skip(1)
                 .filter(|a| !a.starts_with('-'))
-                .filter_map(|a| resolve_file_arg(a, Some(cwd_path)))
+                .filter_map(|a| resolve_file_arg(std::path::Path::new(a), Some(cwd_path)))
                 .collect();
 
             if !paths.is_empty() {
@@ -420,7 +446,7 @@ pub fn run() {
                 let paths: Vec<String> = urls
                     .iter()
                     .filter_map(|u| u.to_file_path().ok())
-                    .map(|p| p.canonicalize().unwrap_or(p).to_string_lossy().into_owned())
+                    .map(|p| display_path(p.canonicalize().unwrap_or(p)))
                     .collect();
                 if paths.is_empty() {
                     return;
@@ -442,6 +468,47 @@ pub fn run() {
                 let _ = (app, event);
             }
         });
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::{resolve_file_arg, strip_verbatim_prefix};
+
+    #[test]
+    fn strips_windows_extended_length_prefixes() {
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\C:\notes\a.md"),
+            r"C:\notes\a.md"
+        );
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\UNC\server\share\a.md"),
+            r"\\server\share\a.md"
+        );
+        // Anything without the prefix is passed through untouched.
+        assert_eq!(strip_verbatim_prefix(r"C:\notes\a.md"), r"C:\notes\a.md");
+        assert_eq!(strip_verbatim_prefix("/home/me/a.md"), "/home/me/a.md");
+    }
+
+    #[test]
+    fn resolves_a_relative_arg_against_the_working_directory() {
+        let dir = std::env::temp_dir().join("zyplus-resolve-arg-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.md");
+        std::fs::write(&file, "# hi").unwrap();
+
+        let resolved = resolve_file_arg(std::path::Path::new("note.md"), Some(&dir))
+            .expect("a file that exists should resolve");
+        assert!(resolved.ends_with("note.md"), "got {resolved}");
+        assert!(
+            !resolved.starts_with(r"\\?\"),
+            "verbatim prefix leaked: {resolved}"
+        );
+
+        // A path that is not on disk is not a file to open.
+        assert!(resolve_file_arg(std::path::Path::new("nope.md"), Some(&dir)).is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
