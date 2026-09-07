@@ -44,7 +44,7 @@ export function Welcome({ onReady, onSkip, onOpenFile, onOpenFolder }: WelcomePr
   }, [parent, onReady]);
 
   return (
-    <div className="flex h-dvh w-full flex-col items-center justify-center gap-4 bg-background p-6 text-foreground">
+    <div className="flex h-app w-full flex-col items-center justify-center gap-4 bg-background p-6 text-foreground">
       <Logo size={48} className="text-foreground" />
       <h1 className="text-lg font-semibold tracking-tight">Welcome to Zyplus</h1>
       <p className="max-w-sm text-center text-sm text-muted">

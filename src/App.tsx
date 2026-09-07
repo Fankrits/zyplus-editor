@@ -251,7 +251,7 @@ function AppShell() {
     closeCreateModal();
   };
 
-  if (!isHydrated) return <div className="h-dvh w-full bg-background" />;
+  if (!isHydrated) return <div className="h-app w-full bg-background" />;
 
   if (!defaultFolder && roots.length === 0 && !hasTabs) {
     return (
@@ -265,7 +265,7 @@ function AppShell() {
   }
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-background text-foreground">
+    <div className="flex h-app w-full overflow-hidden bg-background text-foreground">
       {isDesktop && <Sidebar onRequestCreate={requestCreate} isCollapsed={isSidebarCollapsed} />}
       <div className="flex min-w-0 flex-1 flex-col">
         <TabBar
