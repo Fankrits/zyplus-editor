@@ -515,7 +515,18 @@ mod path_tests {
 mod tests {
     use super::launch_services::*;
 
+    /// Deliberately not part of the default run.
+    ///
+    /// LaunchServices can only hand the Markdown UTI to a bundle id it knows
+    /// about, so this fails on any machine where Zyplus is not installed — a
+    /// clean CI runner included. It also has a real side effect: it reassigns
+    /// whoever runs it a new default Markdown app, which `bun run check`
+    /// should not do to a developer's Mac.
+    ///
+    /// Run it deliberately, on a machine with Zyplus in /Applications:
+    ///   cargo test --manifest-path src-tauri/Cargo.toml -- --ignored
     #[test]
+    #[ignore = "mutates the machine's LaunchServices bindings; needs Zyplus installed"]
     fn test_claim_markdown_and_is_default() {
         let bundle_id = "com.fankrits.zyplus-editor";
         let res = claim_markdown(bundle_id);

@@ -105,7 +105,12 @@ bun run dev           # browser only — no filesystem, for UI work
 bun test              # test suite (bun:test + happy-dom)
 bun run build         # typecheck + build the frontend
 bun run tauri build   # installers into src-tauri/target/release/bundle
+bun run check         # everything CI runs: tests, tsc, fmt, clippy, cargo test
 ```
+
+[`check.yml`](.github/workflows/check.yml) runs `bun run check` on macOS,
+Linux and Windows for every push and pull request — platform-specific breakage
+only shows up if the checks actually run on each platform.
 
 ## Layout
 
