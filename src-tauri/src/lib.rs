@@ -334,9 +334,10 @@ fn display_path(path: std::path::PathBuf) -> String {
     let s = path.to_string_lossy().into_owned();
     // Only Windows produces these, and only Windows should have them removed:
     // on Unix `\\?\` is an ordinary (if bizarre) filename, not a prefix.
+    // Shadowing rather than a cfg'd `return`, which reads as a needless one
+    // on the very platform the branch exists for.
     #[cfg(windows)]
-    return strip_verbatim_prefix(&s);
-    #[cfg(not(windows))]
+    let s = strip_verbatim_prefix(&s);
     s
 }
 
