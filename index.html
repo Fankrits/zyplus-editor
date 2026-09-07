@@ -19,7 +19,9 @@
         var root = document.documentElement;
         root.dataset.theme = dark ? "dark" : "light";
         root.style.colorScheme = dark ? "dark" : "light";
-        if (base && t) root.dataset.palette = t;
+        // Base themes ("light"/"dark") name no palette; tagging them here would
+        // paint the grey canvas for one frame before applyTheme corrects it.
+        if (base && t && t !== "light" && t !== "dark") root.dataset.palette = t;
       })();
     </script>
   </head>

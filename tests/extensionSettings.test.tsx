@@ -1,19 +1,3 @@
-import { GlobalWindow } from "happy-dom";
-
-// Ensure DOM environment exists for React testing
-if (typeof globalThis.document === "undefined") {
-  const win = new GlobalWindow();
-  for (const key of Object.getOwnPropertyNames(win)) {
-    if (!(key in globalThis)) {
-      try {
-        (globalThis as any)[key] = (win as any)[key];
-      } catch {}
-    }
-  }
-  (globalThis as any).window = globalThis;
-  (globalThis as any).document = win.document;
-}
-
 import { describe, it, expect, beforeEach } from "bun:test";
 import { act, fireEvent, render } from "@testing-library/react";
 import { WorkspaceProvider } from "../src/state/workspaceStore";

@@ -39,7 +39,12 @@ export function applyTheme(theme: Theme = getTheme()): void {
     (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   const root = document.documentElement;
   root.dataset.theme = base;
-  if (THEMES[theme].base === null) delete root.dataset.palette;
+  // Only the ported palettes carry a `data-palette`. "light" and "dark" are the
+  // bare HeroUI themes and name no palette — App.css defines none for them — and
+  // tagging them anyway defeated its `:not([data-palette])` white-canvas rule,
+  // so picking "Light" rendered the grey canvas that "System" resolving to light
+  // did not.
+  if (THEMES[theme].group === "Base") delete root.dataset.palette;
   else root.dataset.palette = theme;
   // index.html sets this inline before paint; keep it in sync so native widgets follow.
   root.style.colorScheme = base;

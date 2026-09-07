@@ -10,6 +10,26 @@ body,
 }
 
 /*
+ * Full-viewport height. `dvh` tracks the *visible* viewport, so the app is not
+ * cut off under a mobile browser's retracting chrome.
+ *
+ * The @supports guard is the fallback for a webview old enough not to know
+ * `dvh` (Tauri still supports back to macOS 10.15), which would otherwise drop
+ * the declaration and collapse the shell to `height: auto`. It has to be
+ * written this way round: as two plain declarations the CSS minifier folds the
+ * `vh` line away, since its own browser targets all support `dvh`.
+ */
+.h-app {
+  height: 100dvh;
+}
+
+@supports not (height: 100dvh) {
+  .h-app {
+    height: 100vh;
+  }
+}
+
+/*
  * HeroUI's light canvas is a grey that the editor's white page clashed with.
  * One surface for chrome and document: white in light, near-black in dark
  * (the dark canvas already reads as such, so only light needs overriding).

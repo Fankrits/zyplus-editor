@@ -6,6 +6,12 @@
  * Keys are matched on `event.code` (layout position) so Alt-modified keys still match
  * on macOS, where `event.key` becomes "ƒ" for Alt+F.
  */
+import { isMac } from "./platform";
+
+// Platform detection lives in platform.ts; re-exported because the shortcut sheet
+// and its consumers have always read `isMac` off this module.
+export { isMac } from "./platform";
+
 export type CommandId =
   | "save"
   | "export-md"
@@ -61,9 +67,6 @@ export const SHORTCUTS: Shortcut[] = [
 /** Cmd+1…9 jump to the nth tab (9 = last). Listed in the sheet as one row. */
 export const TAB_DIGIT_LABEL = "Go to tab 1–9";
 
-export const isMac =
-  typeof navigator !== "undefined" && /mac|iphone|ipad/i.test(navigator.userAgent);
-
 const CODE_ALIASES: Record<string, string> = {
   Comma: ",",
   Period: ".",
@@ -86,31 +89,49 @@ export function keyOf(e: KeyboardEvent): string {
   return e.key.toLowerCase();
 }
 
-export function matchesCombo(e: KeyboardEvent, combo: string): boolean {
+/**
+ * `mac` defaults to the host platform. It is a parameter rather than a bare
+ * module constant so both key maps can be exercised without reaching for the
+ * user agent — a global that only takes effect if it is faked before this
+ * module first loads, which makes the test order-dependent.
+ */
+export function matchesCombo(e: KeyboardEvent, combo: string, mac: boolean = isMac): boolean {
   const parts = combo.split("+");
   const key = parts[parts.length - 1];
   const mods = parts.slice(0, -1);
-  if (mods.includes("mod") !== (isMac ? e.metaKey : e.ctrlKey)) return false;
+  if (mods.includes("mod") !== (mac ? e.metaKey : e.ctrlKey)) return false;
   if (mods.includes("shift") !== e.shiftKey) return false;
   if (mods.includes("alt") !== e.altKey) return false;
   // On macOS the non-`mod` control key must stay clear so Ctrl-based bindings don't double-fire.
-  if (isMac && e.ctrlKey) return false;
-  if (!isMac && e.metaKey) return false;
+  if (mac && e.ctrlKey) return false;
+  if (!mac && e.metaKey) return false;
   return keyOf(e) === key;
 }
 
-export function matchShortcut(e: KeyboardEvent): CommandId | null {
+export function matchShortcut(e: KeyboardEvent, mac: boolean = isMac): CommandId | null {
   for (const s of SHORTCUTS) {
-    if (s.combos.some((c) => matchesCombo(e, c))) return s.id;
+    if (s.combos.some((c) => matchesCombo(e, c, mac))) return s.id;
   }
   return null;
 }
 
-const DISPLAY: Record<string, string> = isMac
-  ? { mod: "⌘", shift: "⇧", alt: "⌥", arrowleft: "←", arrowright: "→" }
-  : { mod: "Ctrl", shift: "Shift", alt: "Alt", arrowleft: "←", arrowright: "→" };
+const MAC_DISPLAY: Record<string, string> = {
+  mod: "⌘",
+  shift: "⇧",
+  alt: "⌥",
+  arrowleft: "←",
+  arrowright: "→",
+};
+const PC_DISPLAY: Record<string, string> = {
+  mod: "Ctrl",
+  shift: "Shift",
+  alt: "Alt",
+  arrowleft: "←",
+  arrowright: "→",
+};
 
 /** "mod+shift+s" → ["⌘", "⇧", "S"] */
-export function formatCombo(combo: string): string[] {
-  return combo.split("+").map((p) => DISPLAY[p] ?? (p.length === 1 ? p.toUpperCase() : p));
+export function formatCombo(combo: string, mac: boolean = isMac): string[] {
+  const display = mac ? MAC_DISPLAY : PC_DISPLAY;
+  return combo.split("+").map((p) => display[p] ?? (p.length === 1 ? p.toUpperCase() : p));
 }

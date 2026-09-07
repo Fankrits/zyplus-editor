@@ -1,17 +1,11 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { applyTheme, getTheme, setTheme } from "../src/lib/theme";
 
-const store: Record<string, string> = {};
+// Only the OS preference is faked; the DOM and localStorage are the shared ones
+// from tests/setup.ts. Stubbing `document` here instead would replace it for
+// every test file loaded after this one — see that file's comment.
 const g = globalThis as Record<string, unknown>;
-g.localStorage = {
-  getItem: (k: string) => store[k] ?? null,
-  setItem: (k: string, v: string) => void (store[k] = v),
-  removeItem: (k: string) => void delete store[k],
-  clear: () => Object.keys(store).forEach((k) => delete store[k]),
-};
-g.document = { documentElement: { dataset: {} as Record<string, string>, style: {} } };
-g.window = g;
-
-const { applyTheme, getTheme, setTheme } = await import("../src/lib/theme");
+const realMatchMedia = g.matchMedia;
 
 function mockSystemDark(isDark: boolean) {
   g.matchMedia = () => ({ matches: isDark, addEventListener: () => {} });
@@ -20,7 +14,13 @@ function mockSystemDark(isDark: boolean) {
 describe("theme", () => {
   beforeEach(() => {
     localStorage.clear();
+    delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.palette;
     mockSystemDark(false);
+  });
+
+  afterEach(() => {
+    g.matchMedia = realMatchMedia;
   });
 
   it("defaults to system and ignores junk", () => {
@@ -45,6 +45,21 @@ describe("theme", () => {
     setTheme("system");
     expect(document.documentElement.dataset.palette).toBeUndefined();
     expect(localStorage.getItem("zyplus:theme-base")).toBe("");
+  });
+
+  it("tags only real palettes, so the base themes keep the plain canvas", () => {
+    // App.css paints the light canvas white via `:not([data-palette])`; a
+    // data-palette on "light" silently opted it out and made explicit Light
+    // look different from System resolving to light.
+    setTheme("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+
+    setTheme("dark");
+    expect(document.documentElement.dataset.palette).toBeUndefined();
+
+    setTheme("tokyo-night");
+    expect(document.documentElement.dataset.palette).toBe("tokyo-night");
   });
 
   it("resolves system against the OS preference", () => {

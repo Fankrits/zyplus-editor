@@ -1,0 +1,4 @@
+[test]
+# One shared DOM for the whole suite — see tests/setup.ts for why this has to be
+# a preload rather than a per-file bootstrap.
+preload = ["./tests/setup.ts"]
