@@ -1,6 +1,6 @@
 cask "zyplus" do
-  version "0.1.5"
-  sha256 "e102340b5bd4cc2f32a788506380d77af2784e455acd44afdc2afad1bcb1800b"
+  version "0.1.6"
+  sha256 "fcdf7445bd570f603ddcfeb267b486f85c95dd6843a7c6107a813ec17c95276f"
 
   url "https://github.com/Fankrits/zyplus-editor/releases/download/v#{version}/Zyplus_#{version}_universal.dmg"
   name "Zyplus"
