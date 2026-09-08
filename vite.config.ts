@@ -3,39 +3,11 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import pkg from "./package.json";
 
-import fs from "node:fs";
-import path from "node:path";
-
-import type { Plugin } from "vite";
-
 const host = process.env.TAURI_DEV_HOST;
-
-const localExtensionsPlugin: Plugin = {
-  name: "serve-local-extensions",
-  configureServer(server) {
-    server.middlewares.use("/extensions-dist", (req, res, next) => {
-      const cleanUrl = (req.url || "").split("?")[0];
-      const filePath = path.join(process.cwd(), "extensions/dist", cleanUrl);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const ext = path.extname(filePath);
-        const contentType =
-          ext === ".js"
-            ? "application/javascript"
-            : ext === ".css"
-            ? "text/css"
-            : "text/plain";
-        res.setHeader("Content-Type", contentType);
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        return fs.createReadStream(filePath).pipe(res);
-      }
-      next();
-    });
-  },
-};
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss(), localExtensionsPlugin],
+  plugins: [react(), tailwindcss()],
 
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

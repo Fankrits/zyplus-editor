@@ -4,13 +4,10 @@ export function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(
     (callback) => {
       if (typeof window === "undefined" || !window.matchMedia) return () => {};
+      // `change` fires on every crossing of the breakpoint, resize or not.
       const mql = window.matchMedia(query);
       mql.addEventListener("change", callback);
-      window.addEventListener("resize", callback);
-      return () => {
-        mql.removeEventListener("change", callback);
-        window.removeEventListener("resize", callback);
-      };
+      return () => mql.removeEventListener("change", callback);
     },
     () => {
       if (typeof window === "undefined" || !window.matchMedia) return false;

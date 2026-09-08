@@ -1,12 +1,12 @@
 import { describe, it, expect } from "bun:test";
 import {
   workspaceReducer,
-  basenameOf,
   restoreWorkspaceFromSession,
   type WorkspaceState,
   type TabState,
   type TreeNode,
 } from "../src/state/workspaceStore";
+import { basenameOf } from "../src/lib/fs";
 import type { PersistedWorkspaceSession } from "../src/lib/sessionStorage";
 
 describe("workspaceReducer", () => {

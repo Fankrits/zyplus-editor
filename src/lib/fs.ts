@@ -51,9 +51,10 @@ function mockDirname(p: string): string {
   return parts.join("/") || "/";
 }
 
-function mockBasename(p: string): string {
-  const parts = p.split(/[\\/]/);
-  return parts.pop() || p;
+/** Last segment of a path, either separator. The one copy in the app. */
+export function basenameOf(path: string): string {
+  const parts = path.split(/[\\/]/);
+  return parts[parts.length - 1] || path;
 }
 
 export async function openFolderDialog(): Promise<string | null> {
@@ -121,7 +122,7 @@ export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
 /** Reads a folder as a project: one collapsible top-level node holding the tree. */
 export async function readProjectNode(dirPath: string): Promise<TreeNode> {
   const children = await readDirRecursive(dirPath);
-  return { id: dirPath, name: mockBasename(dirPath), isFolder: true, children };
+  return { id: dirPath, name: basenameOf(dirPath), isFolder: true, children };
 }
 
 export const DEFAULT_FOLDER_NAME = "Zyplus";
@@ -244,7 +245,7 @@ export async function duplicateFile(path: string): Promise<string> {
   if (!isTauri()) {
     const content = mockFsStore.get(path) ?? "";
     const dir = mockDirname(path);
-    const name = mockBasename(path);
+    const name = basenameOf(path);
     const dotIndex = name.lastIndexOf(".");
     const stem = dotIndex > 0 ? name.slice(0, dotIndex) : name;
     const ext = dotIndex > 0 ? name.slice(dotIndex) : "";

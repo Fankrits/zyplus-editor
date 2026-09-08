@@ -1,4 +1,4 @@
-import { readProjectNode, readTextFile } from "../lib/fs";
+import { basenameOf, readProjectNode, readTextFile } from "../lib/fs";
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
 
 export type TabMode = "rich" | "plain";
@@ -56,11 +56,6 @@ export const initialState: WorkspaceState = {
   tabs: [],
   activeTabId: null,
 };
-
-export function basenameOf(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] ?? path;
-}
 
 export function isUnder(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "\\");

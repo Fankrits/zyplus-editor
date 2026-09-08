@@ -38,11 +38,6 @@ interface FileTreeProps {
   onOpenFilePicker?: () => void;
 }
 
-function basename(path: string): string {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] ?? path;
-}
-
 export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
   const state = useWorkspaceTree();
   const { dispatch, refreshTree } = useWorkspaceActions();
@@ -92,7 +87,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
       if (!parentId) return;
       const destDir = parentId;
       for (const id of dragIds) {
-        const newPath = await join(destDir, basename(id));
+        const newPath = await join(destDir, fs.basenameOf(id));
         if (newPath === id) continue;
         await fs.renamePath(id, newPath);
         dispatch({ type: "REMAP_TAB_PATHS", oldPrefix: id, newPrefix: newPath });
@@ -122,7 +117,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
     async (node: NodeApi<TreeNode>) => {
       const newPath = await fs.duplicateFile(node.data.id);
       await refreshTree();
-      onOpenFile(newPath, basename(newPath));
+      onOpenFile(newPath, fs.basenameOf(newPath));
     },
     [refreshTree, onOpenFile],
   );

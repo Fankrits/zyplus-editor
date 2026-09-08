@@ -130,9 +130,15 @@
   height: auto;
 }
 
-/* Base crisp node strokes (no rounded corners) */
+/* Base crisp node strokes (no rounded corners). Mermaid sets rx/ry as
+   presentation attributes on the rect, which these declarations override —
+   this is the only place that squares the corners off. */
 .milkdown .preview svg .node :is(rect, polygon, circle, ellipse, path.basic, .outer-path path) {
   stroke-width: 1.75px !important;
+}
+.milkdown .preview svg .node:not(.cluster) rect {
+  rx: 0 !important;
+  ry: 0 !important;
 }
 
 /* Subtle node drop-shadow */
