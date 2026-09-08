@@ -38,8 +38,7 @@ export function SidebarContent({ onRequestCreate, onOpenFile, onOpenFolder }: Si
   const handleOpenFilePicker = useCallback(async () => {
     const picked = await fs.openFileDialog();
     if (!picked) return;
-    const name = picked.split(/[\\/]/).pop() ?? picked;
-    handleOpenFile(picked, name);
+    handleOpenFile(picked, fs.basenameOf(picked));
   }, [handleOpenFile]);
 
   // Header-level "new file/folder" land next to the file you're editing; falling back to

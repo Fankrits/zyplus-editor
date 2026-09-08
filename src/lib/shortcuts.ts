@@ -8,10 +8,6 @@
  */
 import { isMac } from "./platform";
 
-// Platform detection lives in platform.ts; re-exported because the shortcut sheet
-// and its consumers have always read `isMac` off this module.
-export { isMac } from "./platform";
-
 export type CommandId =
   | "save"
   | "export-md"

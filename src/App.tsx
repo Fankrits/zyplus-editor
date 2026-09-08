@@ -18,10 +18,10 @@ import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { Welcome } from "./components/Welcome";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
-import { extensionManager } from "./extensions/extensionManager";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
-import { isMac, matchShortcut, type CommandId } from "./lib/shortcuts";
+import { matchShortcut, type CommandId } from "./lib/shortcuts";
+import { isMac } from "./lib/platform";
 
 type CreateKind = "file" | "folder" | null;
 
@@ -47,10 +47,6 @@ function AppShell() {
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
-
-  useEffect(() => {
-    extensionManager.initialize();
-  }, []);
 
   useEffect(() => {
     if (isDesktop) {

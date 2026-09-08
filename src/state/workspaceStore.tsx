@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  basenameOf,
   openFileDialog,
   openFolderDialog,
   readProjectNode,
@@ -19,7 +20,6 @@ import {
 
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
-  basenameOf,
   workspaceReducer,
   restoreWorkspaceFromSession,
   initialState,
@@ -31,7 +31,7 @@ import {
 } from "./workspaceReducer";
 
 export type { Action, TabMode, TabState, TreeNode, WorkspaceState };
-export { basenameOf, workspaceReducer, restoreWorkspaceFromSession } from "./workspaceReducer";
+export { workspaceReducer, restoreWorkspaceFromSession } from "./workspaceReducer";
 
 /**
  * The store is split into three subscriptions because typing rewrites `state.tabs`

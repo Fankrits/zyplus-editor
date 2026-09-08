@@ -2,7 +2,6 @@ use std::sync::Mutex;
 
 use tauri::Emitter;
 use tauri::Manager;
-use tauri_plugin_fs::FsExt;
 
 /// Files the OS asked us to open before the webview was ready to listen.
 #[derive(Default)]
@@ -18,23 +17,27 @@ struct PrintDoc {
 
 const PRINT_WINDOW: &str = "print";
 
-fn allow_paths_in_scope<R: tauri::Runtime, M: tauri::Manager<R>>(manager: &M, paths: &[String]) {
-    let fs_scope = manager.fs_scope();
-    for path in paths {
-        let p = std::path::Path::new(path);
-        if p.is_file() {
-            let _ = fs_scope.allow_file(p);
-        } else if p.is_dir() {
-            let _ = fs_scope.allow_directory(p, true);
-        }
+/// Queues files the OS handed us, then raises the main window.
+///
+/// Queue first, then nudge: at launch the webview may not be listening yet, so
+/// the event carries no payload and the frontend always drains the queue.
+/// The window is raised either way — a second launch carrying no files at all
+/// is just the user asking for the app they already have running.
+fn queue_open<R: tauri::Runtime, M: tauri::Manager<R> + Emitter<R>>(app: &M, paths: Vec<String>) {
+    if !paths.is_empty() {
+        app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
+        let _ = app.emit("open-files", ());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
 #[tauri::command]
-fn take_pending_files(app: tauri::AppHandle, pending: tauri::State<PendingFiles>) -> Vec<String> {
-    let files = std::mem::take(&mut *pending.0.lock().unwrap());
-    allow_paths_in_scope(&app, &files);
-    files
+fn take_pending_files(pending: tauri::State<PendingFiles>) -> Vec<String> {
+    std::mem::take(&mut *pending.0.lock().unwrap())
 }
 
 /// Starts a silent print job on a WKWebView, writing a paginated PDF to `path`.
@@ -395,18 +398,7 @@ pub fn run() {
                 .filter(|a| !a.starts_with('-'))
                 .filter_map(|a| resolve_file_arg(std::path::Path::new(a), Some(cwd_path)))
                 .collect();
-
-            if !paths.is_empty() {
-                allow_paths_in_scope(app, &paths);
-                app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
-                let _ = app.emit("open-files", ());
-            }
-
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            queue_open(app, paths);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -449,20 +441,7 @@ pub fn run() {
                     .filter_map(|u| u.to_file_path().ok())
                     .map(|p| display_path(p.canonicalize().unwrap_or(p)))
                     .collect();
-                if paths.is_empty() {
-                    return;
-                }
-                allow_paths_in_scope(app, &paths);
-                // Queue first, then nudge: the webview may not be listening yet at launch,
-                // so the frontend always drains the queue rather than trusting the payload.
-                app.state::<PendingFiles>().0.lock().unwrap().extend(paths);
-
-                let _ = app.emit("open-files", ());
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                queue_open(app, paths);
             }
             #[cfg(not(any(target_os = "macos", target_os = "ios")))]
             {
