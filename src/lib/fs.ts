@@ -16,6 +16,7 @@ import {
 } from "@tauri-apps/api/path";
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { isMac, isWindows } from "./platform";
 import type { TreeNode } from "../state/workspaceReducer";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".txt"];
@@ -51,10 +52,42 @@ function mockDirname(p: string): string {
   return parts.join("/") || "/";
 }
 
+/**
+ * `join`/`dirname`, guarded. Tauri's path API is native IPC and throws outside
+ * the desktop app, so call sites used to break the browser build and the tests
+ * every time one reached for it directly.
+ */
+export async function joinPath(...parts: string[]): Promise<string> {
+  return isTauri() ? tauriJoin(...parts) : mockJoin(...parts);
+}
+
+export async function dirnameOf(path: string): Promise<string> {
+  return isTauri() ? tauriDirname(path) : mockDirname(path);
+}
+
 /** Last segment of a path, either separator. The one copy in the app. */
 export function basenameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
+}
+
+// Windows' rules, enforced on every platform. A note named "a:b.md" created on
+// a Mac cannot be copied to a Windows machine at all, so accepting it here only
+// moves the failure somewhere the user will not see it.
+const RESERVED_ON_WINDOWS = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+/** Why `name` cannot be a filename, or null if it can. */
+export function invalidNameReason(name: string): string | null {
+  if (!name) return "Enter a name.";
+  if (name === "." || name === "..") return "Choose a different name.";
+  if (/[\\/]/.test(name)) return "A name cannot contain \\ or /.";
+  if (/[<>:"|?*]/.test(name)) return 'A name cannot contain < > : " | ? *';
+  if (/[\x00-\x1f]/.test(name)) return "A name cannot contain control characters.";
+  if (name.endsWith(".")) return "A name cannot end with a period.";
+  if (name.endsWith(" ")) return "A name cannot end with a space.";
+  if (RESERVED_ON_WINDOWS.test(name)) return `"${name}" is a name Windows reserves.`;
+  if (name.length > 255) return "That name is too long.";
+  return null;
 }
 
 export async function openFolderDialog(): Promise<string | null> {
@@ -178,27 +211,67 @@ export async function writeTextFile(path: string, content: string): Promise<void
   await writeTextFileRaw(path, content);
 }
 
+/** Whether the OS refused us, rather than us having asked for something silly. */
+function isPermissionError(detail: string): boolean {
+  return /os error 5\b|EACCES|EPERM|permission denied|access is denied/i.test(detail);
+}
+
 /**
- * Writes a document the user explicitly asked to save, reporting a failure
- * instead of dropping it. Returns whether the write landed, so callers do not
- * mark a tab clean — or close it — over a file that never made it to disk.
+ * Turns a raw OS error into something the user can act on.
+ *
+ * A denied write is almost never a broken path — it is the platform's own file
+ * protection, and "Access is denied. (os error 5)" tells the user nothing about
+ * which switch to flip. Anything we do not recognize passes through untouched.
+ */
+export function explainFsError(err: unknown, path: string): string {
+  const detail = err instanceof Error ? err.message : String(err);
+  if (!isPermissionError(detail)) return detail;
+  if (isWindows) {
+    return (
+      `Windows blocked the change to "${path}".\n\n` +
+      "This is usually Controlled folder access, which stops apps it does not " +
+      "recognize from writing to Documents and Desktop.\n\n" +
+      "Either choose a different location, or allow Zyplus: Windows Security → " +
+      "Virus & threat protection → Ransomware protection → Allow an app through " +
+      "Controlled folder access."
+    );
+  }
+  if (isMac) {
+    return (
+      `macOS blocked the change to "${path}".\n\n` +
+      "Zyplus does not have permission for this folder. Either choose a different " +
+      "location, or grant access in System Settings → Privacy & Security → Files " +
+      "and Folders."
+    );
+  }
+  return `"${path}" is not writable.\n\nCheck the folder's permissions, or choose a different location.`;
+}
+
+/**
+ * Runs a filesystem mutation, reporting a failure instead of dropping it.
+ * Returns whether it landed, so callers do not refresh the tree, open a tab or
+ * mark a document clean over a change that never reached disk.
+ *
+ * Every mutating call site goes through here. An uncaught throw inside a React
+ * event handler is completely invisible, which is what made a blocked write
+ * look to the user like the button simply did nothing.
  *
  * Autosave deliberately does not go through here: a background write that keeps
  * failing should stay a console warning, not a dialog on a timer.
  */
-export async function saveDocument(path: string, content: string): Promise<boolean> {
+export async function tryFs(
+  title: string,
+  path: string,
+  fn: () => Promise<unknown>,
+): Promise<boolean> {
   try {
-    await writeTextFile(path, content);
+    await fn();
     return true;
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    console.error(`Could not save "${path}":`, err);
+    console.error(`${title} — "${path}":`, err);
     if (isTauri()) {
       try {
-        await message(`"${path}" could not be saved.\n\n${detail}`, {
-          title: "Save failed",
-          kind: "error",
-        });
+        await message(explainFsError(err, path), { title, kind: "error" });
       } catch {
         // Reporting the failure failing is not worth a second failure path.
       }
@@ -207,7 +280,25 @@ export async function saveDocument(path: string, content: string): Promise<boole
   }
 }
 
+/** Writes a document the user explicitly asked to save. */
+export async function saveDocument(path: string, content: string): Promise<boolean> {
+  return tryFs("Save failed", path, () => writeTextFile(path, content));
+}
+
+/**
+ * Rejects a name the filesystem cannot hold, before we ask it to.
+ *
+ * This lives down here rather than in the dialogs so that every path into the
+ * filesystem is covered — the create modal, inline rename, and anything added
+ * later — and so the failure is one readable sentence instead of an OS errno.
+ */
+function assertNameIsUsable(path: string): void {
+  const reason = invalidNameReason(basenameOf(path));
+  if (reason) throw new Error(reason);
+}
+
 export async function createFile(path: string): Promise<void> {
+  assertNameIsUsable(path);
   if (!isTauri()) {
     mockFsStore.set(path, "");
     return;
@@ -217,12 +308,19 @@ export async function createFile(path: string): Promise<void> {
 }
 
 export async function createFolder(path: string): Promise<void> {
+  assertNameIsUsable(path);
   if (!isTauri()) return;
   if (await exists(path)) throw new Error(`"${path}" already exists`);
-  await mkdir(path);
+  // Recursive, to match createDefaultFolder — the exists() guard above already
+  // covers the collision that non-recursive mkdir was catching by accident.
+  await mkdir(path, { recursive: true });
 }
 
 export async function renamePath(oldPath: string, newPath: string): Promise<void> {
+  // Only a name the user just typed gets validated. Dragging a file that
+  // already carries an awkward name — legal on macOS, not on Windows — into
+  // another folder must keep working; refusing that would strand the file.
+  if (basenameOf(newPath) !== basenameOf(oldPath)) assertNameIsUsable(newPath);
   if (!isTauri()) {
     const content = mockFsStore.get(oldPath) ?? "";
     mockFsStore.delete(oldPath);

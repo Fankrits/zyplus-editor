@@ -77,6 +77,18 @@ macOS installs `/Applications/Zyplus.app`. Linux drops the AppImage at
 irm https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.ps1 | iex
 ```
 
+Zyplus is not code-signed on Windows, which has two visible consequences:
+
+- **SmartScreen** may warn when you run the installer by hand — "More info" →
+  "Run anyway". The script above clears the download's Mark-of-the-Web, so the
+  silent install is unaffected.
+- **Controlled folder access** (Defender's ransomware protection) blocks
+  unrecognized apps from writing to Documents and Desktop. If creating the
+  default `Zyplus` folder fails, the app now says so and offers "Choose another
+  location" — a folder you pick through the file dialog is exempt. Otherwise,
+  allow Zyplus under Windows Security → Virus & threat protection → Ransomware
+  protection → Allow an app through Controlled folder access.
+
 Runs the NSIS installer silently, per user. Pin a build with
 `$env:ZYPLUS_VERSION = '0.1.0'`. Windows on arm64 gets the x64
 build under emulation — Bun publishes no Windows-arm64 release, so there is
