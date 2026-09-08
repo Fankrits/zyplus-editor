@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
-import { dirname, join } from "@tauri-apps/api/path";
 import { Button, Input, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -71,10 +70,12 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
   const handleRename = useCallback(
     async ({ id, name }: { id: string; name: string }) => {
-      const parent = await dirname(id);
-      const newPath = await join(parent, name);
+      const parent = await fs.dirnameOf(id);
+      const newPath = await fs.joinPath(parent, name);
       if (newPath === id) return;
-      await fs.renamePath(id, newPath);
+      // renamePath rejects a name the filesystem cannot hold, so an invalid
+      // rename reports itself here rather than failing silently.
+      if (!(await fs.tryFs("Could not rename", id, () => fs.renamePath(id, newPath)))) return;
       dispatch({ type: "REMAP_TAB_PATHS", oldPrefix: id, newPrefix: newPath });
       await refreshTree();
     },
@@ -87,9 +88,10 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
       if (!parentId) return;
       const destDir = parentId;
       for (const id of dragIds) {
-        const newPath = await join(destDir, fs.basenameOf(id));
+        const newPath = await fs.joinPath(destDir, fs.basenameOf(id));
         if (newPath === id) continue;
-        await fs.renamePath(id, newPath);
+        // Per item: one file failing to move should not abandon the rest.
+        if (!(await fs.tryFs("Could not move", id, () => fs.renamePath(id, newPath)))) continue;
         dispatch({ type: "REMAP_TAB_PATHS", oldPrefix: id, newPrefix: newPath });
       }
       await refreshTree();
@@ -106,8 +108,9 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
     for (const node of pendingDelete) {
-      await fs.deletePath(node.data.id, node.data.isFolder);
-      dispatch({ type: "CLOSE_TABS_UNDER", prefix: node.data.id });
+      const { id, isFolder } = node.data;
+      if (!(await fs.tryFs("Could not delete", id, () => fs.deletePath(id, isFolder)))) continue;
+      dispatch({ type: "CLOSE_TABS_UNDER", prefix: id });
     }
     setPendingDelete(null);
     await refreshTree();
@@ -115,7 +118,11 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
   const handleDuplicate = useCallback(
     async (node: NodeApi<TreeNode>) => {
-      const newPath = await fs.duplicateFile(node.data.id);
+      let newPath = "";
+      const ok = await fs.tryFs("Could not duplicate", node.data.id, async () => {
+        newPath = await fs.duplicateFile(node.data.id);
+      });
+      if (!ok) return;
       await refreshTree();
       onOpenFile(newPath, fs.basenameOf(newPath));
     },

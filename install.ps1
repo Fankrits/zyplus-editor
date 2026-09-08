@@ -29,6 +29,11 @@ $exe = Join-Path $env:TEMP $asset.name
 Write-Host "Downloading Zyplus $version"
 Invoke-WebRequest $asset.browser_download_url -OutFile $exe
 
+# The build is unsigned, so the download carries a Mark-of-the-Web that makes
+# SmartScreen block the silent install outright. We fetched it from the release
+# API ourselves, so clear it.
+Unblock-File $exe
+
 # /S is the NSIS silent flag; Tauri's installer defaults to a per-user install.
 $p = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
 Remove-Item $exe -Force

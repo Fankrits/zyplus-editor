@@ -37,7 +37,7 @@ export function Welcome({ onReady, onSkip, onOpenFile, onOpenFolder }: WelcomePr
     try {
       onReady(await fs.createDefaultFolder(parent));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(fs.explainFsError(err, fs.displayJoin(parent, fs.DEFAULT_FOLDER_NAME)));
     } finally {
       setBusy(false);
     }
@@ -55,7 +55,15 @@ export function Welcome({ onReady, onSkip, onOpenFile, onOpenFolder }: WelcomePr
           {fs.displayJoin(parent, fs.DEFAULT_FOLDER_NAME)}
         </code>
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && (
+        <div className="max-w-md rounded-lg bg-danger-soft p-3 text-sm text-danger">
+          <p className="whitespace-pre-line">{error}</p>
+          <Button className="mt-2" variant="primary" size="sm" onPress={chooseParent} isDisabled={busy}>
+            <HugeiconsIcon icon={FolderOpenIcon} size={16} />
+            Choose another location
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-center gap-2">
         <Button variant="primary" onPress={create} isDisabled={!parent || busy}>
           <HugeiconsIcon icon={FolderAddIcon} size={18} />

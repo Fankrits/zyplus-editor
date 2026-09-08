@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { join } from "@tauri-apps/api/path";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button, Drawer, Input, Label, Modal, TextField } from "@heroui/react";
@@ -227,22 +226,31 @@ function AppShell() {
     [dispatch, setDefaultFolder],
   );
 
+  // Derived, not state: the reason updates as the user types, and an empty box
+  // is "not finished yet" rather than an error to shout about.
+  const nameError = newName.trim() ? fs.invalidNameReason(newName.trim()) : null;
+
   const handleCreate = async () => {
     const targetDir = createTargetDir ?? defaultFolder ?? roots[0];
-    if (!targetDir || !newName.trim() || !createKind) return;
+    if (!targetDir || !newName.trim() || !createKind || nameError) return;
     const trimmed = newName.trim();
-    const name = createKind === "file" && !/\.[^./\\]+$/.test(trimmed) ? `${trimmed}.md` : trimmed;
-    const path = await join(targetDir, name);
-    if (createKind === "file") {
-      await fs.createFile(path);
-      await refreshTree();
+    const isFile = createKind === "file";
+    const name = isFile && !/\.[^./\\]+$/.test(trimmed) ? `${trimmed}.md` : trimmed;
+    const path = await fs.joinPath(targetDir, name);
+    // A failed create keeps the modal open with the name still typed, so the
+    // user can read the reason and retry or change location.
+    const created = await fs.tryFs(
+      isFile ? "Could not create file" : "Could not create folder",
+      path,
+      () => (isFile ? fs.createFile(path) : fs.createFolder(path)),
+    );
+    if (!created) return;
+    await refreshTree();
+    if (isFile) {
       dispatch({
         type: "OPEN_TAB",
         tab: { id: path, filePath: path, title: name, content: "", savedContent: "", isDirty: false, mode: "rich" },
       });
-    } else {
-      await fs.createFolder(path);
-      await refreshTree();
     }
     closeCreateModal();
   };
@@ -335,13 +343,19 @@ function AppShell() {
                       if (e.key === "Enter") handleCreate();
                     }}
                   />
+                  {nameError && <p className="mt-1.5 text-xs text-danger">{nameError}</p>}
                 </TextField>
               </Modal.Body>
               <Modal.Footer>
                 <Button size="sm" variant="ghost" onPress={closeCreateModal}>
                   Cancel
                 </Button>
-                <Button size="sm" variant="primary" onPress={handleCreate}>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onPress={handleCreate}
+                  isDisabled={!newName.trim() || nameError !== null}
+                >
                   Create
                 </Button>
               </Modal.Footer>
