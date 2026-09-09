@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "bun test",
+    "build:extensions": "bun scripts/build-extensions.ts",
     "check": "bun test && tsc && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:release": "bun run check && bun run tauri build --no-bundle"
   },
