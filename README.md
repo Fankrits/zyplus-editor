@@ -120,6 +120,23 @@ bun run tauri build   # installers into src-tauri/target/release/bundle
 bun run check         # everything CI runs: tests, tsc, fmt, clippy, cargo test
 ```
 
+### Sync server
+
+Sync and accounts are optional — the app works fully signed out. To run the
+backend locally you also need [Podman](https://podman.io) for Postgres; the API
+server itself runs on the host so edits reload instantly.
+
+```sh
+bun run db:up          # Postgres 17 in Podman (compose.yaml)
+bun run server:migrate # Better Auth tables + the note table
+bun run server         # API on :3000, bun --watch
+bun run db:reset       # wipe the volume and start over
+```
+
+Copy `server/.env.example` to `server/.env` first and set
+`BETTER_AUTH_SECRET` (`openssl rand -base64 32`). The desktop app reads
+`VITE_ZYPLUS_API_URL`, defaulting to `http://localhost:3000`.
+
 [`check.yml`](.github/workflows/check.yml) runs `bun run check` on macOS,
 Linux and Windows for every push and pull request — platform-specific breakage
 only shows up if the checks actually run on each platform.
@@ -132,12 +149,19 @@ src/
                        mermaid / katex / alert rendering, search bar
   components/Sidebar/  file tree over the open project folders
   components/Tabs/     tab bar
-  lib/                 fs, shortcuts, theme, PDF export, session persistence
+  lib/                 fs, shortcuts, theme, PDF export, session persistence,
+                       auth + cloud sync
   state/               workspace store + reducer (tabs, roots, dirty state)
 src-tauri/src/lib.rs   Rust side: file associations, pending-file queue,
                        silent print-to-PDF
+server/                Better Auth + the note API (Bun, Postgres)
 tests/                 unit tests for lib/ and state/
 ```
+
+Sync mirrors one folder — the default `Zyplus` folder — to the server; every
+other folder you open stays on the machine. Disk is always the source of
+truth: `lib/sync.ts` uploads after a write lands and never sits in the save
+path, so signing out or losing the network changes nothing about editing.
 
 Keyboard shortcuts live in exactly one place — `src/lib/shortcuts.ts`. The key
 bindings and the in-app shortcut sheet (`⌘/`) read the same table.

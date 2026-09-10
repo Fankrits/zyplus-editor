@@ -11,6 +11,18 @@
     "process:allow-restart",
     "opener:default",
     "dialog:default",
+    "store:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "http://localhost:3000/*"
+        },
+        {
+          "url": "http://127.0.0.1:3000/*"
+        }
+      ]
+    },
     "fs:allow-read-dir",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",

@@ -8,6 +8,7 @@ import {
   InformationCircleIcon,
   FolderOpenIcon,
   CheckmarkCircle02Icon,
+  CloudIcon,
   PuzzleIcon,
   Delete02Icon,
   AlertCircleIcon,
@@ -19,11 +20,13 @@ import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL } from "../lib/shortcuts";
 import { isMac } from "../lib/platform";
 import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
+import { AccountSection } from "./AccountSection";
 import { useExtensions } from "../extensions/useExtensions";
 import { formatBytes } from "../extensions/catalog";
 
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings01Icon },
+  { id: "account", label: "Account", icon: CloudIcon },
   { id: "theme", label: "Theme", icon: PaintBoardIcon },
   { id: "extensions", label: "Extensions", icon: PuzzleIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
@@ -240,6 +243,8 @@ export function SettingsModal({
                       </Field>
                     </div>
                   )}
+
+                  {section === "account" && <AccountSection />}
 
                   {section === "theme" && (
                     <Field label="Appearance" hint="System follows your OS setting.">

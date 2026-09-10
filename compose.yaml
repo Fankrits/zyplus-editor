@@ -1,0 +1,21 @@
+# Development database only. The API server runs on the host under `bun --watch`
+# so edits reload instantly instead of costing an image rebuild per save.
+services:
+  db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_USER: zyplus
+      POSTGRES_PASSWORD: zyplus
+      POSTGRES_DB: zyplus
+    ports:
+      - "5432:5432"
+    volumes:
+      - zyplus-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zyplus -d zyplus"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  zyplus-db:

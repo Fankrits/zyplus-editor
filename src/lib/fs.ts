@@ -181,9 +181,34 @@ export async function createDefaultFolder(parent: string): Promise<string> {
   const path = isTauri()
     ? await tauriJoin(parent, DEFAULT_FOLDER_NAME)
     : "/demo-workspace";
-  if (!isTauri()) return path;
-  if (!(await exists(path))) await mkdir(path, { recursive: true });
+  await ensureFolder(path);
   return path;
+}
+
+/**
+ * Notified after every change this module makes to disk, so the sync layer can
+ * mirror it. Registered by `lib/sync.ts`; a no-op until then, and left alone
+ * entirely when the user is signed out.
+ *
+ * It lives here rather than at the call sites — `saveDocument`, the context
+ * menu, autosave, the tab bar — so that a save path added later is synced
+ * without anyone remembering to wire it up.
+ */
+let onLocalChange: ((path: string) => void) | null = null;
+
+export function setLocalChangeListener(fn: ((path: string) => void) | null): void {
+  onLocalChange = fn;
+}
+
+/** Whether a path exists. Sync needs this to tell a delete from a write. */
+export async function pathExists(path: string): Promise<boolean> {
+  if (!isTauri()) return mockFsStore.has(path);
+  return exists(path);
+}
+
+/** Creates a folder and any missing parents. Unlike `createFolder`, existing is fine. */
+export async function ensureFolder(path: string): Promise<void> {
+  if (isTauri()) await mkdir(path, { recursive: true });
 }
 
 export async function readTextFile(path: string): Promise<string> {
@@ -206,9 +231,10 @@ export async function readTextFile(path: string): Promise<string> {
 export async function writeTextFile(path: string, content: string): Promise<void> {
   if (!isTauri()) {
     mockFsStore.set(path, content);
-    return;
+  } else {
+    await writeTextFileRaw(path, content);
   }
-  await writeTextFileRaw(path, content);
+  onLocalChange?.(path);
 }
 
 /** Whether the OS refused us, rather than us having asked for something silly. */
@@ -305,6 +331,7 @@ export async function createFile(path: string): Promise<void> {
   }
   if (await exists(path)) throw new Error(`"${path}" already exists`);
   await writeTextFileRaw(path, "");
+  onLocalChange?.(path);
 }
 
 export async function createFolder(path: string): Promise<void> {
@@ -325,17 +352,23 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
     const content = mockFsStore.get(oldPath) ?? "";
     mockFsStore.delete(oldPath);
     mockFsStore.set(newPath, content);
+    onLocalChange?.(oldPath);
+    onLocalChange?.(newPath);
     return;
   }
   await renameRaw(oldPath, newPath);
+  // Both ends: the old path becomes a delete upstream, the new one an upload.
+  onLocalChange?.(oldPath);
+  onLocalChange?.(newPath);
 }
 
 export async function deletePath(path: string, isFolder: boolean): Promise<void> {
   if (!isTauri()) {
     mockFsStore.delete(path);
-    return;
+  } else {
+    await remove(path, { recursive: isFolder });
   }
-  await remove(path, { recursive: isFolder });
+  onLocalChange?.(path);
 }
 
 /** Copies a file alongside itself as "name copy.ext", "name copy 2.ext", ... and returns the new path. */
@@ -349,6 +382,7 @@ export async function duplicateFile(path: string): Promise<string> {
     const ext = dotIndex > 0 ? name.slice(dotIndex) : "";
     const newPath = mockJoin(dir, `${stem} copy${ext}`);
     mockFsStore.set(newPath, content);
+    onLocalChange?.(newPath);
     return newPath;
   }
 
@@ -368,6 +402,7 @@ export async function duplicateFile(path: string): Promise<string> {
     n++;
   }
   await writeTextFileRaw(newPath, content);
+  onLocalChange?.(newPath);
   return newPath;
 }
 

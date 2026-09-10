@@ -12,7 +12,13 @@
     "test": "bun test",
     "build:extensions": "bun scripts/build-extensions.ts",
     "check": "bun test && tsc && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets && cargo test --manifest-path src-tauri/Cargo.toml",
-    "check:release": "bun run check && bun run tauri build --no-bundle"
+    "check:release": "bun run check && bun run tauri build --no-bundle",
+    "db:up": "podman pull docker.io/library/postgres:17-alpine && podman compose up -d",
+    "db:down": "podman compose down",
+    "db:psql": "podman exec -it zyplus-editor-db-1 psql -U zyplus -d zyplus",
+    "db:reset": "podman compose down -v && bun run db:up && sleep 5 && bun run server:migrate",
+    "server": "cd server && bun run dev",
+    "server:migrate": "cd server && bun run migrate"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.2",
@@ -28,10 +34,13 @@
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",
     "@tauri-apps/plugin-fs": "^2.5.2",
+    "@tauri-apps/plugin-http": "^2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.5",
     "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-store": "^2.4.4",
     "@tauri-apps/plugin-updater": "^2.11.0",
     "@uiw/react-codemirror": "^4.25.11",
+    "better-auth": "^1.7.3",
     "katex": "^0.18.7",
     "marked": "^18.0.12",
     "mermaid": "^11.17.2",

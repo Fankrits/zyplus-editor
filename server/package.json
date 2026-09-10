@@ -1,0 +1,19 @@
+{
+  "name": "zyplus-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "migrate": "bunx @better-auth/cli@latest migrate --config src/auth.ts -y && bun run schema",
+    "schema": "podman exec -i zyplus-editor-db-1 psql -U zyplus -d zyplus -v ON_ERROR_STOP=1 -f - < schema.sql",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "better-auth": "^1.7.3",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
