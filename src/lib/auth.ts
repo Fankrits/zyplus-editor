@@ -1,4 +1,5 @@
 import { createAuthClient } from "better-auth/react";
+import { emailOTPClient } from "better-auth/client/plugins";
 import { isTauri } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { load, type Store } from "@tauri-apps/plugin-store";
@@ -75,6 +76,7 @@ async function setToken(token: string): Promise<void> {
 
 export const authClient = createAuthClient({
   baseURL: API_URL,
+  plugins: [emailOTPClient()],
   fetchOptions: {
     auth: { type: "Bearer", token: () => memToken },
     customFetchImpl: apiFetch,
@@ -112,22 +114,85 @@ function captureToken(ctx: { response: Response }): Promise<void> {
   return setToken(ctx.response.headers.get("set-auth-token") ?? "");
 }
 
-export async function signIn(email: string, password: string): Promise<void> {
-  const { error } = await authClient
-    .signIn.email({ email, password }, { onSuccess: captureToken })
-    .catch((err) => {
-      throw describeFailure(err);
-    });
-  if (error) throw new Error(error.message ?? "Sign in failed");
+/**
+ * Every credential call funnels through here so a dead server is reported the
+ * same way everywhere, and so a Better Auth error code stays machine-readable
+ * instead of being flattened into a message string the caller has to re-parse.
+ */
+type AuthResult = { code: string | null };
+
+async function call(
+  run: () => Promise<{ error?: { message?: string; code?: string } | null }>,
+  fallback: string,
+  tolerate: string[] = [],
+): Promise<AuthResult> {
+  const { error } = await run().catch((err) => {
+    throw describeFailure(err);
+  });
+  if (!error) return { code: null };
+  const code = error.code ?? null;
+  if (code && tolerate.includes(code)) return { code };
+  throw new Error(error.message ?? fallback);
 }
 
+/**
+ * Signs in, or reports that the account still needs its emailed code. The server
+ * rejects an unverified sign-in and re-sends the code in the same breath, so the
+ * caller's job is only to show the code field.
+ */
+export async function signIn(
+  email: string,
+  password: string,
+): Promise<{ needsVerification: boolean }> {
+  const { code } = await call(
+    () => authClient.signIn.email({ email, password }, { onSuccess: captureToken }),
+    "Sign in failed",
+    ["EMAIL_NOT_VERIFIED"],
+  );
+  return { needsVerification: code === "EMAIL_NOT_VERIFIED" };
+}
+
+/**
+ * Creates the account and sends the first code. There is deliberately no session
+ * yet: the server withholds one until the address is confirmed, which is also why
+ * it answers the same way whether or not the email was already taken.
+ */
 export async function signUp(email: string, password: string, name: string): Promise<void> {
-  const { error } = await authClient
-    .signUp.email({ email, password, name }, { onSuccess: captureToken })
-    .catch((err) => {
-      throw describeFailure(err);
-    });
-  if (error) throw new Error(error.message ?? "Sign up failed");
+  await call(() => authClient.signUp.email({ email, password, name }), "Sign up failed");
+}
+
+/** Confirms the address with the emailed code. Succeeding signs the user in. */
+export async function verifyEmail(email: string, otp: string): Promise<void> {
+  await call(
+    () => authClient.emailOtp.verifyEmail({ email, otp }, { onSuccess: captureToken }),
+    "That code didn't work",
+  );
+}
+
+/** Sends a fresh code. Used for "resend" and to start a password reset. */
+export async function sendCode(
+  email: string,
+  type: "email-verification" | "forget-password",
+): Promise<void> {
+  await call(
+    () => authClient.emailOtp.sendVerificationOtp({ email, type }),
+    "Could not send the code",
+  );
+}
+
+/**
+ * Sets a new password from an emailed code. The server answers identically for
+ * an unknown address, so this never reveals who has an account.
+ */
+export async function resetPassword(
+  email: string,
+  otp: string,
+  password: string,
+): Promise<void> {
+  await call(
+    () => authClient.emailOtp.resetPassword({ email, otp, password }),
+    "Could not reset your password",
+  );
 }
 
 export async function signOut(): Promise<void> {
@@ -150,7 +215,17 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   headers.set("Authorization", `Bearer ${memToken}`);
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   try {
-    return await apiFetch(`${API_URL}${path}`, { ...init, headers });
+    const res = await apiFetch(`${API_URL}${path}`, { ...init, headers });
+    // An expired or revoked session leaves this token on disk and the session
+    // hook still holding the user it last fetched, so sync keeps retrying and the
+    // account panel keeps saying "signed in". Dropping the token and nudging the
+    // hook to refetch turns that into a plain signed-out state, which also stops
+    // sync, because sync restarts off the session's user id.
+    if (res.status === 401 && memToken) {
+      await setToken("");
+      authClient.$store.notify("$sessionSignal");
+    }
+    return res;
   } catch (err) {
     throw describeFailure(err);
   }

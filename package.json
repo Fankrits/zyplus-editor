@@ -13,7 +13,7 @@
     "build:extensions": "bun scripts/build-extensions.ts",
     "check": "bun test && tsc && cargo fmt --check --manifest-path src-tauri/Cargo.toml && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:release": "bun run check && bun run tauri build --no-bundle",
-    "db:up": "podman pull docker.io/library/postgres:17-alpine && podman compose up -d",
+    "db:up": "podman pull docker.io/library/postgres:17-alpine && podman pull docker.io/library/adminer:5 && podman compose up -d",
     "db:down": "podman compose down",
     "db:psql": "podman exec -it zyplus-editor-db-1 psql -U zyplus -d zyplus",
     "db:reset": "podman compose down -v && bun run db:up && sleep 5 && bun run server:migrate",

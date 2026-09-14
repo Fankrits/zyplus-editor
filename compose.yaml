@@ -17,5 +17,18 @@ services:
       timeout: 3s
       retries: 15
 
+  # Browser UI for the database at http://localhost:8081 — users, sessions and
+  # notes without writing SQL. Development only: it has no auth of its own and
+  # must never be exposed anywhere the database itself would not be.
+  adminer:
+    image: docker.io/library/adminer:5
+    ports:
+      - "8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   zyplus-db:
