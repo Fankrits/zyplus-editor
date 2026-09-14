@@ -14,13 +14,16 @@ import {
   createDefaultFolder,
   defaultFolderParent,
   openFileDialog,
+  joinPath,
   openFolderDialog,
+  pathExists,
   readProjectNode,
   readTextFile,
   writeTextFile,
 } from "../lib/fs";
 
 import { useSession } from "../lib/auth";
+import { WELCOME_NOTE, WELCOME_NOTE_NAME } from "../lib/welcomeNote";
 import { onPulled, startSync, stopSync } from "../lib/sync";
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
@@ -156,10 +159,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!stored?.defaultFolder && !stored?.roots.length && !stored?.tabs.length) {
         try {
           const folder = await createDefaultFolder(await defaultFolderParent());
+          // Reinstalls reuse an existing folder, so never clobber a Welcome.md
+          // the user has already edited.
+          const notePath = await joinPath(folder, WELCOME_NOTE_NAME);
+          if (!(await pathExists(notePath))) await writeTextFile(notePath, WELCOME_NOTE);
+          const content = await readTextFile(notePath);
           const node = await readProjectNode(folder);
           if (!isMounted) return;
           setDefaultFolder(folder);
           dispatch({ type: "ADD_ROOT", rootPath: folder, node });
+          dispatch({
+            type: "OPEN_TAB",
+            tab: {
+              id: notePath,
+              filePath: notePath,
+              title: WELCOME_NOTE_NAME,
+              content,
+              savedContent: content,
+              isDirty: false,
+              mode: "rich",
+            },
+          });
         } catch (err) {
           console.warn("Could not create the default folder:", err);
         }
