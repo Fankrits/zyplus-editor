@@ -68,6 +68,18 @@ export function decidePull(args: {
   return localUntouched ? "download" : "conflict";
 }
 
+/**
+ * The sync status after some uploads failed. Running out of storage gets its own
+ * message because, unlike a dropped connection, retrying cannot fix it: the user
+ * has to free up space first. Failed uploads stay queued either way, so they go
+ * through on the first sync after space is freed.
+ */
+export function describeFailedPush(failed: number, storageFull: boolean): string {
+  if (!storageFull) return "Some changes are waiting to upload";
+  const changes = failed === 1 ? "1 change" : `${failed} changes`;
+  return `Storage is full, so ${changes} can't upload. Delete some synced notes to make room.`;
+}
+
 /** `notes.md` → `notes (conflict 2026-09-08).md`. */
 export function conflictName(relPath: string, date: Date, suffix = 0): string {
   const slash = relPath.lastIndexOf("/");
@@ -131,6 +143,9 @@ let inFlight: Promise<void> | null = null;
  * a second timer over the live one.
  */
 let generation = 0;
+
+/** An upload the server refused because the account is out of storage. */
+class StorageFullError extends Error {}
 
 /**
  * Writes made by sync itself must not bounce straight back as uploads, so the
@@ -245,6 +260,7 @@ async function pushOne(relPath: string): Promise<void> {
     res = await send(loser.rev);
   }
 
+  if (res.status === 413) throw new StorageFullError(`No storage left for ${relPath}`);
   if (!res.ok) throw new Error(`Upload of ${relPath} failed (${res.status})`);
   const { rev } = (await res.json()) as { rev: number };
   manifest!.files[relPath] = { hash: await hashOf(content), rev };
@@ -257,12 +273,14 @@ async function flush(): Promise<void> {
   setStatus({ state: "syncing" });
 
   const failed: string[] = [];
+  let storageFull = false;
   for (const relPath of batch) {
     try {
       await pushOne(relPath);
     } catch (err) {
       console.warn("Sync push failed for", relPath, err);
       failed.push(relPath);
+      if (err instanceof StorageFullError) storageFull = true;
     }
   }
   // A failed upload stays queued and rides along with the next attempt. Nothing
@@ -272,7 +290,7 @@ async function flush(): Promise<void> {
   await saveManifest();
   setStatus(
     failed.length > 0
-      ? { state: "error", error: "Some changes are waiting to upload" }
+      ? { state: "error", error: describeFailedPush(failed.length, storageFull) }
       : { state: "idle", lastSyncedAt: Date.now(), error: null },
   );
 }

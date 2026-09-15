@@ -1,6 +1,7 @@
 import { ALLOWED_ORIGINS, auth, userIdFrom } from "./auth";
 import { pool } from "./db";
-import { getContent, isValidRelPath, listSince, put, softDelete } from "./notes";
+import { getContent, isValidRelPath, listSince, put, softDelete, usageOf } from "./notes";
+import { STORAGE_LIMIT_BYTES } from "./quota";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -84,6 +85,12 @@ const server = Bun.serve({
         if (!Number.isFinite(baseRev) || baseRev < 0) return json({ error: "Invalid baseRev" }, 400);
 
         const result = await put(caller.userId, path.relPath, body.content, baseRev);
+        if ("storageFull" in result) {
+          return json(
+            { error: "Storage limit reached", code: "STORAGE_FULL", used: result.used, limit: result.limit },
+            413,
+          );
+        }
         return "conflict" in result
           ? json({ rev: result.rev, content: result.content }, 409)
           : json(result);
@@ -128,6 +135,14 @@ const server = Bun.serve({
         [current.user.id, current.session.id],
       );
       return json({ others: rows[0].others });
+    }),
+
+    /** How much of the account's storage limit its synced notes use, in bytes. */
+    "/api/account/storage": route(async (req) => {
+      if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+      const caller = await requireUser(req);
+      if ("res" in caller) return caller.res;
+      return json({ used: await usageOf(caller.userId), limit: STORAGE_LIMIT_BYTES });
     }),
 
     "/health": route(() => json({ ok: true })),

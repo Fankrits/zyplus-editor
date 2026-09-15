@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { conflictName, decidePull, hashOf, toAbsPath, toRelPath } from "../src/lib/sync";
+import {
+  conflictName,
+  decidePull,
+  describeFailedPush,
+  hashOf,
+  toAbsPath,
+  toRelPath,
+} from "../src/lib/sync";
 
 /**
  * The decision table is the whole of sync's correctness: every row that resolves
@@ -88,5 +95,17 @@ describe("hashOf", () => {
   it("separates identical from changed content", async () => {
     expect(await hashOf("# hello")).toBe(await hashOf("# hello"));
     expect(await hashOf("# hello")).not.toBe(await hashOf("# hello "));
+  });
+});
+
+describe("describeFailedPush", () => {
+  it("keeps the retry wording for ordinary failures", () => {
+    expect(describeFailedPush(3, false)).toBe("Some changes are waiting to upload");
+  });
+
+  it("tells the user to free space when storage is full, since retrying can't fix it", () => {
+    expect(describeFailedPush(1, true)).toContain("1 change can't upload");
+    expect(describeFailedPush(4, true)).toContain("4 changes can't upload");
+    expect(describeFailedPush(4, true)).toContain("Delete some synced notes");
   });
 });

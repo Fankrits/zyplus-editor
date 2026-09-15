@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Button, Input, Label, Switch, TextField } from "@heroui/react";
+import { Button, Input, Label, Meter, Switch, TextField } from "@heroui/react";
 import {
   API_URL,
   changePassword,
   confirmEmailChange,
   countOtherDevices,
   deleteAccount,
+  getStorageUsage,
   requestEmailChange,
   resetPasswordAndSignIn,
   sendCode,
@@ -14,6 +15,7 @@ import {
   updateName,
 } from "../lib/auth";
 import { syncNow, useSyncStatus } from "../lib/sync";
+import { formatBytes } from "../extensions/catalog";
 import { Field } from "./Field";
 
 /**
@@ -364,6 +366,8 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
             {sync.error ?? describeLastSync(sync.lastSyncedAt)}
           </span>
         </div>
+        {/* A finished sync or a failed one can both change how much is stored. */}
+        <StorageMeter refreshKey={`${sync.lastSyncedAt}:${sync.error}`} />
       </section>
 
       <section className="flex flex-col gap-4">
@@ -507,6 +511,65 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
           )}
         </Field>
       </section>
+    </div>
+  );
+}
+
+/**
+ * How much of the account's storage its synced notes use. Reloads whenever
+ * `refreshKey` changes, which the panel ties to sync finishing or failing.
+ */
+function StorageMeter({ refreshKey }: { refreshKey: string }) {
+  const [usage, setUsage] = useState<{ used: number; limit: number } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isCurrent = true;
+    getStorageUsage().then(
+      (next) => {
+        if (!isCurrent) return;
+        setUsage(next);
+        setFailure(null);
+      },
+      (err: unknown) => {
+        if (isCurrent) setFailure(err instanceof Error ? err.message : String(err));
+      },
+    );
+    return () => {
+      isCurrent = false;
+    };
+  }, [refreshKey]);
+
+  const ratio = usage ? usage.used / usage.limit : 0;
+  // Amber leaves room to act before uploads start failing; red means they have.
+  const color = ratio >= 1 ? "danger" : ratio >= 0.8 ? "warning" : "accent";
+  const valueLabel = usage
+    ? `${formatBytes(usage.used)} of ${formatBytes(usage.limit)}`
+    : (failure ?? "Checking…");
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Meter
+        value={usage?.used ?? 0}
+        maxValue={usage?.limit ?? 1}
+        valueLabel={valueLabel}
+        color={color}
+        size="sm"
+        className="flex w-full flex-col gap-1.5"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <Label className="text-sm font-medium text-foreground">Storage</Label>
+          <Meter.Output className={`text-xs ${failure && !usage ? "text-danger" : "text-muted"}`} />
+        </div>
+        <Meter.Track>
+          <Meter.Fill />
+        </Meter.Track>
+      </Meter>
+      {ratio >= 1 && (
+        <p className="text-xs text-danger">
+          Storage is full. New changes won't sync until you delete some synced notes.
+        </p>
+      )}
     </div>
   );
 }

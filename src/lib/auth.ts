@@ -321,6 +321,14 @@ export async function countOtherDevices(): Promise<number> {
   return ((await res.json()) as { others: number }).others;
 }
 
+/** Bytes the account's synced notes use, and how many it may use. */
+export async function getStorageUsage(): Promise<{ used: number; limit: number }> {
+  const res = await authFetch("/api/account/storage");
+  if (res.status === 404) throw outdatedServer();
+  if (!res.ok) throw new Error(`Could not load your storage use (${res.status})`);
+  return (await res.json()) as { used: number; limit: number };
+}
+
 export async function signOutOtherDevices(): Promise<void> {
   await call(() => authClient.revokeOtherSessions(), "Could not sign out your other devices");
 }

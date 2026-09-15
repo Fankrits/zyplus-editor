@@ -8,6 +8,7 @@ import {
   initAuth,
   isSignedIn,
   countOtherDevices,
+  getStorageUsage,
   resetPasswordAndSignIn,
   sendCode,
   signIn,
@@ -218,6 +219,12 @@ describe("error messages", () => {
     await signInWith("a-token");
     respondInOrder([{ status: 404, body: "" }]);
     await expect(countOtherDevices()).rejects.toThrow("doesn't support this yet");
+  });
+
+  it("names an outdated server when the storage route is missing", async () => {
+    await signInWith("a-token");
+    respondInOrder([{ status: 404, body: "" }]);
+    await expect(getStorageUsage()).rejects.toThrow("doesn't support this yet");
   });
 
   it("explains a rate limit instead of passing on a bare status", async () => {
