@@ -1,0 +1,6 @@
+# `railway up` uploads this directory. Local secrets and installs stay behind:
+# Railway holds the production variables and runs its own `bun install`.
+.env
+.env.*
+!.env.example
+node_modules

@@ -11,13 +11,20 @@ import {
 } from "react";
 import {
   basenameOf,
+  createDefaultFolder,
+  defaultFolderParent,
   openFileDialog,
+  joinPath,
   openFolderDialog,
+  pathExists,
   readProjectNode,
   readTextFile,
   writeTextFile,
 } from "../lib/fs";
 
+import { useSession } from "../lib/auth";
+import { WELCOME_NOTE, WELCOME_NOTE_NAME } from "../lib/welcomeNote";
+import { onPulled, startSync, stopSync } from "../lib/sync";
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
   workspaceReducer,
@@ -147,6 +154,37 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // First run: create the default folder instead of asking for one. The
+      // Welcome screen is left as the fallback if this can't be written.
+      if (!stored?.defaultFolder && !stored?.roots.length && !stored?.tabs.length) {
+        try {
+          const folder = await createDefaultFolder(await defaultFolderParent());
+          // Reinstalls reuse an existing folder, so never clobber a Welcome.md
+          // the user has already edited.
+          const notePath = await joinPath(folder, WELCOME_NOTE_NAME);
+          if (!(await pathExists(notePath))) await writeTextFile(notePath, WELCOME_NOTE);
+          const content = await readTextFile(notePath);
+          const node = await readProjectNode(folder);
+          if (!isMounted) return;
+          setDefaultFolder(folder);
+          dispatch({ type: "ADD_ROOT", rootPath: folder, node });
+          dispatch({
+            type: "OPEN_TAB",
+            tab: {
+              id: notePath,
+              filePath: notePath,
+              title: WELCOME_NOTE_NAME,
+              content,
+              savedContent: content,
+              isDirty: false,
+              mode: "rich",
+            },
+          });
+        } catch (err) {
+          console.warn("Could not create the default folder:", err);
+        }
+      }
+
       if (isMounted) {
         setIsHydrated(true);
       }
@@ -201,6 +239,41 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }, 800);
     return () => clearTimeout(timer);
   }, [isAutosaveEnabled, state.tabs]);
+
+  // Sync runs for one folder and one account. Restarting it whenever either
+  // changes is what makes signing in, signing out and picking a new default
+  // folder all take effect without a reload.
+  const { data: session } = useSession();
+  const userId = session?.user?.id ?? null;
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    void startSync(defaultFolder, userId);
+    return () => stopSync();
+  }, [isHydrated, defaultFolder, userId]);
+
+  // A pull writes straight to disk, so the tree and any open tab showing one of
+  // those files have to catch up. A dirty tab is left alone — the user's own
+  // edit is newer, and their next save pushes it.
+  useEffect(
+    () =>
+      onPulled((changedPaths) => {
+        void refreshTree();
+        for (const path of changedPaths) {
+          const tab = stateRef.current.tabs.find((t) => t.filePath === path);
+          if (!tab || tab.isDirty) continue;
+          readTextFile(path).then(
+            (content) => {
+              dispatch({ type: "UPDATE_TAB_CONTENT", id: tab.id, content });
+              dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id, content });
+            },
+            // Unreadable means the pull deleted it on another device.
+            () => dispatch({ type: "CLOSE_TABS_UNDER", prefix: path }),
+          );
+        }
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (import.meta.env.DEV && typeof window !== "undefined") {

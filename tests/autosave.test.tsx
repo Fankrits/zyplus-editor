@@ -58,11 +58,11 @@ describe("autosave", () => {
     await act(async () => ctx().setIsAutosaveEnabled(true));
 
     await typeInto(ctx, "autosaved\n");
-    expect(ctx().state.tabs[0].isDirty).toBe(true);
+    expect(ctx().state.tabs.find((t) => t.id === PATH)!.isDirty).toBe(true);
 
     await settle(1200);
     expect(await fs.readTextFile(PATH)).toBe("autosaved\n");
-    expect(ctx().state.tabs[0].isDirty).toBe(false);
+    expect(ctx().state.tabs.find((t) => t.id === PATH)!.isDirty).toBe(false);
   });
 
   it("leaves the file alone while autosave is off", async () => {
@@ -70,7 +70,7 @@ describe("autosave", () => {
     await typeInto(ctx, "unsaved\n");
     await settle(1200);
     expect(await fs.readTextFile(PATH)).toBe("original\n");
-    expect(ctx().state.tabs[0].isDirty).toBe(true);
+    expect(ctx().state.tabs.find((t) => t.id === PATH)!.isDirty).toBe(true);
   });
 
   it("persists the setting across a remount", async () => {
