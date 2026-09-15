@@ -140,8 +140,19 @@ function captureToken(ctx: { response: Response }): Promise<void> {
  */
 type AuthResult = { code: string | null };
 
+/**
+ * A 404 from an auth route means the server predates the feature, not that the
+ * user did something wrong. Better Auth answers those with an empty body, so
+ * without this the user sees only the generic fallback and has nothing to act on.
+ */
+function outdatedServer(): Error {
+  return new Error(
+    `The sync server at ${API_URL} doesn't support this yet. It needs to be updated.`,
+  );
+}
+
 async function call(
-  run: () => Promise<{ error?: { message?: string; code?: string } | null }>,
+  run: () => Promise<{ error?: { message?: string; code?: string; status?: number } | null }>,
   fallback: string,
   tolerate: string[] = [],
 ): Promise<AuthResult> {
@@ -151,7 +162,9 @@ async function call(
   if (!error) return { code: null };
   const code = error.code ?? null;
   if (code && tolerate.includes(code)) return { code };
-  throw new Error(error.message ?? fallback);
+  if (error.status === 404) throw outdatedServer();
+  if (error.status === 429) throw new Error("Too many attempts. Wait a minute and try again.");
+  throw new Error(error.message || fallback);
 }
 
 /**
@@ -303,6 +316,7 @@ export async function confirmEmailChange(newEmail: string, otp: string): Promise
 
 export async function countOtherDevices(): Promise<number> {
   const res = await authFetch("/api/account/sessions");
+  if (res.status === 404) throw outdatedServer();
   if (!res.ok) throw new Error(`Could not load your devices (${res.status})`);
   return ((await res.json()) as { others: number }).others;
 }

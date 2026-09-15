@@ -7,7 +7,9 @@ import {
   deleteAccount,
   initAuth,
   isSignedIn,
+  countOtherDevices,
   resetPasswordAndSignIn,
+  sendCode,
   signIn,
 } from "../src/lib/auth";
 
@@ -41,7 +43,8 @@ function respondInOrder(
     const { status = 200, body = {}, token } = replies[paths.length - 1] ?? {};
     const headers = new Headers({ "Content-Type": "application/json" });
     if (token) headers.set("set-auth-token", token);
-    return new Response(JSON.stringify(body), { status, headers });
+    // An empty string stands for an empty body, which is what a missing route returns.
+    return new Response(body === "" ? null : JSON.stringify(body), { status, headers });
   }) as unknown as typeof fetch;
   return paths;
 }
@@ -198,5 +201,32 @@ describe("account management", () => {
     await expect(deleteAccount("wrong-password")).rejects.toThrow("Invalid password");
 
     expect(isSignedIn()).toBe(true);
+  });
+});
+
+describe("error messages", () => {
+  it("names an outdated server when an auth route is missing", async () => {
+    // A server without the email-otp plugin answers 404 with an empty body. The
+    // generic fallback ("Could not send the code") gave the user nothing to act on.
+    respondInOrder([{ status: 404, body: "" }]);
+    await expect(sendCode("a@b.com", "forget-password")).rejects.toThrow(
+      `The sync server at ${API_URL} doesn't support this yet`,
+    );
+  });
+
+  it("names an outdated server when the device count route is missing", async () => {
+    await signInWith("a-token");
+    respondInOrder([{ status: 404, body: "" }]);
+    await expect(countOtherDevices()).rejects.toThrow("doesn't support this yet");
+  });
+
+  it("explains a rate limit instead of passing on a bare status", async () => {
+    respondInOrder([{ status: 429, body: {} }]);
+    await expect(sendCode("a@b.com", "forget-password")).rejects.toThrow("Too many attempts");
+  });
+
+  it("falls back to the action's own message when the server sends an empty one", async () => {
+    respondInOrder([{ status: 400, body: { message: "" } }]);
+    await expect(sendCode("a@b.com", "forget-password")).rejects.toThrow("Could not send the code");
   });
 });

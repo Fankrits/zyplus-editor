@@ -41,7 +41,8 @@ function describeLastSync(at: number | null): string {
   return `Synced ${new Date(at).toLocaleString()}`;
 }
 
-function describeDevices(others: number | null): string {
+function describeDevices(others: number | null, failure: string | null): string {
+  if (failure) return failure;
   if (others === null) return "Checking…";
   if (others === 0) return "Only this device is signed in.";
   return `Signed in on ${others} other ${others === 1 ? "device" : "devices"}.`;
@@ -62,9 +63,20 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
   const [newPassword, setNewPassword] = useState("");
   const [signOutOthers, setSignOutOthers] = useState(true);
   const [otherDevices, setOtherDevices] = useState<number | null>(null);
+  // Kept apart from the count: a failed load used to read "Checking…" forever.
+  const [devicesFailure, setDevicesFailure] = useState<string | null>(null);
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  /** Where an error from a button with no open editor is shown: beside that button. */
+  const [errorAt, setErrorAt] = useState<Area | null>(null);
 
   const refreshDevices = () =>
-    countOtherDevices().then(setOtherDevices, () => setOtherDevices(null));
+    countOtherDevices().then(
+      (n) => {
+        setOtherDevices(n);
+        setDevicesFailure(null);
+      },
+      (err: unknown) => setDevicesFailure(err instanceof Error ? err.message : String(err)),
+    );
 
   useEffect(() => {
     void refreshDevices();
@@ -82,8 +94,9 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
     if (next === "email-new") setNewEmail("");
   };
 
-  const attempt = async (run: () => Promise<void>) => {
+  const attempt = async (run: () => Promise<void>, at: Area | null = null) => {
     setError(null);
+    setErrorAt(at);
     setIsBusy(true);
     try {
       await run();
@@ -99,6 +112,11 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
     open(null);
     setNotice({ at, text });
   };
+
+  const errorFor = (at: Area) =>
+    editor === null &&
+    errorAt === at &&
+    error && <div className="text-xs text-danger">{error}</div>;
 
   const noticeFor = (at: Area) =>
     notice?.at === at && (
@@ -147,11 +165,17 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
       if (signOutOthers) setOtherDevices(0);
     });
 
-  const startForgot = () =>
-    attempt(async () => {
-      open("forgot");
+  // The form opens only once the code is on its way. Opening it first told the
+  // user "we emailed a code" even when the send had just failed.
+  const startForgot = async () => {
+    setIsSendingReset(true);
+    await attempt(async () => {
+      open(null);
       await sendCode(user.email, "forget-password");
-    });
+      open("forgot");
+    }, "password");
+    setIsSendingReset(false);
+  };
 
   const finishForgot = () =>
     attempt(async () => {
@@ -165,7 +189,7 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
       await signOutOtherDevices();
       setOtherDevices(0);
       setNotice({ at: "devices", text: "Your other devices were signed out." });
-    });
+    }, "devices");
 
   const confirmDelete = () =>
     attempt(async () => {
@@ -412,14 +436,15 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
                 isDisabled={isBusy}
                 onPress={() => void startForgot()}
               >
-                Forgot password?
+                {isSendingReset ? "Sending code…" : "Forgot password?"}
               </Button>
             </div>
           )}
+          {errorFor("password")}
           {noticeFor("password")}
         </Field>
 
-        <Field label="Devices" hint={describeDevices(otherDevices)}>
+        <Field label="Devices" hint={describeDevices(otherDevices, devicesFailure)}>
           <div>
             <Button
               size="sm"
@@ -430,6 +455,7 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
               Sign out other devices
             </Button>
           </div>
+          {errorFor("devices")}
           {noticeFor("devices")}
         </Field>
 
@@ -438,14 +464,11 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
             size="sm"
             variant="secondary"
             isDisabled={isBusy}
-            onPress={() => void attempt(signOut)}
+            onPress={() => void attempt(signOut, "devices")}
           >
             Sign out of this device
           </Button>
         </div>
-
-        {/* Errors from the actions above that have no editor of their own. */}
-        {error && editor === null && <div className="text-xs text-danger">{error}</div>}
       </section>
 
       <section className="flex flex-col gap-4 border-t border-border pt-5">
