@@ -88,6 +88,11 @@ export const authClient = createAuthClient({
   fetchOptions: {
     auth: { type: "Bearer", token: () => memToken },
     customFetchImpl: apiFetch,
+    // Better Auth defaults to `credentials: "include"` for its cookies. This app
+    // authenticates with the bearer token alone, and in `bun run dev` a
+    // credentialed cross-origin request is refused by CORS outright, which made
+    // every sign-in in the browser build fail as "can't reach the server".
+    credentials: "omit",
   },
 });
 
@@ -117,9 +122,15 @@ function describeFailure(err: unknown): Error {
   return err instanceof Error ? err : new Error(detail);
 }
 
-/** Better Auth returns the bearer token in a header rather than the body. */
+/**
+ * Better Auth returns the bearer token in a header rather than the body, and only
+ * when it issued a session. Responses that did not — changing a password without
+ * signing other devices out, say — carry no header, and must leave the current
+ * token alone rather than overwrite it with nothing and sign the user out.
+ */
 function captureToken(ctx: { response: Response }): Promise<void> {
-  return setToken(ctx.response.headers.get("set-auth-token") ?? "");
+  const token = ctx.response.headers.get("set-auth-token");
+  return token ? setToken(token) : Promise.resolve();
 }
 
 /**
@@ -211,6 +222,103 @@ export async function signOut(): Promise<void> {
   } finally {
     await setToken("");
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Managing a signed-in account                                        *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Makes `useSession` refetch. Better Auth does this for its own account routes
+ * but not for the email-otp plugin's, nor after the token is dropped locally.
+ */
+function refreshSession(): void {
+  authClient.$store.notify("$sessionSignal");
+}
+
+/** Better Auth refreshes the session itself after `/update-user`. */
+export async function updateName(name: string): Promise<void> {
+  await call(() => authClient.updateUser({ name }), "Could not update your name");
+}
+
+/**
+ * With `signOutOthers`, the server deletes every session — this one included —
+ * and issues a fresh token, which has to be captured or this device is signed
+ * out along with the rest.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+  signOutOthers: boolean,
+): Promise<void> {
+  await call(
+    () =>
+      authClient.changePassword(
+        { currentPassword, newPassword, revokeOtherSessions: signOutOthers },
+        { onSuccess: captureToken },
+      ),
+    "Could not change your password",
+  );
+}
+
+/**
+ * The signed-in "forgot password" path. A reset revokes every session, so the
+ * token this device holds is dead the moment it succeeds; signing straight back
+ * in with the new password is what keeps the user where they were.
+ */
+export async function resetPasswordAndSignIn(
+  email: string,
+  otp: string,
+  password: string,
+): Promise<void> {
+  await resetPassword(email, otp, password);
+  await setToken("");
+  try {
+    await signIn(email, password);
+  } finally {
+    refreshSession();
+  }
+}
+
+/**
+ * Step two of changing email, after a code reached the *current* address: that
+ * code authorises the change and triggers a second one to the new address.
+ * An address already in use gets no mail, and the answer does not say so.
+ */
+export async function requestEmailChange(newEmail: string, currentEmailOtp: string): Promise<void> {
+  await call(
+    () => authClient.emailOtp.requestEmailChange({ newEmail, otp: currentEmailOtp }),
+    "Could not start the email change",
+  );
+}
+
+/** Step three: the code from the new inbox. Sessions stay signed in. */
+export async function confirmEmailChange(newEmail: string, otp: string): Promise<void> {
+  await call(
+    () => authClient.emailOtp.changeEmail({ newEmail, otp }),
+    "Could not change your email",
+  );
+  refreshSession();
+}
+
+export async function countOtherDevices(): Promise<number> {
+  const res = await authFetch("/api/account/sessions");
+  if (!res.ok) throw new Error(`Could not load your devices (${res.status})`);
+  return ((await res.json()) as { others: number }).others;
+}
+
+export async function signOutOtherDevices(): Promise<void> {
+  await call(() => authClient.revokeOtherSessions(), "Could not sign out your other devices");
+}
+
+/**
+ * Removes the account and every synced note with it. Files on this machine are
+ * left exactly where they are — sync only ever mirrored them.
+ */
+export async function deleteAccount(password: string): Promise<void> {
+  await call(() => authClient.deleteUser({ password }), "Could not delete your account");
+  await setToken("");
+  refreshSession();
 }
 
 /**

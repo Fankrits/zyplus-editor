@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer, emailOTP, haveIBeenPwned } from "better-auth/plugins";
 import { pool } from "./db";
 
@@ -23,8 +24,8 @@ const MAIL_FROM = process.env.MAIL_FROM ?? "Zyplus <onboarding@resend.dev>";
 /** Transactional mail over Resend's HTTP API. No SDK — it is one POST. */
 async function sendMail(to: string, subject: string, text: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
-  // Better to fail loudly here than to let Better Auth report a sent code that
-  // no mail server ever accepted, leaving the user waiting on nothing.
+  // A failure never reaches the user (see `sendVerificationOTP`), so the server log
+  // is the only place a mail outage shows, and the message has to say what failed.
   if (!apiKey) throw new Error("RESEND_API_KEY is not set, so no mail can be sent");
 
   const res = await fetch("https://api.resend.com/emails", {
@@ -73,6 +74,22 @@ export const auth = betterAuth({
     autoSignInAfterVerification: true,
   },
 
+  // Deleting cascades to every synced note (see schema.sql). Better Auth would
+  // accept it with no password at all from a session under a day old, so the
+  // `before` hook below makes the password mandatory; the route then checks it.
+  user: { deleteUser: { enabled: true } },
+
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (ctx.path === "/delete-user" && !ctx.body?.password) {
+        throw new APIError("BAD_REQUEST", {
+          message: "Enter your password to delete your account",
+          code: "PASSWORD_REQUIRED",
+        });
+      }
+    }),
+  },
+
   // A desktop app has no web page for a reset link to land on. Seven days is
   // also short for an app opened weekly, so sessions last a month instead.
   session: { expiresIn: 60 * 60 * 24 * 30 },
@@ -84,6 +101,10 @@ export const auth = betterAuth({
     customRules: {
       "/sign-in/email": { window: 60, max: 5 },
       "/sign-up/email": { window: 3600, max: 10 },
+      // Both check the current password, so a stolen session token must not be
+      // able to guess it at the global rate.
+      "/change-password": { window: 60, max: 5 },
+      "/delete-user": { window: 60, max: 5 },
     },
   },
 
@@ -101,14 +122,24 @@ export const auth = betterAuth({
       // A database leak should not hand over live codes.
       storeOTP: "hashed",
       overrideDefaultEmailVerification: true,
+      // Changing the address takes a code from the current inbox as well as the
+      // new one. Otherwise a stolen session token could move the account to an
+      // inbox its thief controls and then take it over with a password reset.
+      changeEmail: { enabled: true, verifyCurrentEmail: true },
+      // Not awaited. Better Auth only calls this for addresses that have an
+      // account, so waiting on Resend made those requests ~200ms slower than ones
+      // for unknown addresses — giving away exactly what the identical responses
+      // are there to hide. Only the HTTP call is detached: Better Auth has already
+      // stored the code by now, and sign-up runs inside a database transaction
+      // that a detached database read would outlive.
       async sendVerificationOTP({ email, otp, type }) {
         const purpose = OTP_PURPOSE[type] ?? "continue";
-        await sendMail(
+        void sendMail(
           email,
           `Your Zyplus code: ${otp}`,
           `Your code to ${purpose} is ${otp}\n\n` +
             `It expires in 10 minutes. If you didn't ask for it, you can ignore this email.`,
-        );
+        ).catch((err) => console.error(`Failed to send a ${type} code:`, err));
       },
     }),
 

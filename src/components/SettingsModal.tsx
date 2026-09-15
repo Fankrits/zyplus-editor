@@ -21,6 +21,7 @@ import { isMac } from "../lib/platform";
 import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
 import { AccountSection } from "./AccountSection";
+import { Field } from "./Field";
 import { useExtensions } from "../extensions/useExtensions";
 import { formatBytes } from "../extensions/catalog";
 
@@ -54,26 +55,6 @@ function Keys({ keys }: { keys: string[] }) {
 
 const THEME_IDS = Object.keys(THEMES) as Theme[];
 const THEME_GROUPS = [...new Set(THEME_IDS.map((t) => THEMES[t].group))];
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <div>
-        <div className="text-sm font-medium text-foreground">{label}</div>
-        {hint && <div className="text-xs text-muted">{hint}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
 
 /** Miniature app window, so each theme option shows what it does. */
 function ThemePreview({ theme }: { theme: Theme }) {

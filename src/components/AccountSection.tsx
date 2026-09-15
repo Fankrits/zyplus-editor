@@ -1,16 +1,14 @@
 import { useState } from "react";
 import { Button, Input, Label, TextField } from "@heroui/react";
 import {
-  API_URL,
   resetPassword,
   sendCode,
   signIn,
-  signOut,
   signUp,
   useSession,
   verifyEmail,
 } from "../lib/auth";
-import { syncNow, useSyncStatus } from "../lib/sync";
+import { AccountSettings } from "./AccountSettings";
 
 /**
  * Signing in and signing up both end at `verify`, and forgetting a password ends
@@ -20,22 +18,13 @@ import { syncNow, useSyncStatus } from "../lib/sync";
  */
 type Step = "signin" | "signup" | "verify" | "forgot" | "reset";
 
-function describeLastSync(at: number | null): string {
-  if (at === null) return "Not synced yet";
-  const minutes = Math.floor((Date.now() - at) / 60000);
-  if (minutes < 1) return "Synced just now";
-  if (minutes < 60) return `Synced ${minutes}m ago`;
-  return `Synced ${new Date(at).toLocaleString()}`;
-}
-
 /**
  * Account panel for the settings modal. Signed out it walks the credential
- * steps; signed in it shows who you are and lets you leave. Sync itself is
- * elsewhere — this only decides whether there is a user for it to sync as.
+ * steps; signed in it hands over to `AccountSettings`. Sync itself is elsewhere
+ * — this only decides whether there is a user for it to sync as.
  */
 export function AccountSection() {
   const { data: session, isPending } = useSession();
-  const sync = useSyncStatus();
   const [step, setStep] = useState<Step>("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -119,38 +108,7 @@ export function AccountSection() {
   }
 
   if (session?.user) {
-    return (
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-2">
-          <div className="text-sm font-medium text-foreground">Signed in</div>
-          <div className="truncate text-sm text-muted" title={session.user.email}>
-            {session.user.email}
-          </div>
-        </div>
-        <p className="text-xs text-muted">
-          Your <span className="text-foreground">Zyplus</span> folder syncs to {API_URL}. Every
-          other folder you open stays on this machine.
-        </p>
-        <div className="flex items-center gap-3">
-          <Button
-            size="sm"
-            variant="secondary"
-            isDisabled={sync.state === "syncing"}
-            onPress={() => void syncNow()}
-          >
-            {sync.state === "syncing" ? "Syncing…" : "Sync now"}
-          </Button>
-          <span className={`text-xs ${sync.state === "error" ? "text-danger" : "text-muted"}`}>
-            {sync.error ?? describeLastSync(sync.lastSyncedAt)}
-          </span>
-        </div>
-        <div>
-          <Button size="sm" variant="secondary" isDisabled={isBusy} onPress={() => void attempt(signOut)}>
-            Sign out
-          </Button>
-        </div>
-      </div>
-    );
+    return <AccountSettings user={session.user} />;
   }
 
   const needsCode = step === "verify" || step === "reset";

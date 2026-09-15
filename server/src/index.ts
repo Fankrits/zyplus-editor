@@ -1,4 +1,5 @@
 import { ALLOWED_ORIGINS, auth, userIdFrom } from "./auth";
+import { pool } from "./db";
 import { getContent, isValidRelPath, listSince, put, softDelete } from "./notes";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -108,6 +109,25 @@ const server = Bun.serve({
 
       const note = await getContent(caller.userId, path.relPath);
       return note ? json(note) : json({ error: "Not found" }, 404);
+    }),
+
+    /**
+     * How many other devices are signed in. Better Auth's own `/list-sessions`
+     * returns every session's bearer token, which is why it also demands a
+     * session under a day old; the account panel only needs the count, and a
+     * count leaks nothing. Signing those devices out is `/revoke-other-sessions`.
+     */
+    "/api/account/sessions": route(async (req) => {
+      if (req.method !== "GET") return json({ error: "Method not allowed" }, 405);
+      const current = await auth.api.getSession({ headers: req.headers });
+      if (!current) return json({ error: "Unauthorized" }, 401);
+      const { rows } = await pool.query(
+        `select count(*)::int as others
+           from session
+          where "userId" = $1 and id <> $2 and "expiresAt" > now()`,
+        [current.user.id, current.session.id],
+      );
+      return json({ others: rows[0].others });
     }),
 
     "/health": route(() => json({ ok: true })),

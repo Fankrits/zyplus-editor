@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { API_URL, authClient, authFetch, initAuth, isSignedIn, signIn } from "../src/lib/auth";
+import {
+  API_URL,
+  authClient,
+  authFetch,
+  changePassword,
+  deleteAccount,
+  initAuth,
+  isSignedIn,
+  resetPasswordAndSignIn,
+  signIn,
+} from "../src/lib/auth";
 
 /**
  * `apiFetch` reads `globalThis.fetch` at call time rather than closing over it,
@@ -20,6 +30,23 @@ function respondWith(status: number, body: unknown): Response[] {
   }) as unknown as typeof fetch;
   return seen;
 }
+
+/** Answers successive requests in order, recording which paths were called. */
+function respondInOrder(
+  replies: { status?: number; body?: unknown; token?: string }[],
+): string[] {
+  const paths: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    paths.push(new URL(String(input instanceof Request ? input.url : input)).pathname);
+    const { status = 200, body = {}, token } = replies[paths.length - 1] ?? {};
+    const headers = new Headers({ "Content-Type": "application/json" });
+    if (token) headers.set("set-auth-token", token);
+    return new Response(JSON.stringify(body), { status, headers });
+  }) as unknown as typeof fetch;
+  return paths;
+}
+
+const storedToken = () => localStorage.getItem("zyplus:auth-token");
 
 async function signInWith(token: string): Promise<void> {
   localStorage.setItem("zyplus:auth-token", token);
@@ -50,7 +77,7 @@ describe("signIn", () => {
       code: "INVALID_EMAIL_OR_PASSWORD",
       message: "Invalid email or password",
     });
-    expect(signIn("a@b.com", "wrong")).rejects.toThrow("Invalid email or password");
+    await expect(signIn("a@b.com", "wrong")).rejects.toThrow("Invalid email or password");
   });
 });
 
@@ -90,13 +117,86 @@ describe("authFetch", () => {
 
   it("refuses to call the API at all when signed out", async () => {
     await initAuth();
-    expect(authFetch("/api/notes")).rejects.toThrow("Not signed in");
+    await expect(authFetch("/api/notes")).rejects.toThrow("Not signed in");
   });
 
   it("names the server when it cannot be reached", async () => {
     await signInWith("good-token");
     globalThis.fetch = (() =>
       Promise.reject(new Error("fetch failed"))) as unknown as typeof fetch;
-    expect(authFetch("/api/notes")).rejects.toThrow(API_URL);
+    await expect(authFetch("/api/notes")).rejects.toThrow(API_URL);
+  });
+});
+
+describe("account management", () => {
+  it("keeps this device signed in when a password change issues no new token", async () => {
+    // Without signing other devices out, the server keeps the current session and
+    // sends no `set-auth-token`. Treating the missing header as an empty token
+    // would sign the user out of the device they just changed the password on.
+    await signInWith("current-token");
+    respondInOrder([{ body: { token: null } }]);
+
+    await changePassword("old-password-1", "new-password-22", false);
+
+    expect(isSignedIn()).toBe(true);
+    expect(storedToken()).toBe("current-token");
+  });
+
+  it("adopts the replacement token when other devices are signed out", async () => {
+    // Signing others out deletes every session, this one included; only the
+    // token in the response keeps this device signed in.
+    await signInWith("current-token");
+    respondInOrder([{ body: { token: "fresh-token" }, token: "fresh-token" }]);
+
+    await changePassword("old-password-1", "new-password-22", true);
+
+    expect(storedToken()).toBe("fresh-token");
+  });
+
+  it("signs straight back in after a signed-in password reset", async () => {
+    await signInWith("revoked-by-reset");
+    const paths = respondInOrder([
+      { body: { success: true } },
+      { body: { token: "after-reset" }, token: "after-reset" },
+    ]);
+
+    await resetPasswordAndSignIn("a@b.com", "123456", "new-password-22");
+
+    expect(paths.map((p) => p.replace(/^.*\/api\/auth/, ""))).toEqual([
+      "/email-otp/reset-password",
+      "/sign-in/email",
+    ]);
+    expect(storedToken()).toBe("after-reset");
+  });
+
+  it("does not leave the revoked token behind when signing back in fails", async () => {
+    await signInWith("revoked-by-reset");
+    respondInOrder([
+      { body: { success: true } },
+      { status: 429, body: { message: "Too many requests" } },
+    ]);
+
+    await expect(resetPasswordAndSignIn("a@b.com", "123456", "new-password-22")).rejects.toThrow();
+
+    expect(isSignedIn()).toBe(false);
+  });
+
+  it("forgets the token once the account is deleted", async () => {
+    await signInWith("doomed-token");
+    respondInOrder([{ body: { success: true } }]);
+
+    await deleteAccount("my-password-1");
+
+    expect(isSignedIn()).toBe(false);
+    expect(storedToken()).toBeNull();
+  });
+
+  it("keeps the token when deletion is refused", async () => {
+    await signInWith("still-mine");
+    respondInOrder([{ status: 400, body: { code: "INVALID_PASSWORD", message: "Invalid password" } }]);
+
+    await expect(deleteAccount("wrong-password")).rejects.toThrow("Invalid password");
+
+    expect(isSignedIn()).toBe(true);
   });
 });
