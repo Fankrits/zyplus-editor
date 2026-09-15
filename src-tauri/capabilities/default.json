@@ -16,6 +16,9 @@
       "identifier": "http:default",
       "allow": [
         {
+          "url": "https://api-production-84b6.up.railway.app/*"
+        },
+        {
           "url": "http://localhost:3000/*"
         },
         {

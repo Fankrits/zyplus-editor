@@ -118,6 +118,13 @@ export const auth = betterAuth({
   ],
 
   trustedOrigins: ALLOWED_ORIGINS,
+
+  // Rate limits are keyed by client IP. Railway's edge puts the caller's address
+  // in `X-Real-IP`; Better Auth's default, `X-Forwarded-For`, is trusted only when
+  // it holds a single hop, and otherwise every caller collapses into one shared
+  // bucket — where one person's failed sign-ins lock everybody out. Locally the
+  // header is absent and Better Auth falls back to localhost.
+  advanced: { ipAddress: { ipAddressHeaders: ["x-real-ip"] } },
 });
 
 /** The caller's user id, or null when unauthenticated. */

@@ -4,7 +4,15 @@ import { isTauri } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { load, type Store } from "@tauri-apps/plugin-store";
 
-export const API_URL = import.meta.env.VITE_ZYPLUS_API_URL ?? "http://localhost:3000";
+/**
+ * Release builds talk to the hosted API; `tauri dev` and `bun run dev` talk to the
+ * local server. `VITE_ZYPLUS_API_URL` overrides either. A new host also has to be
+ * added to the http allowlist in `src-tauri/capabilities/default.json`, or the
+ * packaged app refuses the request before it leaves the machine.
+ */
+export const API_URL =
+  import.meta.env.VITE_ZYPLUS_API_URL ??
+  (import.meta.env.PROD ? "https://api-production-84b6.up.railway.app" : "http://localhost:3000");
 
 /**
  * Requests go through Rust in the packaged app, not the webview.

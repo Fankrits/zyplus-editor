@@ -134,8 +134,25 @@ bun run db:reset       # wipe the volume and start over
 ```
 
 Copy `server/.env.example` to `server/.env` first and set
-`BETTER_AUTH_SECRET` (`openssl rand -base64 32`). The desktop app reads
-`VITE_ZYPLUS_API_URL`, defaulting to `http://localhost:3000`.
+`BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `RESEND_API_KEY`. Dev
+builds talk to `http://localhost:3000` and release builds to the hosted API;
+`VITE_ZYPLUS_API_URL` overrides both.
+
+#### Production
+
+The API runs on Railway (project `zyplus`, service `api`) with Railway Postgres,
+at `https://api-production-84b6.up.railway.app`. Deploy from `server/`:
+
+```sh
+railway up --service api --environment production
+```
+
+Each deploy runs `bun src/migrate.ts` first, then `bun src/index.ts`, and waits
+for `/health`. The server refuses to boot in production unless `DATABASE_URL`,
+`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `RESEND_API_KEY` and `MAIL_FROM` are
+set. Changing the API host also means updating the http allowlist in
+`src-tauri/capabilities/default.json` and the release default in
+`src/lib/auth.ts` — released apps keep calling the host they were built with.
 
 [`check.yml`](.github/workflows/check.yml) runs `bun run check` on macOS,
 Linux and Windows for every push and pull request — platform-specific breakage
