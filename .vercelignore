@@ -1,0 +1,13 @@
+# The web build needs the frontend and nothing else: the desktop shell, the sync
+# API (hosted on Railway) and the extension bundles all deploy elsewhere.
+src-tauri
+server
+extensions
+scripts
+tests
+docs
+Casks
+dist
+install.sh
+install.ps1
+compose.yaml
