@@ -3,7 +3,7 @@ import { act, render } from "@testing-library/react";
 import { WorkspaceProvider, useWorkspace } from "../src/state/workspaceStore";
 import * as fs from "../src/lib/fs";
 
-const NOTE = "/demo-workspace/Welcome.md";
+const NOTE = "/Zyplus/Welcome.md";
 
 async function mount() {
   let ctx!: ReturnType<typeof useWorkspace>;
@@ -23,7 +23,7 @@ describe("first run", () => {
   it("opens Welcome.md in the default folder", async () => {
     await fs.deletePath(NOTE, false);
     const ctx = await mount();
-    expect(ctx().state.roots).toContain("/demo-workspace");
+    expect(ctx().state.roots).toContain("/Zyplus");
     expect(ctx().state.activeTabId).toBe(NOTE);
     expect(await fs.readTextFile(NOTE)).toContain("# Welcome to Zyplus");
   });

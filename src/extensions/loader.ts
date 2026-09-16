@@ -1,36 +1,31 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { appDataDir, join } from "@tauri-apps/api/path";
-import { exists, readTextFile, writeTextFile, remove, mkdir } from "@tauri-apps/plugin-fs";
+import { appDataDir } from "@tauri-apps/api/path";
+import {
+  deletePath,
+  ensureFolder,
+  joinPath,
+  pathExists,
+  readTextFile,
+  writeTextFile,
+} from "../lib/fs";
 import type { ExtensionContext, ExtensionManifest, ExtensionRuntime } from "./types";
 import { isDarkTheme } from "../lib/theme";
 
-// In-memory fallback cache for headless testing or non-Tauri environments
-const mockExtensionFiles = new Map<string, string>();
-
+/**
+ * Bundles live in the app data directory on desktop. The web build stores them
+ * through the same filesystem layer as notes, in a dot-folder no project shows.
+ */
 export async function getExtensionsRootDir(): Promise<string> {
-  if (!isTauri()) {
-    return "/mock-app-data/extensions";
-  }
-  const appData = await appDataDir();
-  return await join(appData, "extensions");
+  return isTauri() ? joinPath(await appDataDir(), "extensions") : "/.extensions";
 }
 
 export async function getExtensionDir(id: string): Promise<string> {
-  const root = await getExtensionsRootDir();
-  if (!isTauri()) {
-    return `${root}/${id}`;
-  }
-  return await join(root, id);
+  return joinPath(await getExtensionsRootDir(), id);
 }
 
 export async function isExtensionInstalledLocally(id: string): Promise<boolean> {
-  if (!isTauri()) {
-    return mockExtensionFiles.has(`${id}/index.js`);
-  }
   try {
-    const dir = await getExtensionDir(id);
-    const bundlePath = await join(dir, "index.js");
-    return await exists(bundlePath);
+    return await pathExists(await joinPath(await getExtensionDir(id), "index.js"));
   } catch {
     return false;
   }
@@ -41,40 +36,16 @@ export async function saveExtensionFiles(
   jsContent: string,
   cssContent?: string,
 ): Promise<void> {
-  if (!isTauri()) {
-    mockExtensionFiles.set(`${id}/index.js`, jsContent);
-    if (cssContent) mockExtensionFiles.set(`${id}/style.css`, cssContent);
-    return;
-  }
-
   const dir = await getExtensionDir(id);
-  const dirExists = await exists(dir);
-  if (!dirExists) {
-    await mkdir(dir, { recursive: true });
-  }
-
-  const bundlePath = await join(dir, "index.js");
-  await writeTextFile(bundlePath, jsContent);
-
-  if (cssContent) {
-    const cssPath = await join(dir, "style.css");
-    await writeTextFile(cssPath, cssContent);
-  }
+  await ensureFolder(dir);
+  await writeTextFile(await joinPath(dir, "index.js"), jsContent);
+  if (cssContent) await writeTextFile(await joinPath(dir, "style.css"), cssContent);
 }
 
 export async function deleteExtensionFiles(id: string): Promise<void> {
-  if (!isTauri()) {
-    mockExtensionFiles.delete(`${id}/index.js`);
-    mockExtensionFiles.delete(`${id}/style.css`);
-    return;
-  }
-
   try {
     const dir = await getExtensionDir(id);
-    const dirExists = await exists(dir);
-    if (dirExists) {
-      await remove(dir, { recursive: true });
-    }
+    if (await pathExists(dir)) await deletePath(dir, true);
   } catch (err) {
     console.warn(`Failed to delete extension files for ${id}:`, err);
   }
@@ -98,26 +69,11 @@ export function removeExtensionCss(id: string): void {
 }
 
 export async function loadExtensionModule(manifest: ExtensionManifest): Promise<ExtensionRuntime> {
-  let jsCode: string;
-  let cssCode: string | null = null;
+  const dir = await getExtensionDir(manifest.id);
+  const jsCode = await readTextFile(await joinPath(dir, "index.js"));
 
-  if (!isTauri()) {
-    const cached = mockExtensionFiles.get(`${manifest.id}/index.js`);
-    if (!cached) throw new Error(`Extension ${manifest.id} is not installed locally`);
-    jsCode = cached;
-    cssCode = mockExtensionFiles.get(`${manifest.id}/style.css`) ?? null;
-  } else {
-    const dir = await getExtensionDir(manifest.id);
-    const bundlePath = await join(dir, "index.js");
-    jsCode = await readTextFile(bundlePath);
-
-    if (manifest.cssUrl) {
-      const cssPath = await join(dir, "style.css");
-      if (await exists(cssPath)) {
-        cssCode = await readTextFile(cssPath);
-      }
-    }
-  }
+  const cssPath = await joinPath(dir, "style.css");
+  const cssCode = manifest.cssUrl && (await pathExists(cssPath)) ? await readTextFile(cssPath) : null;
 
   if (cssCode) {
     injectExtensionCss(manifest.id, cssCode);

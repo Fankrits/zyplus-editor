@@ -71,9 +71,13 @@ describe("renamePath name guard", () => {
 describe("tryFs", () => {
   it("reports a failure as false rather than throwing", async () => {
     const { tryFs } = await import("../src/lib/fs");
+    // The web build reports through alert(), which Bun implements by waiting on stdin.
+    const realAlert = globalThis.alert;
+    globalThis.alert = () => {};
     // Every call site keys off this: a true here over a failed write would
     // refresh the tree and open a tab for a file that does not exist.
     expect(await tryFs("Nope", "/x", () => Promise.reject(new Error("boom")))).toBe(false);
     expect(await tryFs("Fine", "/x", () => Promise.resolve())).toBe(true);
+    globalThis.alert = realAlert;
   });
 });

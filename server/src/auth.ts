@@ -6,12 +6,14 @@ import { pool } from "./db";
 /**
  * Origins allowed to call this server. Tauri's webview origin differs per
  * platform — `tauri://localhost` on macOS and Linux, `http://tauri.localhost`
- * on Windows — and 1420 is `bun run dev` in a plain browser.
+ * on Windows — and 1420 is `bun run dev` in a plain browser. `WEB_ORIGINS` adds
+ * wherever the web build is hosted, comma-separated.
  */
 export const ALLOWED_ORIGINS = [
   "tauri://localhost",
   "http://tauri.localhost",
   "http://localhost:1420",
+  ...(process.env.WEB_ORIGINS?.split(",").map((o) => o.trim()).filter(Boolean) ?? []),
 ];
 
 /**

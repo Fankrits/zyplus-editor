@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core";
+
 /**
  * Which OS the app is running on, as seen from the webview.
  *
@@ -20,3 +22,6 @@ export const REVEAL_LABEL = isMac
   : isWindows
     ? "Show in File Explorer"
     : "Show in File Manager";
+
+/** The desktop app, as opposed to the web build. Gates what only an OS can do. */
+export const isNativeApp = isTauri();

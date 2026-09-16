@@ -17,7 +17,7 @@ import { useWorkspaceActions, useWorkspaceSession, useWorkspaceTree } from "../s
 import * as fs from "../lib/fs";
 import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL } from "../lib/shortcuts";
-import { isMac } from "../lib/platform";
+import { isNativeApp, isMac } from "../lib/platform";
 import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
 import { AccountSection } from "./AccountSection";
@@ -182,11 +182,14 @@ export function SettingsModal({
                           >
                             {defaultFolder ?? "Not set"}
                           </span>
-                          <Button size="sm" variant="secondary" onPress={pickDefaultFolder}>
-                            Change
-                          </Button>
+                          {isNativeApp && (
+                            <Button size="sm" variant="secondary" onPress={pickDefaultFolder}>
+                              Change
+                            </Button>
+                          )}
                         </div>
                       </Field>
+                      {isNativeApp && (
                       <Field
                         label="Default Markdown app"
                         hint={
@@ -212,6 +215,7 @@ export function SettingsModal({
                           )}
                         </div>
                       </Field>
+                      )}
                       <Field label="Autosave" hint="Saves open files a moment after you stop typing.">
                         <Switch isSelected={isAutosaveEnabled} onChange={setIsAutosaveEnabled}>
                           <Switch.Content>
@@ -410,7 +414,7 @@ export function SettingsModal({
                       <p className="max-w-xs text-xs text-muted">
                         A local-first markdown editor. Your files stay on your machine.
                       </p>
-                      <UpdateButton />
+                      {isNativeApp && <UpdateButton />}
                     </div>
                   )}
                 </div>
