@@ -4,8 +4,10 @@
  * the working copy in memory and writes through here before touching it, so a
  * write the browser refuses — out of quota, say — never looks like it landed.
  *
- * ponytail: each browser tab loads its own copy once, so two tabs editing at the
- * same time overwrite each other. A BroadcastChannel reload would fix that.
+ * Each tab holds its own copy of that working set, so every write is broadcast
+ * to the others and applied there too. Without it, two open tabs each wrote
+ * through a copy that had stopped matching the database, and whichever one saved
+ * last silently threw away the other's notes.
  */
 
 const DB_NAME = "zyplus";
@@ -15,6 +17,14 @@ const STORE = "entries";
 export type WebOp = [path: string, value: string | null | undefined];
 
 let db: IDBDatabase | null = null;
+
+/** Absent in workers and older browsers; then a second tab is simply on its own. */
+const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("zyplus:fs");
+
+/** Applies another tab's writes. One listener — `lib/fs.ts` owns the working copy. */
+export function onOtherTabWrite(cb: (ops: WebOp[]) => void): void {
+  if (channel) channel.onmessage = (event) => cb(event.data as WebOp[]);
+}
 
 function done<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -46,7 +56,11 @@ export function persistWeb(ops: WebOp[]): Promise<void> {
     else store.put(value, path);
   }
   return new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => {
+      // Only after the database took it: a tab must never show a write that failed.
+      channel?.postMessage(ops);
+      resolve();
+    };
     tx.onerror = tx.onabort = () => reject(tx.error);
   });
 }

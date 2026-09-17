@@ -357,13 +357,15 @@ export function AccountSettings({ user }: { user: { name: string; email: string 
           <Button
             size="sm"
             variant="secondary"
-            isDisabled={sync.state === "syncing"}
+            isDisabled={sync.state === "syncing" || sync.state === "waiting"}
             onPress={() => void syncNow()}
           >
             {sync.state === "syncing" ? "Syncing…" : "Sync now"}
           </Button>
           <span className={`text-xs ${sync.state === "error" ? "text-danger" : "text-muted"}`}>
-            {sync.error ?? describeLastSync(sync.lastSyncedAt)}
+            {sync.state === "waiting"
+              ? "Another Zyplus tab is syncing this folder"
+              : (sync.error ?? describeLastSync(sync.lastSyncedAt))}
           </span>
         </div>
         {/* A finished sync or a failed one can both change how much is stored. */}

@@ -5,16 +5,18 @@ import {
   ensureFolder,
   isMarkdownFile,
   pathExists,
+  readDirRecursive,
   readTextFile,
   setLocalChangeListener,
   writeTextFile,
 } from "./fs";
+import type { TreeNode } from "../state/workspaceReducer";
 
 export const MANIFEST_DIR = ".zyplus";
 export const MANIFEST_FILE = "sync.json";
 
 const PUSH_DEBOUNCE_MS = 2000;
-const PULL_INTERVAL_MS = 5 * 60 * 1000;
+const PULL_INTERVAL_MS = 60 * 1000;
 
 /**
  * What this device believes the server holds. Lives inside the synced folder so
@@ -29,8 +31,17 @@ export interface SyncManifest {
   files: Record<string, { hash: string; rev: number }>;
 }
 
+/**
+ * Recorded as a file's hash when this device holds that revision but its disk
+ * copy is deliberately something else — a tombstone, or local content that beat
+ * the server. It is never a real hash, so `decidePull` keeps treating the file
+ * as locally edited, while the rev still says which revision to upload on top of.
+ */
+const UNSYNCED = "";
+
 export interface SyncStatus {
-  state: "off" | "idle" | "syncing" | "error";
+  /** `waiting`: another tab holds the sync lock, so this one is standing by. */
+  state: "off" | "idle" | "syncing" | "waiting" | "error";
   lastSyncedAt: number | null;
   error: string | null;
 }
@@ -148,6 +159,19 @@ let generation = 0;
 class StorageFullError extends Error {}
 
 /**
+ * Held for as long as this window is the one syncing, and dropped by `stopSync`
+ * or by the browser when the tab closes.
+ *
+ * Every tab of the web build shares one notes folder and one manifest, so two
+ * engines would overwrite each other's bookkeeping. The others wait in line
+ * rather than give up, which is what makes closing the syncing tab hand the job
+ * to a remaining one instead of leaving nobody syncing until a reload. Their
+ * edits go up either way: the holder's `scanLocal` finds them on its next pull.
+ */
+let releaseSyncLock: (() => void) | null = null;
+let lockWait: AbortController | null = null;
+
+/**
  * Writes made by sync itself must not bounce straight back as uploads, so the
  * change listener stands down while remote content is being applied.
  */
@@ -205,23 +229,33 @@ async function loadManifest(userId: string): Promise<SyncManifest> {
 
 async function saveManifest(): Promise<void> {
   if (!manifest || !root) return;
-  isApplyingRemote = true;
   try {
     await ensureFolder(toAbsPath(root, MANIFEST_DIR));
     await writeTextFile(manifestPath(), JSON.stringify(manifest, null, 2));
   } catch (err) {
     console.warn("Failed to write the sync manifest:", err);
-  } finally {
-    isApplyingRemote = false;
   }
 }
 
 /* --- push --- */
 
+/**
+ * Schedules the upload. It goes through `syncNow` rather than straight to
+ * `flush`, so a push can never run alongside a pull — the two racing on one file
+ * uploaded content the pull was still writing. Waiting rather than joining the
+ * run in progress is what keeps the debounce: that run read `pending` before
+ * this path was added to it.
+ */
 function queue(relPath: string): void {
   pending.add(relPath);
   if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => void flush(), PUSH_DEBOUNCE_MS);
+  pushTimer = setTimeout(function fire() {
+    if (inFlight) {
+      pushTimer = setTimeout(fire, PUSH_DEBOUNCE_MS);
+      return;
+    }
+    void syncNow();
+  }, PUSH_DEBOUNCE_MS);
 }
 
 function handleLocalChange(absPath: string): void {
@@ -237,8 +271,16 @@ async function pushOne(relPath: string): Promise<void> {
   const known = manifest!.files[relPath];
 
   if (!(await pathExists(abs))) {
-    await authFetch(`/api/notes?path=${encodeURIComponent(relPath)}`, { method: "DELETE" });
-    delete manifest!.files[relPath];
+    const res = await authFetch(`/api/notes?path=${encodeURIComponent(relPath)}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error(`Delete of ${relPath} failed (${res.status})`);
+    const { rev } = (await res.json()) as { rev: number };
+    // Remember the tombstone rather than forgetting the path. Re-creating a note
+    // with the same name then uploads on top of the tombstone; forgetting it made
+    // the upload start from rev 0, collide with the tombstone, and leave an empty
+    // conflict copy beside the new note.
+    manifest!.files[relPath] = { hash: UNSYNCED, rev };
     return;
   }
 
@@ -266,6 +308,7 @@ async function pushOne(relPath: string): Promise<void> {
   manifest!.files[relPath] = { hash: await hashOf(content), rev };
 }
 
+/** Uploads everything queued. Only `syncNow` calls this, so it never overlaps a pull. */
 async function flush(): Promise<void> {
   if (!root || !manifest || !isSignedIn() || pending.size === 0) return;
   const batch = [...pending];
@@ -318,9 +361,47 @@ async function fetchContent(relPath: string): Promise<string> {
   return ((await res.json()) as { content: string }).content;
 }
 
+/** Every file in the synced folder, as absolute paths. Dotfiles are skipped for us. */
+function flatten(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((n) => (n.isFolder ? flatten(n.children ?? []) : [n.id]));
+}
+
+/**
+ * Queues whatever changed on disk while the app was not the one writing.
+ *
+ * The push queue is otherwise fed only by this app's own saves, so a note edited
+ * in another editor — or added to the folder by hand, or removed from it — never
+ * reached the server at all, and the next pull read it as a conflict.
+ *
+ * Adds to `pending` directly rather than through `queue`: the `flush` at the end
+ * of this same run takes them, and arming the debounce here would schedule
+ * another run 2s later — which, with the server unreachable, is a scan of the
+ * whole folder every two seconds for as long as the machine stays offline.
+ *
+ * ponytail: hashes every note on every pull. Fine for a notebook; if that gets
+ * slow, compare a cheap stat first and hash only what looks different.
+ */
+async function scanLocal(): Promise<void> {
+  const seen = new Set<string>();
+
+  for (const abs of flatten(await readDirRecursive(root!))) {
+    const rel = toRelPath(root!, abs);
+    if (!rel || !isMarkdownFile(rel)) continue;
+    seen.add(rel);
+    if (manifest!.files[rel]?.hash !== (await hashOf(await readTextFile(abs)))) pending.add(rel);
+  }
+
+  // A file that is gone but still in the manifest was deleted behind our back.
+  // Entries with no content of their own are tombstones, and already agree.
+  for (const [rel, file] of Object.entries(manifest!.files)) {
+    if (!seen.has(rel) && file.hash !== UNSYNCED) pending.add(rel);
+  }
+}
+
 export async function pull(): Promise<void> {
   if (!root || !manifest || !isSignedIn()) return;
   setStatus({ state: "syncing" });
+  await scanLocal();
 
   const res = await authFetch(`/api/notes?since=${manifest.cursor}`);
   if (!res.ok) throw new Error(`Sync list failed (${res.status})`);
@@ -331,10 +412,20 @@ export async function pull(): Promise<void> {
   const changed: string[] = [];
 
   for (const note of notes) {
+    const known = manifest.files[note.relPath];
+
+    // A device's own uploads and deletes come back in this list, because the
+    // cursor only moves on a pull. Recognising the revision we already hold is
+    // what stops an edit made since from being read as a remote change — which
+    // filed a conflict copy of the device's own work on every second save.
+    if (known?.rev === note.rev) {
+      manifest.cursor = Math.max(manifest.cursor, note.rev);
+      continue;
+    }
+
     const abs = toAbsPath(root, note.relPath);
     const localExists = await pathExists(abs);
     const localHash = localExists ? await hashOf(await readTextFile(abs)) : null;
-    const known = manifest.files[note.relPath];
 
     const action = decidePull({
       remoteDeleted: note.deletedAt !== null,
@@ -343,33 +434,38 @@ export async function pull(): Promise<void> {
       knownHash: known?.hash ?? null,
     });
 
-    isApplyingRemote = true;
-    try {
-      if (action === "download") {
-        const content = await fetchContent(note.relPath);
+    // The flag is held around the writes only. Holding it across a download let
+    // a save the user made in that window be dropped instead of queued.
+    if (action === "download") {
+      const content = await fetchContent(note.relPath);
+      isApplyingRemote = true;
+      try {
         await ensureFolder(parentOf(abs));
         await writeTextFile(abs, content);
-        manifest.files[note.relPath] = { hash: await hashOf(content), rev: note.rev };
-        changed.push(abs);
-      } else if (action === "delete") {
-        await deletePath(abs, false);
-        delete manifest.files[note.relPath];
-        changed.push(abs);
-      } else if (action === "conflict") {
-        const content = await fetchContent(note.relPath);
+      } finally {
         isApplyingRemote = false;
-        await writeConflictCopy(note.relPath, content);
-        isApplyingRemote = true;
-        // Local is still the newer edit, so re-upload it on top of this revision.
-        delete manifest.files[note.relPath];
-        queue(note.relPath);
-        changed.push(abs);
-      } else if (action === "keep-local") {
-        delete manifest.files[note.relPath];
-        queue(note.relPath);
       }
-    } finally {
-      isApplyingRemote = false;
+      manifest.files[note.relPath] = { hash: await hashOf(content), rev: note.rev };
+      changed.push(abs);
+    } else if (action === "delete") {
+      isApplyingRemote = true;
+      try {
+        await deletePath(abs, false);
+      } finally {
+        isApplyingRemote = false;
+      }
+      manifest.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
+      changed.push(abs);
+    } else if (action === "conflict" || action === "keep-local") {
+      if (action === "conflict") {
+        await writeConflictCopy(note.relPath, await fetchContent(note.relPath));
+        changed.push(abs);
+      }
+      // Local is still the newer edit, so re-upload it on top of this revision.
+      // Recording the rev is what makes that retry land: starting from 0 instead
+      // collided with the very row we just read and filed a second conflict copy.
+      manifest.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
+      pending.add(note.relPath);
     }
 
     manifest.cursor = Math.max(manifest.cursor, note.rev);
@@ -411,20 +507,54 @@ export async function startSync(folder: string | null, userId: string | null): P
   const mine = generation;
 
   root = folder;
-  const loaded = await loadManifest(userId);
-  if (generation !== mine) return;
 
-  manifest = loaded;
-  setLocalChangeListener(handleLocalChange);
-  setStatus({ state: "idle", error: null });
+  // The manifest is read inside the lock: a window that waited its turn must not
+  // start from the bookkeeping as it stood before the other one was writing it.
+  const begin = async () => {
+    const loaded = await loadManifest(userId);
+    if (generation !== mine) return;
 
-  window.addEventListener("focus", onFocus);
-  pullTimer = setInterval(() => void syncNow(), PULL_INTERVAL_MS);
-  void syncNow();
+    manifest = loaded;
+    setLocalChangeListener(handleLocalChange);
+    setStatus({ state: "idle", error: null });
+
+    window.addEventListener("focus", onFocus);
+    pullTimer = setInterval(() => void syncNow(), PULL_INTERVAL_MS);
+    void syncNow();
+  };
+
+  // No Web Locks — an older browser, or the tests. Then this window is the only one.
+  if (!navigator.locks) {
+    await begin();
+    return;
+  }
+
+  const wait = new AbortController();
+  lockWait = wait;
+  // Replaced by `begin` the moment the lock is ours, which is immediately unless
+  // another tab is already syncing this folder.
+  setStatus({ state: "waiting", error: null });
+  void navigator.locks
+    .request("zyplus:sync", { signal: wait.signal }, async () => {
+      if (generation !== mine) return; // stopped while waiting in line
+      await begin();
+      if (generation !== mine) return; // stopped while starting up
+      return new Promise<void>((release) => {
+        releaseSyncLock = release;
+      });
+    })
+    .catch(() => {
+      // `stopSync` aborted the wait, which rejects the request. Nothing to undo.
+    });
 }
 
 export function stopSync(): void {
   generation++;
+  // One of the two applies: the lock is held, or this window is still in line.
+  releaseSyncLock?.();
+  releaseSyncLock = null;
+  lockWait?.abort();
+  lockWait = null;
   setLocalChangeListener(null);
   window.removeEventListener("focus", onFocus);
   if (pushTimer) clearTimeout(pushTimer);

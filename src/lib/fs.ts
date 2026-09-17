@@ -12,7 +12,7 @@ import { join as tauriJoin, dirname as tauriDirname, documentDir } from "@tauri-
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isMac, isWindows } from "./platform";
-import { openWebStore, persistWeb, type WebOp } from "./webStore";
+import { onOtherTabWrite, openWebStore, persistWeb, type WebOp } from "./webStore";
 import type { TreeNode } from "../state/workspaceReducer";
 
 const MARKDOWN_EXTENSIONS = [".md", ".markdown", ".txt"];
@@ -61,11 +61,26 @@ export async function initWebFs(): Promise<void> {
     // it just forgets everything on reload.
     console.error("Browser storage is unavailable; notes will not be kept:", err);
   }
+
+  // Another tab of the same app writing to the store it shares with this one.
+  onOtherTabWrite((ops) => {
+    applyToMemory(ops);
+    onStoreChanged?.(ops.map(([path]) => path));
+  });
 }
 
-/** Writes to the browser store first, then to memory, so memory never runs ahead of it. */
-async function applyWeb(ops: WebOp[]): Promise<void> {
-  await persistWeb(ops);
+/**
+ * Notified when the notes changed without this tab writing them — another tab of
+ * the web build did. Registered by the workspace store, which reloads the tree
+ * and any open tab the same way it does after a sync pull.
+ */
+let onStoreChanged: ((paths: string[]) => void) | null = null;
+
+export function setStoreChangedListener(fn: ((paths: string[]) => void) | null): void {
+  onStoreChanged = fn;
+}
+
+function applyToMemory(ops: WebOp[]): void {
   for (const [path, value] of ops) {
     if (value === undefined) {
       webFiles.delete(path);
@@ -76,6 +91,12 @@ async function applyWeb(ops: WebOp[]): Promise<void> {
       webFiles.set(path, value);
     }
   }
+}
+
+/** Writes to the browser store first, then to memory, so memory never runs ahead of it. */
+async function applyWeb(ops: WebOp[]): Promise<void> {
+  await persistWeb(ops);
+  applyToMemory(ops);
 }
 
 /** `path` and everything under it, as [path, content-or-null-for-a-folder]. */
