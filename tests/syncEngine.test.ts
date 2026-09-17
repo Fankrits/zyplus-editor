@@ -1,4 +1,7 @@
-import { describe, expect, it, mock, beforeEach } from "bun:test";
+import { describe, expect, it, beforeAll, afterAll, beforeEach } from "bun:test";
+import * as fs from "../src/lib/fs";
+import * as sync from "../src/lib/sync";
+import { initAuth } from "../src/lib/auth";
 
 /**
  * The sync engine against a stand-in for the real API: one shared rev sequence,
@@ -6,15 +9,24 @@ import { describe, expect, it, mock, beforeEach } from "bun:test";
  * Map. The decision table is unit-tested in `sync.test.ts`; what this file covers
  * is the loop around it, where a device has to recognise its own uploads coming
  * back and pick the right `baseRev` to retry on.
+ *
+ * The stand-in is installed as `globalThis.fetch`, the way `auth.test.ts` does it,
+ * and the engine is signed in with a real stored token. Mocking `lib/auth` as a
+ * module instead replaced it for every other test file in the run — `bun test`
+ * shares one process — and whichever file happened to load after this one lost
+ * the exports it imports. It passed on macOS and failed on Linux, where the files
+ * load in a different order.
  */
 type Row = { content: string; rev: number; deleted: boolean };
 const rows = new Map<string, Row>();
 let seq = 0;
 let serverDown = false;
 
-const authFetch = mock(async (path: string, init: RequestInit = {}): Promise<Response> => {
+const realFetch = globalThis.fetch;
+
+async function fakeServer(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   if (serverDown) throw new Error("Can't reach the sync server");
-  const url = new URL(path, "http://test");
+  const url = new URL(String(input instanceof Request ? input.url : input));
   const params = url.searchParams;
   const method = init.method ?? "GET";
 
@@ -49,13 +61,22 @@ const authFetch = mock(async (path: string, init: RequestInit = {}): Promise<Res
     // Mirrors `softDelete`: a repeat hands back the tombstone already there.
     return Response.json({ rev: rows.get(relPath)?.rev ?? 0 });
   }
-  throw new Error(`unhandled ${method} ${path}`);
+  throw new Error(`unhandled ${method} ${url.pathname}`);
+}
+
+beforeAll(async () => {
+  globalThis.fetch = fakeServer as unknown as typeof fetch;
+  // What `lib/auth` reads back outside Tauri, so the engine counts as signed in.
+  localStorage.setItem("zyplus:auth-token", "test-token");
+  await initAuth();
 });
 
-mock.module("../src/lib/auth", () => ({ authFetch, isSignedIn: () => true, API_URL: "http://test" }));
-
-const fs = await import("../src/lib/fs");
-const sync = await import("../src/lib/sync");
+afterAll(async () => {
+  globalThis.fetch = realFetch;
+  localStorage.removeItem("zyplus:auth-token");
+  await initAuth();
+  sync.stopSync();
+});
 
 const USER = "user-1";
 
