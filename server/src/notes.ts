@@ -162,7 +162,12 @@ export async function put(
   }
 }
 
-/** Tombstones the row so the delete reaches other devices. Idempotent. */
+/**
+ * Tombstones the row so the delete reaches other devices. Idempotent — and a
+ * repeat hands back the rev of the tombstone that is already there rather than
+ * nothing: the caller records that rev, and re-creating the note later uploads
+ * on top of the tombstone instead of colliding with it and taking a conflict.
+ */
 export async function softDelete(userId: string, relPath: string): Promise<{ rev: number } | null> {
   const { rows } = await pool.query(
     `update note
@@ -174,5 +179,11 @@ export async function softDelete(userId: string, relPath: string): Promise<{ rev
     returning rev`,
     [userId, relPath],
   );
-  return rows[0] ? { rev: Number(rows[0].rev) } : null;
+  if (rows[0]) return { rev: Number(rows[0].rev) };
+
+  const { rows: existing } = await pool.query(
+    `select rev from note where user_id = $1 and rel_path = $2`,
+    [userId, relPath],
+  );
+  return existing[0] ? { rev: Number(existing[0].rev) } : null;
 }

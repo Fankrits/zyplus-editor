@@ -26,7 +26,7 @@ import {
   type TabState,
 } from "../../state/workspaceStore";
 import { saveDocument, saveFileAs, revealPath } from "../../lib/fs";
-import { REVEAL_LABEL } from "../../lib/platform";
+import { isNativeApp, REVEAL_LABEL } from "../../lib/platform";
 import {
   ContextMenu,
   useContextMenu,
@@ -234,7 +234,9 @@ export function TabBar({
           onSelect: () => handleCloseOthers(id),
         },
         { key: "close-all", label: "Close All", icon: MultiplicationSignIcon, onSelect: () => handleCloseAll() },
-        { key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => revealPath(tab.filePath) },
+        ...(isNativeApp
+          ? [{ key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => revealPath(tab.filePath) }]
+          : []),
         {
           key: "copy-path",
           label: "Copy Path",
@@ -290,12 +292,9 @@ export function TabBar({
           onSelect: () =>
             import("../../lib/exportPdf").then((m) => m.exportPdf(activeTab.title, activeTab.content)),
         },
-        {
-          key: "reveal",
-          label: REVEAL_LABEL,
-          icon: FolderOpenIcon,
-          onSelect: () => revealPath(activeTab.filePath),
-        },
+        ...(isNativeApp
+          ? [{ key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => revealPath(activeTab.filePath) }]
+          : []),
       ];
       actionsMenu.open(e, items);
     },

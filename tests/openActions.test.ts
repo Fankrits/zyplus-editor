@@ -1,20 +1,10 @@
 import { describe, it, expect } from "bun:test";
-import { openFileDialog, openFolderDialog, readTextFile } from "../src/lib/fs";
+import { openFolderDialog, WEB_ROOT } from "../src/lib/fs";
 import { workspaceReducer, type WorkspaceState, type TabState } from "../src/state/workspaceStore";
 
 describe("open actions & workspace transitions", () => {
-  it("openFileDialog returns mock path when not in Tauri environment", async () => {
-    const file = await openFileDialog();
-    expect(file).toBe("/demo-workspace/README.md");
-    if (file) {
-      const content = await readTextFile(file);
-      expect(content).toContain("Tauri + React + Typescript");
-    }
-  });
-
-  it("openFolderDialog returns mock root path when not in Tauri environment", async () => {
-    const folder = await openFolderDialog();
-    expect(folder).toBe("/demo-workspace");
+  it("openFolderDialog returns the web notes folder when not in Tauri environment", async () => {
+    expect(await openFolderDialog()).toBe(WEB_ROOT);
   });
 
   it("opening an external file adds a new tab and focuses it", () => {

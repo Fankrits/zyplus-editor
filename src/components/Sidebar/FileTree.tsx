@@ -35,7 +35,7 @@ import {
   type ContextMenuItem,
   type ContextMenuOrigin,
 } from "../ContextMenu";
-import { REVEAL_LABEL } from "../../lib/platform";
+import { isNativeApp, REVEAL_LABEL } from "../../lib/platform";
 
 interface FileTreeProps {
   onOpenFile: (path: string, name: string) => void;
@@ -172,8 +172,10 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
       if (isFile) {
         items.push({ key: "duplicate", label: "Duplicate", icon: Copy01Icon, onSelect: () => handleDuplicate(node) });
       }
+      if (isNativeApp) {
+        items.push({ key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => fs.revealPath(node.data.id) });
+      }
       items.push(
-        { key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => fs.revealPath(node.data.id) },
         {
           key: "copy-path",
           label: "Copy Path",

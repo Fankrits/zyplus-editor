@@ -73,7 +73,9 @@ class ExtensionManager {
 
     const enabledIds = new Set(this.getEnabledIds());
 
-    for (const manifest of EXTENSION_CATALOG) {
+    // Each extension is independent, so they start together rather than the
+    // second waiting on the first one's bundle to download and evaluate.
+    await Promise.all(EXTENSION_CATALOG.map(async (manifest) => {
       const isInstalled = await isExtensionInstalledLocally(manifest.id);
       if (isInstalled && enabledIds.has(manifest.id)) {
         try {
@@ -98,7 +100,7 @@ class ExtensionManager {
           status: "uninstalled",
         });
       }
-    }
+    }));
 
     this.notify();
   }

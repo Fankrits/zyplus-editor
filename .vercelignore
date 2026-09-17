@@ -1,0 +1,14 @@
+# The web build needs the frontend and nothing else: the desktop shell, the sync
+# API (hosted on Railway) and the extension bundles all deploy elsewhere.
+# Leading slashes matter — a bare "extensions" would also drop src/extensions.
+/src-tauri
+/server
+/extensions
+/scripts
+/tests
+/docs
+/Casks
+/dist
+/install.sh
+/install.ps1
+/compose.yaml

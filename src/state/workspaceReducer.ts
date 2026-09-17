@@ -192,34 +192,42 @@ export async function restoreWorkspaceFromSession(
 ): Promise<WorkspaceState | null> {
   if (!stored || (stored.roots.length === 0 && stored.tabs.length === 0)) return null;
 
-  const roots: string[] = [];
-  const tree: TreeNode[] = [];
-  for (const root of stored.roots) {
-    try {
-      tree.push(await fsApi.readProjectNode(root));
-      roots.push(root);
-    } catch {
-      // Project folder is gone or unreadable — drop it silently.
-    }
-  }
+  // Every folder and every open file is read at once. In series this was the
+  // longest thing between launching the app and seeing it, and each read waits
+  // on the disk rather than on the one before it. `Promise.all` keeps the order,
+  // so the sidebar and the tab bar still come back as the user left them.
+  const [rootResults, tabResults] = await Promise.all([
+    // A project folder that is gone or unreadable is dropped silently.
+    Promise.all(
+      stored.roots.map((root) =>
+        fsApi.readProjectNode(root).then(
+          (node) => ({ root, node }),
+          () => null,
+        ),
+      ),
+    ),
+    // As is a tab whose file was deleted or moved while the app was closed.
+    Promise.all(
+      stored.tabs.map((tab) =>
+        fsApi.readTextFile(tab.filePath).then(
+          (content): TabState => ({
+            id: tab.filePath,
+            filePath: tab.filePath,
+            title: basenameOf(tab.filePath),
+            content,
+            savedContent: content,
+            isDirty: false,
+            mode: tab.mode,
+          }),
+          () => null,
+        ),
+      ),
+    ),
+  ]);
 
-  const tabs: TabState[] = [];
-  for (const tab of stored.tabs) {
-    try {
-      const content = await fsApi.readTextFile(tab.filePath);
-      tabs.push({
-        id: tab.filePath,
-        filePath: tab.filePath,
-        title: basenameOf(tab.filePath),
-        content,
-        savedContent: content,
-        isDirty: false,
-        mode: tab.mode,
-      });
-    } catch {
-      // Gracefully skip tab if reading failed (e.g. file deleted/moved)
-    }
-  }
+  const roots = rootResults.filter((r) => r !== null).map((r) => r.root);
+  const tree = rootResults.filter((r) => r !== null).map((r) => r.node);
+  const tabs = tabResults.filter((t) => t !== null);
 
   let activeTabId: string | null = null;
   if (stored.activeFilePath && tabs.some((t) => t.id === stored.activeFilePath)) {
