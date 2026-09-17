@@ -169,13 +169,26 @@ class StorageFullError extends Error {}
  * edits go up either way: the holder's `scanLocal` finds them on its next pull.
  */
 let releaseSyncLock: (() => void) | null = null;
-let lockWait: AbortController | null = null;
 
 /**
  * Writes made by sync itself must not bounce straight back as uploads, so the
  * change listener stands down while remote content is being applied.
  */
 let isApplyingRemote = false;
+
+/**
+ * Runs `write` with the change listener stood down. It wraps the writes alone:
+ * holding the flag across a download let a save the user made in that window be
+ * dropped instead of queued.
+ */
+async function applyingRemote<T>(write: () => Promise<T>): Promise<T> {
+  isApplyingRemote = true;
+  try {
+    return await write();
+  } finally {
+    isApplyingRemote = false;
+  }
+}
 
 let status: SyncStatus = { state: "off", lastSyncedAt: null, error: null };
 const statusListeners = new Set<(s: SyncStatus) => void>();
@@ -341,18 +354,15 @@ async function flush(): Promise<void> {
 /* --- pull --- */
 
 async function writeConflictCopy(relPath: string, content: string): Promise<void> {
-  isApplyingRemote = true;
-  try {
-    let candidate = conflictName(relPath, new Date());
-    for (let n = 1; n < 50 && (await pathExists(toAbsPath(root!, candidate))); n++) {
-      candidate = conflictName(relPath, new Date(), n);
-    }
-    const abs = toAbsPath(root!, candidate);
+  let candidate = conflictName(relPath, new Date());
+  for (let n = 1; n < 50 && (await pathExists(toAbsPath(root!, candidate))); n++) {
+    candidate = conflictName(relPath, new Date(), n);
+  }
+  const abs = toAbsPath(root!, candidate);
+  await applyingRemote(async () => {
     await ensureFolder(parentOf(abs));
     await writeTextFile(abs, content);
-  } finally {
-    isApplyingRemote = false;
-  }
+  });
 }
 
 async function fetchContent(relPath: string): Promise<string> {
@@ -434,26 +444,16 @@ export async function pull(): Promise<void> {
       knownHash: known?.hash ?? null,
     });
 
-    // The flag is held around the writes only. Holding it across a download let
-    // a save the user made in that window be dropped instead of queued.
     if (action === "download") {
       const content = await fetchContent(note.relPath);
-      isApplyingRemote = true;
-      try {
+      await applyingRemote(async () => {
         await ensureFolder(parentOf(abs));
         await writeTextFile(abs, content);
-      } finally {
-        isApplyingRemote = false;
-      }
+      });
       manifest.files[note.relPath] = { hash: await hashOf(content), rev: note.rev };
       changed.push(abs);
     } else if (action === "delete") {
-      isApplyingRemote = true;
-      try {
-        await deletePath(abs, false);
-      } finally {
-        isApplyingRemote = false;
-      }
+      await applyingRemote(() => deletePath(abs, false));
       manifest.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
       changed.push(abs);
     } else if (action === "conflict" || action === "keep-local") {
@@ -529,13 +529,14 @@ export async function startSync(folder: string | null, userId: string | null): P
     return;
   }
 
-  const wait = new AbortController();
-  lockWait = wait;
   // Replaced by `begin` the moment the lock is ours, which is immediately unless
   // another tab is already syncing this folder.
   setStatus({ state: "waiting", error: null });
+  // A request this window no longer wants is left in the queue rather than
+  // cancelled: when its turn comes the generation no longer matches, so it
+  // returns at once and the lock passes straight to whoever is next in line.
   void navigator.locks
-    .request("zyplus:sync", { signal: wait.signal }, async () => {
+    .request("zyplus:sync", async () => {
       if (generation !== mine) return; // stopped while waiting in line
       await begin();
       if (generation !== mine) return; // stopped while starting up
@@ -543,18 +544,13 @@ export async function startSync(folder: string | null, userId: string | null): P
         releaseSyncLock = release;
       });
     })
-    .catch(() => {
-      // `stopSync` aborted the wait, which rejects the request. Nothing to undo.
-    });
+    .catch((err) => console.warn("Could not take the sync lock:", err));
 }
 
 export function stopSync(): void {
   generation++;
-  // One of the two applies: the lock is held, or this window is still in line.
   releaseSyncLock?.();
   releaseSyncLock = null;
-  lockWait?.abort();
-  lockWait = null;
   setLocalChangeListener(null);
   window.removeEventListener("focus", onFocus);
   if (pushTimer) clearTimeout(pushTimer);
