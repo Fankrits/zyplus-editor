@@ -19,6 +19,14 @@ const PUSH_DEBOUNCE_MS = 2000;
 const PULL_INTERVAL_MS = 60 * 1000;
 
 /**
+ * How often the folder is re-hashed to find edits made outside the app. The pull
+ * itself is one small request, but the scan reads and hashes every note, so at
+ * the pull interval it would be the app's biggest idle cost. Coming back to the
+ * window resets it, which is when an outside edit has actually just happened.
+ */
+const SCAN_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
  * What this device believes the server holds. Lives inside the synced folder so
  * that reinstalling the app — or moving the folder to a new machine alongside
  * its files — does not make every file look locally edited and produce a
@@ -146,6 +154,7 @@ let pending = new Set<string>();
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let pullTimer: ReturnType<typeof setInterval> | null = null;
 let inFlight: Promise<void> | null = null;
+let lastScanAt = 0;
 
 /**
  * Bumped by every `startSync`/`stopSync`. `startSync` awaits the manifest, and
@@ -411,7 +420,10 @@ async function scanLocal(): Promise<void> {
 export async function pull(): Promise<void> {
   if (!root || !manifest || !isSignedIn()) return;
   setStatus({ state: "syncing" });
-  await scanLocal();
+  if (Date.now() - lastScanAt >= SCAN_INTERVAL_MS) {
+    await scanLocal();
+    lastScanAt = Date.now();
+  }
 
   const res = await authFetch(`/api/notes?since=${manifest.cursor}`);
   if (!res.ok) throw new Error(`Sync list failed (${res.status})`);
@@ -494,6 +506,8 @@ export function syncNow(): Promise<void> {
 }
 
 function onFocus(): void {
+  // Back in the window is exactly when someone has been editing elsewhere.
+  lastScanAt = 0;
   void syncNow();
 }
 
@@ -560,5 +574,6 @@ export function stopSync(): void {
   root = null;
   manifest = null;
   pending = new Set();
+  lastScanAt = 0;
   setStatus({ state: "off", lastSyncedAt: null, error: null });
 }

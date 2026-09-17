@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button, Drawer, Input, Label, Modal, TextField } from "@heroui/react";
@@ -16,7 +16,12 @@ import { Sidebar, SidebarContent } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { Welcome } from "./components/Welcome";
-import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import type { SettingsSection } from "./components/SettingsModal";
+
+/** Settings is a modal nobody has open at launch, so it and its panels load on first use. */
+const SettingsModal = lazy(() =>
+  import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })),
+);
 import { extensionManager } from "./extensions/extensionManager";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
@@ -47,6 +52,9 @@ function AppShell() {
   const [createTargetDir, setCreateTargetDir] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  // Latches on first open: the modal's chunk is fetched then, and stays mounted after.
+  const settingsEverOpened = useRef(false);
+  if (settingsSection !== null) settingsEverOpened.current = true;
 
   useEffect(() => {
     extensionManager.initialize();
@@ -318,12 +326,17 @@ function AppShell() {
         </Drawer>
       )}
 
-      <SettingsModal
-        isOpen={settingsSection !== null}
-        section={settingsSection ?? "general"}
-        onSectionChange={setSettingsSection}
-        onClose={() => setSettingsSection(null)}
-      />
+      {/* Kept mounted once opened, so closing still animates. */}
+      {settingsEverOpened.current && (
+        <Suspense fallback={null}>
+          <SettingsModal
+            isOpen={settingsSection !== null}
+            section={settingsSection ?? "general"}
+            onSectionChange={setSettingsSection}
+            onClose={() => setSettingsSection(null)}
+          />
+        </Suspense>
+      )}
 
       <Modal>
         <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>

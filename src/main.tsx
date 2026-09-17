@@ -7,11 +7,11 @@ import { initWebFs } from "./lib/fs";
 
 applyTheme();
 
-// The stored bearer token has to be in memory before the first session check,
-// otherwise the app renders signed-out and never re-checks.
-await initAuth();
-// The web build's notes load from browser storage, and the first render reads them.
-await initWebFs();
+// Both have to finish before the first render — the token so the session check
+// sees it rather than rendering signed-out forever, the notes because the first
+// render reads them — but neither waits on the other, and run in series they made
+// the window wait for a keychain read and an IndexedDB open one after the other.
+await Promise.all([initAuth(), initWebFs()]);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
