@@ -57,7 +57,15 @@ function AppShell() {
   if (settingsSection !== null) settingsEverOpened.current = true;
 
   useEffect(() => {
-    extensionManager.initialize();
+    // Waits for the first idle moment. Activating an installed extension means
+    // evaluating its bundle — Mermaid's is several megabytes — and doing that the
+    // instant the app mounts puts it in a race with the editor the user is
+    // actually waiting for. Nothing on screen depends on it until a code block
+    // needs rendering. `requestIdleCallback` is missing from older WebKit, where
+    // a short timeout is close enough.
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 200));
+    const handle = idle(() => void extensionManager.initialize());
+    return () => window.cancelIdleCallback?.(handle as number);
   }, []);
 
   useEffect(() => {

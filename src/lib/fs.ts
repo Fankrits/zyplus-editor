@@ -229,21 +229,21 @@ async function freePath(dir: string, name: string, label = ""): Promise<string> 
 /** Reads a directory tree top to bottom, skipping dotfiles/dot-directories. */
 export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
   const entries = isTauri() ? await readDir(dirPath) : webReadDir(dirPath);
-  const nodes: TreeNode[] = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const path = await joinPath(dirPath, entry.name);
-    if (entry.isDirectory) {
-      nodes.push({
-        id: path,
-        name: entry.name,
-        isFolder: true,
-        children: await readDirRecursive(path),
-      });
-    } else {
-      nodes.push({ id: path, name: entry.name, isFolder: false });
-    }
-  }
+  // Subfolders are read together rather than one after another: a tree three
+  // levels deep used to cost the sum of every folder in it, in series, and this
+  // runs at startup and again after every sync pull that touched anything.
+  // ponytail: no concurrency cap — a notebook's worth of folders is fine; a disk
+  // with thousands would want one.
+  const nodes = await Promise.all(
+    entries
+      .filter((entry) => !entry.name.startsWith("."))
+      .map(async (entry): Promise<TreeNode> => {
+        const path = displayJoin(dirPath, entry.name);
+        return entry.isDirectory
+          ? { id: path, name: entry.name, isFolder: true, children: await readDirRecursive(path) }
+          : { id: path, name: entry.name, isFolder: false };
+      }),
+  );
   nodes.sort((a, b) => {
     if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
     return a.name.localeCompare(b.name);
@@ -260,9 +260,14 @@ export async function readProjectNode(dirPath: string): Promise<TreeNode> {
 export const DEFAULT_FOLDER_NAME = "Zyplus";
 
 /**
- * Joins for display only, using the separator `parent` already uses — Windows
- * hands back `C:\\Users\\me\\Documents`, and pasting a "/" onto that renders a
- * path the user has never seen. Real paths still go through Tauri's `join`.
+ * Joins a parent and one child name using the separator `parent` already uses —
+ * Windows hands back `C:\\Users\\me\\Documents`, and pasting a "/" onto that
+ * renders a path the user has never seen.
+ *
+ * This is the one to reach for when walking a directory. `joinPath` is Tauri's
+ * `join`, which is native IPC: a round trip per call, and reading a tree of a
+ * few hundred notes made one per file. A child of a directory the OS just handed
+ * us needs no normalising, so the string concatenation is both correct and free.
  */
 export function displayJoin(parent: string, name: string): string {
   const sep = parent.includes("\\") && !parent.includes("/") ? "\\" : "/";
