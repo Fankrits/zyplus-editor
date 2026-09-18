@@ -6,7 +6,7 @@ import {
   removeExtensionCss,
   saveExtensionFiles,
 } from "./loader";
-import type { ExtensionRuntime, ExtensionState } from "./types";
+import type { ExtensionManifest, ExtensionRuntime, ExtensionState } from "./types";
 
 const ENABLED_STORAGE_KEY = "zyplus:enabled-extensions";
 
@@ -17,6 +17,7 @@ class ExtensionManager {
   private activeRuntimes: Map<string, ExtensionRuntime> = new Map();
   private listeners: Set<Listener> = new Set();
   private isInitialized = false;
+  private loading: Map<string, Promise<ExtensionRuntime>> = new Map();
 
   constructor() {
     for (const manifest of EXTENSION_CATALOG) {
@@ -67,42 +68,52 @@ class ExtensionManager {
     }
   }
 
+  /**
+   * Only works out what is installed, for the settings list. Evaluating a bundle
+   * (Mermaid's is several megabytes) waits until a code block first asks for it,
+   * so a session that never shows a diagram never pays for one.
+   */
   public async initialize(): Promise<void> {
     if (this.isInitialized) return;
     this.isInitialized = true;
 
     const enabledIds = new Set(this.getEnabledIds());
-
-    // Each extension is independent, so they start together rather than the
-    // second waiting on the first one's bundle to download and evaluate.
     await Promise.all(EXTENSION_CATALOG.map(async (manifest) => {
-      const isInstalled = await isExtensionInstalledLocally(manifest.id);
-      if (isInstalled && enabledIds.has(manifest.id)) {
-        try {
-          const runtime = await loadExtensionModule(manifest);
-          this.activeRuntimes.set(manifest.id, runtime);
-          this.states.set(manifest.id, {
-            manifest,
-            status: "installed",
-          });
-        } catch (err) {
-          console.error(`Failed to activate extension ${manifest.id}:`, err);
-          this.states.set(manifest.id, {
+      if (this.states.get(manifest.id)?.status !== "uninstalled") return;
+      const isInstalled = enabledIds.has(manifest.id) && (await isExtensionInstalledLocally(manifest.id));
+      if (isInstalled) this.states.set(manifest.id, { manifest, status: "installed" });
+    }));
+
+    this.notify();
+  }
+
+  /** Evaluates an extension's bundle once; concurrent callers share the load. */
+  private load(manifest: ExtensionManifest): Promise<ExtensionRuntime> {
+    const { id } = manifest;
+    let pending = this.loading.get(id);
+    if (pending) return pending;
+    pending = loadExtensionModule(manifest).then(
+      (runtime) => {
+        // Uninstalled while it was loading.
+        if (this.loading.get(id) === pending) this.activeRuntimes.set(id, runtime);
+        return runtime;
+      },
+      (err) => {
+        if (this.loading.get(id) === pending) {
+          this.loading.delete(id);
+          console.error(`Failed to activate extension ${id}:`, err);
+          this.states.set(id, {
             manifest,
             status: "error",
             errorMessage: err instanceof Error ? err.message : String(err),
           });
+          this.notify();
         }
-      } else {
-        // Not installed or not enabled
-        this.states.set(manifest.id, {
-          manifest,
-          status: "uninstalled",
-        });
-      }
-    }));
-
-    this.notify();
+        throw err;
+      },
+    );
+    this.loading.set(id, pending);
+    return pending;
   }
 
   public async downloadAndInstall(id: string): Promise<void> {
@@ -150,9 +161,9 @@ class ExtensionManager {
       // 3. Save to local disk under $APP_DATA/extensions/<id>/
       await saveExtensionFiles(id, jsCode, cssCode);
 
-      // 4. Dynamically load runtime
-      const runtime = await loadExtensionModule(manifest);
-      this.activeRuntimes.set(id, runtime);
+      // 4. Dynamically load runtime (fresh, in case an older copy was loaded)
+      this.loading.delete(id);
+      await this.load(manifest);
 
       // 5. Persist enabled state
       const current = new Set(this.getEnabledIds());
@@ -192,6 +203,7 @@ class ExtensionManager {
       }
     }
     this.activeRuntimes.delete(id);
+    this.loading.delete(id);
     removeExtensionCss(id);
 
     // 2. Completely remove files from user's disk
@@ -214,13 +226,24 @@ class ExtensionManager {
     language: string,
   ): ExtensionRuntime["renderCodeBlockPreview"] | null {
     const normalizedLang = language.trim().toLowerCase();
-    for (const [id, runtime] of this.activeRuntimes.entries()) {
-      const manifest = getManifestById(id);
-      if (manifest && manifest.languages.includes(normalizedLang) && runtime.renderCodeBlockPreview) {
-        return runtime.renderCodeBlockPreview.bind(runtime);
-      }
-    }
-    return null;
+    const manifest = EXTENSION_CATALOG.find((m) => m.languages.includes(normalizedLang));
+    if (!manifest) return null;
+    const runtime = this.activeRuntimes.get(manifest.id);
+    if (runtime) return runtime.renderCodeBlockPreview?.bind(runtime) ?? null;
+    // The enabled list is synchronous, so a block rendered before initialize()
+    // has run still gets its preview instead of none until it is next edited.
+    if (!this.getEnabledIds().includes(manifest.id)) return null;
+    return (lang, content, applyPreview) => {
+      this.load(manifest).then(
+        (rt) => {
+          const result = rt.renderCodeBlockPreview?.(lang, content, applyPreview);
+          if (result !== undefined) applyPreview(result);
+        },
+        () => applyPreview(null),
+      );
+      // Undefined tells Milkdown the preview arrives later through applyPreview.
+      return undefined;
+    };
   }
 }
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { ASSET_REF, EXTENSION_CATALOG, formatBytes } from "../src/extensions/catalog";
 import { extensionManager } from "../src/extensions/extensionManager";
-import { isExtensionInstalledLocally } from "../src/extensions/loader";
+import { isExtensionInstalledLocally, saveExtensionFiles } from "../src/extensions/loader";
 
 describe("Extension System", () => {
   beforeEach(async () => {
@@ -115,6 +115,34 @@ describe("Extension System", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  // Mermaid's real bundle is megabytes; evaluating it at every launch cost time
+  // and memory for sessions that never show a diagram.
+  it("evaluates an installed bundle only when a code block first needs it", async () => {
+    const g = globalThis as unknown as { __mermaidEvals?: number };
+    g.__mermaidEvals = 0;
+    await saveExtensionFiles(
+      "mermaid",
+      `globalThis.__mermaidEvals++;
+       export default () => ({ id: "mermaid", renderCodeBlockPreview: () => "<svg>lazy</svg>" });`,
+    );
+    localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["mermaid"]));
+
+    await extensionManager.initialize();
+    expect(extensionManager.getState("mermaid")?.status).toBe("installed");
+    expect(g.__mermaidEvals).toBe(0);
+
+    const preview = await new Promise((resolve) => {
+      const result = extensionManager.getPreviewRenderer("mermaid")?.("mermaid", "graph TD", resolve);
+      expect(result).toBeUndefined();
+    });
+    expect(preview).toBe("<svg>lazy</svg>");
+    expect(g.__mermaidEvals).toBe(1);
+
+    // Loaded once, then rendered synchronously.
+    expect(extensionManager.getPreviewRenderer("mermaid")?.("mermaid", "graph TD", () => {})).toBe("<svg>lazy</svg>");
+    expect(g.__mermaidEvals).toBe(1);
   });
 
   it("should handle download failures cleanly without leaving corrupted state", async () => {
