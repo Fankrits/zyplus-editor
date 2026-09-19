@@ -13,8 +13,8 @@ cask "zyplus" do
   app "Zyplus.app"
   binary "#{appdir}/Zyplus.app/Contents/MacOS/zyplus-editor", target: "zyplus"
 
+  # Application Support is left alone: it holds the user's notes (Zyplus/).
   zap trash: [
-    "~/Library/Application Support/com.fankrits.zyplus-editor",
     "~/Library/Caches/com.fankrits.zyplus-editor",
     "~/Library/Preferences/com.fankrits.zyplus-editor.plist",
     "~/Library/Saved Application State/com.fankrits.zyplus-editor.savedState",

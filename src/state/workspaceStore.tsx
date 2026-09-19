@@ -12,7 +12,6 @@ import {
 import {
   basenameOf,
   createDefaultFolder,
-  defaultFolderParent,
   openFileDialog,
   joinPath,
   openFolderDialog,
@@ -157,7 +156,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       // Welcome screen is left as the fallback if this can't be written.
       if (!stored?.defaultFolder && !stored?.roots.length && !stored?.tabs.length) {
         try {
-          const folder = await createDefaultFolder(await defaultFolderParent());
+          const folder = await createDefaultFolder();
           // Reinstalls reuse an existing folder, so never clobber a Welcome.md
           // the user has already edited.
           const notePath = await joinPath(folder, WELCOME_NOTE_NAME);

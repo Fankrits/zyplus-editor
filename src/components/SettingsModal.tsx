@@ -13,7 +13,7 @@ import {
   Delete02Icon,
   AlertCircleIcon,
 } from "@hugeicons/core-free-icons";
-import { useWorkspaceActions, useWorkspaceSession, useWorkspaceTree } from "../state/workspaceStore";
+import { useWorkspaceActions, useWorkspaceSession } from "../state/workspaceStore";
 import * as fs from "../lib/fs";
 import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL } from "../lib/shortcuts";
@@ -95,9 +95,8 @@ export function SettingsModal({
   section?: SectionId;
   onSectionChange?: (section: SectionId) => void;
 }) {
-  const state = useWorkspaceTree();
   const { defaultFolder, isAutosaveEnabled } = useWorkspaceSession();
-  const { dispatch, setDefaultFolder, setIsAutosaveEnabled } = useWorkspaceActions();
+  const { setIsAutosaveEnabled } = useWorkspaceActions();
   const [localSection, setLocalSection] = useState<SectionId>("general");
   const section = controlledSection ?? localSection;
   const setSection = onSectionChange ?? setLocalSection;
@@ -108,19 +107,6 @@ export function SettingsModal({
   const pickTheme = (next: Theme) => {
     setTheme(next);
     setThemeState(next);
-  };
-
-  const pickDefaultFolder = async () => {
-    const picked = await fs.openFolderDialog();
-    if (!picked) return;
-    // Read first: a folder that cannot be read must not become the default.
-    if (!state.roots.includes(picked)) {
-      const opened = await fs.tryFs("Could not open folder", picked, async () => {
-        dispatch({ type: "ADD_ROOT", rootPath: picked, node: await fs.readProjectNode(picked) });
-      });
-      if (!opened) return;
-    }
-    setDefaultFolder(picked);
   };
 
   // The OS is the source of truth: another app may have taken .md since last time.
@@ -180,7 +166,7 @@ export function SettingsModal({
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm">
                   {section === "general" && (
                     <div className="flex flex-col gap-5">
-                      <Field label="Default folder" hint="Where new files land when nothing is open.">
+                      <Field label="Notes folder" hint="Where new files land when nothing is open. Synced when you're signed in.">
                         <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
                           <HugeiconsIcon icon={FolderOpenIcon} size={16} className="shrink-0 text-muted" />
                           <span
@@ -189,9 +175,9 @@ export function SettingsModal({
                           >
                             {defaultFolder ?? "Not set"}
                           </span>
-                          {isNativeApp && (
-                            <Button size="sm" variant="secondary" onPress={pickDefaultFolder}>
-                              Change
+                          {isNativeApp && defaultFolder && (
+                            <Button size="sm" variant="secondary" onPress={() => fs.revealPath(defaultFolder)}>
+                              {isMac ? "Show in Finder" : "Show"}
                             </Button>
                           )}
                         </div>

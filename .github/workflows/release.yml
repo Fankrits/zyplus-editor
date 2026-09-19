@@ -52,6 +52,27 @@ jobs:
 
       - run: bun install
 
+      # A stable signature so macOS keeps Files & Folders grants across updates
+      # (see scripts/make-signing-cert.sh). Skipped when the secret is absent.
+      - name: Import macOS signing identity
+        if: startsWith(matrix.platform, 'macos-')
+        env:
+          CERT: ${{ secrets.MACOS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+        run: |
+          [ -n "$CERT" ] || { echo "MACOS_SIGNING_CERT not set; building ad-hoc signed"; exit 0; }
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PASS=$(openssl rand -hex 16)
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KC_PASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PASS" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "APPLE_SIGNING_IDENTITY=Zyplus Self-Signed" >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
