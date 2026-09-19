@@ -270,4 +270,14 @@ describe("sync engine", () => {
     expect(await notesIn("/A")).toEqual(["notes.md"]);
     expect(rows.get("notes.md")).toMatchObject({ content: "still wanted", deleted: false });
   });
+
+  it("a sync stopped mid-run bails quietly instead of reporting an error", async () => {
+    rows.set("n.md", { content: "remote", rev: ++seq, deleted: false });
+    await sync.startSync("/A", USER);
+    const running = sync.syncNow();
+    sync.stopSync();
+    await running;
+    expect(sync.getStatus().state).toBe("off");
+    expect(await fs.pathExists("/A/n.md")).toBe(false);
+  });
 });

@@ -154,6 +154,7 @@ let pending = new Set<string>();
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 let pullTimer: ReturnType<typeof setInterval> | null = null;
 let inFlight: Promise<void> | null = null;
+let inFlightGeneration = -1;
 let lastScanAt = 0;
 
 /**
@@ -166,6 +167,18 @@ let generation = 0;
 
 /** An upload the server refused because the account is out of storage. */
 class StorageFullError extends Error {}
+
+/** Thrown into a run that `stopSync` cancelled while it was awaiting. */
+class SyncStopped extends Error {}
+
+/**
+ * Called after every await in a run. `stopSync` nulls the folder and manifest
+ * underneath it, and a quick `startSync` installs another account's — so a
+ * cancelled run has to stop before it touches either, not crash into them.
+ */
+function ensureCurrent(mine: number): void {
+  if (generation !== mine) throw new SyncStopped();
+}
 
 /**
  * Held for as long as this window is the one syncing, and dropped by `stopSync`
@@ -288,7 +301,7 @@ function handleLocalChange(absPath: string): void {
   queue(rel);
 }
 
-async function pushOne(relPath: string): Promise<void> {
+async function pushOne(relPath: string, mine: number): Promise<void> {
   const abs = toAbsPath(root!, relPath);
   const known = manifest!.files[relPath];
 
@@ -298,6 +311,7 @@ async function pushOne(relPath: string): Promise<void> {
     });
     if (!res.ok) throw new Error(`Delete of ${relPath} failed (${res.status})`);
     const { rev } = (await res.json()) as { rev: number };
+    ensureCurrent(mine);
     // Remember the tombstone rather than forgetting the path. Re-creating a note
     // with the same name then uploads on top of the tombstone; forgetting it made
     // the upload start from rev 0, collide with the tombstone, and leave an empty
@@ -320,6 +334,7 @@ async function pushOne(relPath: string): Promise<void> {
     // wins; the server's copy is preserved beside it and the upload is retried
     // on top of the revision that beat us.
     const loser = (await res.json()) as { rev: number; content: string };
+    ensureCurrent(mine);
     await writeConflictCopy(relPath, loser.content);
     res = await send(loser.rev);
   }
@@ -327,12 +342,15 @@ async function pushOne(relPath: string): Promise<void> {
   if (res.status === 413) throw new StorageFullError(`No storage left for ${relPath}`);
   if (!res.ok) throw new Error(`Upload of ${relPath} failed (${res.status})`);
   const { rev } = (await res.json()) as { rev: number };
-  manifest!.files[relPath] = { hash: await hashOf(content), rev };
+  const hash = await hashOf(content);
+  ensureCurrent(mine);
+  manifest!.files[relPath] = { hash, rev };
 }
 
 /** Uploads everything queued. Only `syncNow` calls this, so it never overlaps a pull. */
 async function flush(): Promise<void> {
   if (!root || !manifest || !isSignedIn() || pending.size === 0) return;
+  const mine = generation;
   const batch = [...pending];
   pending.clear();
   setStatus({ state: "syncing" });
@@ -341,8 +359,9 @@ async function flush(): Promise<void> {
   let storageFull = false;
   for (const relPath of batch) {
     try {
-      await pushOne(relPath);
+      await pushOne(relPath, mine);
     } catch (err) {
+      if (err instanceof SyncStopped) throw err;
       console.warn("Sync push failed for", relPath, err);
       failed.push(relPath);
       if (err instanceof StorageFullError) storageFull = true;
@@ -350,6 +369,7 @@ async function flush(): Promise<void> {
   }
   // A failed upload stays queued and rides along with the next attempt. Nothing
   // needs recovering — disk already holds the content.
+  ensureCurrent(mine);
   for (const relPath of failed) pending.add(relPath);
 
   await saveManifest();
@@ -419,35 +439,43 @@ async function scanLocal(): Promise<void> {
 
 export async function pull(): Promise<void> {
   if (!root || !manifest || !isSignedIn()) return;
+  const mine = generation;
+  const current = () => ensureCurrent(mine);
   setStatus({ state: "syncing" });
   if (Date.now() - lastScanAt >= SCAN_INTERVAL_MS) {
     await scanLocal();
+    current();
     lastScanAt = Date.now();
   }
 
-  const res = await authFetch(`/api/notes?since=${manifest.cursor}`);
+  const res = await authFetch(`/api/notes?since=${manifest!.cursor}`);
   if (!res.ok) throw new Error(`Sync list failed (${res.status})`);
   const { notes } = (await res.json()) as {
     notes: { relPath: string; rev: number; deletedAt: string | null }[];
   };
+  current();
+  // Past every `current()` the run is still the live one, so these are set.
+  const manifestNow = manifest!;
+  const rootNow = root!;
 
   const changed: string[] = [];
 
   for (const note of notes) {
-    const known = manifest.files[note.relPath];
+    const known = manifestNow.files[note.relPath];
 
     // A device's own uploads and deletes come back in this list, because the
     // cursor only moves on a pull. Recognising the revision we already hold is
     // what stops an edit made since from being read as a remote change — which
     // filed a conflict copy of the device's own work on every second save.
     if (known?.rev === note.rev) {
-      manifest.cursor = Math.max(manifest.cursor, note.rev);
+      manifestNow.cursor = Math.max(manifestNow.cursor, note.rev);
       continue;
     }
 
-    const abs = toAbsPath(root, note.relPath);
+    const abs = toAbsPath(rootNow, note.relPath);
     const localExists = await pathExists(abs);
     const localHash = localExists ? await hashOf(await readTextFile(abs)) : null;
+    current();
 
     const action = decidePull({
       remoteDeleted: note.deletedAt !== null,
@@ -458,31 +486,35 @@ export async function pull(): Promise<void> {
 
     if (action === "download") {
       const content = await fetchContent(note.relPath);
+      current();
       await applyingRemote(async () => {
         await ensureFolder(parentOf(abs));
         await writeTextFile(abs, content);
       });
-      manifest.files[note.relPath] = { hash: await hashOf(content), rev: note.rev };
+      manifestNow.files[note.relPath] = { hash: await hashOf(content), rev: note.rev };
       changed.push(abs);
     } else if (action === "delete") {
       await applyingRemote(() => deletePath(abs, false));
-      manifest.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
+      manifestNow.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
       changed.push(abs);
     } else if (action === "conflict" || action === "keep-local") {
       if (action === "conflict") {
-        await writeConflictCopy(note.relPath, await fetchContent(note.relPath));
+        const theirs = await fetchContent(note.relPath);
+        current();
+        await writeConflictCopy(note.relPath, theirs);
         changed.push(abs);
       }
       // Local is still the newer edit, so re-upload it on top of this revision.
       // Recording the rev is what makes that retry land: starting from 0 instead
       // collided with the very row we just read and filed a second conflict copy.
-      manifest.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
+      manifestNow.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
       pending.add(note.relPath);
     }
 
-    manifest.cursor = Math.max(manifest.cursor, note.rev);
+    manifestNow.cursor = Math.max(manifestNow.cursor, note.rev);
   }
 
+  current();
   await saveManifest();
   setStatus({ state: "idle", lastSyncedAt: Date.now(), error: null });
   if (changed.length > 0) for (const cb of pulledListeners) cb(changed);
@@ -490,19 +522,25 @@ export async function pull(): Promise<void> {
 
 /** One pull followed by whatever is queued, never overlapping itself. */
 export function syncNow(): Promise<void> {
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
+  // A run left over from before a restart is on its way out; it is not this one.
+  if (inFlight && inFlightGeneration === generation) return inFlight;
+  const mine = generation;
+  const run = (async () => {
     try {
       await pull();
       await flush();
     } catch (err) {
+      // Stopped mid-run: the status already says "off", or belongs to the next run.
+      if (generation !== mine) return;
       console.warn("Sync failed:", err);
       setStatus({ state: "error", error: err instanceof Error ? err.message : String(err) });
     } finally {
-      inFlight = null;
+      if (inFlightGeneration === mine) inFlight = null;
     }
   })();
-  return inFlight;
+  inFlight = run;
+  inFlightGeneration = mine;
+  return run;
 }
 
 function onFocus(): void {
@@ -563,6 +601,8 @@ export async function startSync(folder: string | null, userId: string | null): P
 
 export function stopSync(): void {
   generation++;
+  // The run in progress bails at its next await; nothing should wait on it.
+  inFlight = null;
   releaseSyncLock?.();
   releaseSyncLock = null;
   setLocalChangeListener(null);
