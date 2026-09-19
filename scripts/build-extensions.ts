@@ -35,20 +35,40 @@ async function buildExtensions() {
     process.exit(1);
   }
 
-  console.log("Preparing KaTeX CSS bundle with web fonts...");
-  const katexCssPath = path.resolve(
-    import.meta.dirname,
-    "../node_modules/katex/dist/katex.min.css",
-  );
-  if (fs.existsSync(katexCssPath)) {
-    let cssContent = fs.readFileSync(katexCssPath, "utf-8");
-    // Point relative font URLs to CDN so the extension works standalone without bundled TTF files
-    cssContent = cssContent.replace(
-      /url\(fonts\//g,
-      "url(https://cdn.jsdelivr.net/npm/katex@0.18.6/dist/fonts/",
-    );
-    fs.writeFileSync(path.join(outdir, "katex.css"), cssContent, "utf-8");
+  console.log("Preparing KaTeX CSS bundle with inlined fonts...");
+  const katexDist = path.resolve(import.meta.dirname, "../node_modules/katex/dist");
+  // A missing stylesheet used to be skipped with the build still "successful",
+  // shipping math with no styles at all.
+  const katexCss = fs.readFileSync(path.join(katexDist, "katex.min.css"), "utf-8");
+  // Each @font-face lists woff2, woff and ttf. Every webview the app runs in
+  // reads woff2, so that one is inlined and the rest dropped: math then renders
+  // offline, and the app's CSP needs no font host. ~400 KB, once, at install.
+  let inlined = 0;
+  const cssContent = katexCss.replace(/src:([^;}]+)/g, (_, sources: string) => {
+    const woff2 = /url\(["']?(?:\.\/)?(fonts\/[^"')]+\.woff2)["']?\)/.exec(sources);
+    if (!woff2) return `src:${sources}`;
+    inlined++;
+    const data = fs.readFileSync(path.join(katexDist, woff2[1])).toString("base64");
+    return `src:url(data:font/woff2;base64,${data}) format("woff2")`;
+  });
+  if (inlined === 0 || /url\((?!data:)/.test(cssContent)) {
+    console.error("KaTeX CSS: font URLs were not all inlined; its format may have changed.");
+    process.exit(1);
   }
+  fs.writeFileSync(path.join(outdir, "katex.css"), cssContent, "utf-8");
+
+  // Release builds download these from the repository and run them, so each
+  // build carries the hashes of the exact files at its own commit. Hashed as
+  // text, the way the app hashes what it downloads.
+  const checksums: Record<string, string> = {};
+  for (const name of ["mermaid.js", "katex.js", "katex.css"]) {
+    const text = fs.readFileSync(path.join(outdir, name), "utf-8");
+    checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
+  }
+  fs.writeFileSync(
+    path.resolve(import.meta.dirname, "../src/extensions/checksums.json"),
+    JSON.stringify(checksums, null, 2) + "\n",
+  );
 
   console.log("Extension bundles built successfully in extensions/dist/");
 }

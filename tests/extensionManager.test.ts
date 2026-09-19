@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { ASSET_REF, EXTENSION_CATALOG, formatBytes } from "../src/extensions/catalog";
+import { ASSET_REF, EXTENSION_CATALOG, formatBytes, getManifestById } from "../src/extensions/catalog";
+import { hashOf } from "../src/lib/sync";
 import { extensionManager } from "../src/extensions/extensionManager";
 import { isExtensionInstalledLocally, saveExtensionFiles } from "../src/extensions/loader";
 
@@ -33,7 +34,8 @@ describe("Extension System", () => {
   // branch that had been deleted made Mermaid and KaTeX un-installable in every
   // shipped build, and nothing failed until a user clicked Install.
   it("points every bundle at a ref that exists in the repository", () => {
-    expect(ASSET_REF).toBe("main");
+    // A release tag when built by Vite; `main` for builds that predate pinning.
+    expect(ASSET_REF).toMatch(/^(main|v\d+\.\d+\.\d+.*)$/);
     const urls = EXTENSION_CATALOG.flatMap((e) => [e.downloadUrl, e.cssUrl].filter(Boolean));
     expect(urls.length).toBeGreaterThanOrEqual(3);
     for (const url of urls) {
@@ -64,6 +66,11 @@ describe("Extension System", () => {
         };
       }
     `;
+
+    // The catalog pins the real bundle's hash; this test ships a stand-in.
+    const manifest = getManifestById("mermaid")!;
+    const realHash = manifest.sha256;
+    manifest.sha256 = await hashOf(mockBundleCode);
 
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_url: string | URL | Request) => {
@@ -112,6 +119,21 @@ describe("Extension System", () => {
 
       // Verify renderer deactivated
       expect(extensionManager.getPreviewRenderer("mermaid")).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+      manifest.sha256 = realHash;
+    }
+  });
+
+  // The bundle is fetched from the network and then run with the app's full
+  // privileges; anything but the exact file this build shipped with is refused.
+  it("refuses a bundle whose hash does not match, and keeps nothing of it", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("export default () => ({ id: 'katex' })")) as unknown as typeof fetch;
+    try {
+      await expect(extensionManager.downloadAndInstall("katex")).rejects.toThrow("integrity");
+      expect(extensionManager.getState("katex")?.status).toBe("error");
+      expect(await isExtensionInstalledLocally("katex")).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }

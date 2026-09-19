@@ -7,6 +7,14 @@ import {
   saveExtensionFiles,
 } from "./loader";
 import type { ExtensionManifest, ExtensionRuntime, ExtensionState } from "./types";
+import { hashOf } from "../lib/sync";
+
+/** Downloaded code runs with the app's full privileges, so it has to be the code this build shipped with. */
+async function assertIntact(name: string, text: string, expected: string | undefined): Promise<void> {
+  if (!expected || (await hashOf(text)) !== expected) {
+    throw new Error(`${name} failed its integrity check; it was not installed.`);
+  }
+}
 
 const ENABLED_STORAGE_KEY = "zyplus:enabled-extensions";
 
@@ -134,6 +142,7 @@ class ExtensionManager {
         throw new Error(`Failed to download ${manifest.name}: HTTP ${jsRes.status} ${jsRes.statusText}`);
       }
       const jsCode = await jsRes.text();
+      await assertIntact(manifest.name, jsCode, manifest.sha256);
 
       this.states.set(id, {
         manifest,
@@ -148,6 +157,7 @@ class ExtensionManager {
         const cssRes = await fetch(manifest.cssUrl);
         if (cssRes.ok) {
           cssCode = await cssRes.text();
+          await assertIntact(`${manifest.name} styles`, cssCode, manifest.cssSha256);
         }
       }
 

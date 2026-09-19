@@ -3,6 +3,8 @@ import { act, fireEvent, render } from "@testing-library/react";
 import { WorkspaceProvider } from "../src/state/workspaceStore";
 import { SettingsModal } from "../src/components/SettingsModal";
 import { extensionManager } from "../src/extensions/extensionManager";
+import { getManifestById } from "../src/extensions/catalog";
+import { hashOf } from "../src/lib/sync";
 
 describe("SettingsModal Extensions Tab", () => {
   beforeEach(async () => {
@@ -23,6 +25,11 @@ describe("SettingsModal Extensions Tab", () => {
         };
       }
     `;
+
+    // The catalog pins the real bundle's hash; this test ships a stand-in.
+    const manifest = getManifestById("mermaid")!;
+    const realHash = manifest.sha256;
+    manifest.sha256 = await hashOf(mockBundleCode);
 
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => {
@@ -84,6 +91,7 @@ describe("SettingsModal Extensions Tab", () => {
       expect(extensionManager.getState("mermaid")?.status).toBe("uninstalled");
     } finally {
       globalThis.fetch = originalFetch;
+      manifest.sha256 = realHash;
     }
   });
 });
