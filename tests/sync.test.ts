@@ -14,7 +14,13 @@ import {
  * silent data loss rather than a visible failure.
  */
 describe("decidePull", () => {
-  const base = { remoteDeleted: false, localExists: true, localHash: "a", knownHash: "a" };
+  const base = {
+    remoteDeleted: false,
+    localExists: true,
+    localHash: "a",
+    knownHash: "a",
+    remoteHash: "b" as string | null,
+  };
 
   it("applies a remote edit when the local file is untouched", () => {
     expect(decidePull(base)).toBe("download");
@@ -24,7 +30,7 @@ describe("decidePull", () => {
     expect(decidePull({ ...base, localExists: false, localHash: null })).toBe("download");
   });
 
-  it("keeps both sides when the local file was edited too", () => {
+  it("moves the local edit aside when both sides changed", () => {
     expect(decidePull({ ...base, localHash: "local-edit" })).toBe("conflict");
   });
 
@@ -34,17 +40,25 @@ describe("decidePull", () => {
     expect(decidePull({ ...base, knownHash: null })).toBe("conflict");
   });
 
+  it("never files a conflict when disk already holds the cloud content", () => {
+    // A lost manifest, or the folder copied to a new machine: nothing diverged.
+    expect(decidePull({ ...base, knownHash: null, localHash: "b" })).toBe("adopt");
+    expect(decidePull({ ...base, localHash: "b", knownHash: "old" })).toBe("adopt");
+  });
+
   it("propagates a delete when the local file is untouched", () => {
-    expect(decidePull({ ...base, remoteDeleted: true })).toBe("delete");
+    expect(decidePull({ ...base, remoteDeleted: true, remoteHash: null })).toBe("delete");
   });
 
   it("refuses a delete when the local file was edited since", () => {
-    expect(decidePull({ ...base, remoteDeleted: true, localHash: "local-edit" })).toBe("keep-local");
+    expect(
+      decidePull({ ...base, remoteDeleted: true, remoteHash: null, localHash: "local-edit" }),
+    ).toBe("keep-local");
   });
 
   it("does nothing when a delete arrives for a file already gone", () => {
     expect(
-      decidePull({ ...base, remoteDeleted: true, localExists: false, localHash: null }),
+      decidePull({ ...base, remoteDeleted: true, remoteHash: null, localExists: false, localHash: null }),
     ).toBe("none");
   });
 });

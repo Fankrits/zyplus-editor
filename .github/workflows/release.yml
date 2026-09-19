@@ -22,6 +22,7 @@ jobs:
             args: ""
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -43,7 +44,10 @@ jobs:
         shell: bash
         run: |
           V="${GITHUB_REF_NAME#v}"
-          node -e "for (const f of ['package.json','src-tauri/tauri.conf.json']) { const j=JSON.parse(require('fs').readFileSync(f)); j.version='$V'; require('fs').writeFileSync(f, JSON.stringify(j,null,2)+'\n'); }"
+          # The tag name is text anyone with push access chose; it goes nowhere
+          # near a script until it is known to be a version.
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Not a version tag: $GITHUB_REF_NAME" >&2; exit 1; }
+          V="$V" node -e "for (const f of ['package.json','src-tauri/tauri.conf.json']) { const j=JSON.parse(require('fs').readFileSync(f)); j.version=process.env.V; require('fs').writeFileSync(f, JSON.stringify(j,null,2)+'\n'); }"
           sed -i.bak -e "0,/^version = .*/s//version = \"$V\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
 
       - run: bun install
@@ -64,6 +68,7 @@ jobs:
   cask:
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:

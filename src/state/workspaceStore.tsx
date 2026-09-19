@@ -20,6 +20,7 @@ import {
   readProjectNode,
   readTextFile,
   setStoreChangedListener,
+  tryFs,
   writeTextFile,
 } from "../lib/fs";
 
@@ -122,6 +123,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
   const getState = useCallback(() => stateRef.current, []);
+  const restoreFailed = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -143,15 +145,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             });
           }
         } catch (err) {
+          // The workspace stays empty, but the stored session is kept: writing
+          // the empty one over it would lose every folder and tab for good over
+          // what may be one bad launch. It is replaced once the user opens something.
           console.warn("Failed to restore workspace session:", err);
-          if (!isMounted) return;
-          dispatch({
-            type: "RESTORE_WORKSPACE",
-            roots: [],
-            tree: [],
-            tabs: [],
-            activeTabId: null,
-          });
+          restoreFailed.current = true;
         }
       }
 
@@ -203,6 +201,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const lastPersisted = useRef<string | null>(null);
   useEffect(() => {
     if (!isHydrated) return;
+    if (restoreFailed.current && state.roots.length === 0 && state.tabs.length === 0) return;
+    restoreFailed.current = false;
     const session: PersistedWorkspaceSession = {
       version: 2,
       roots: state.roots,
@@ -256,17 +256,25 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Files can change without this window writing them: a sync pull, or another
   // tab of the web build. Either way the tree and any open tab showing one of
   // them have to catch up. A dirty tab is left alone — the user's own edit is
-  // newer, and their next save pushes it.
+  // newer, and their next save pushes it — unless sync is cloud-first about it:
+  // the cloud replaced the note and its local edit moved to `replaced[path]`.
+  // Then the unsaved buffer follows it there, and the tab shows the cloud copy;
+  // otherwise the next autosave would write the stale edit back over the cloud.
   useEffect(() => {
-    const apply = (changedPaths: string[]) => {
+    const apply = (changedPaths: string[], replaced: Record<string, string> = {}) => {
       void refreshTree();
       for (const path of changedPaths) {
         const tab = stateRef.current.tabs.find((t) => t.filePath === path);
-        if (!tab || tab.isDirty) continue;
+        const copy = replaced[path];
+        if (!tab || (tab.isDirty && !copy)) continue;
         readTextFile(path).then(
           (content) => {
-            dispatch({ type: "UPDATE_TAB_CONTENT", id: tab.id, content });
-            dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id, content });
+            const live = stateRef.current.tabs.find((t) => t.id === tab.id);
+            if (!copy || !live?.isDirty) return dispatch({ type: "RELOAD_TAB", id: tab.id, content });
+            dispatch({ type: "RELOAD_TAB", id: tab.id, content, force: true });
+            writeTextFile(copy, live.content).catch((err) =>
+              console.warn("Could not keep the unsaved edit in", copy, err),
+            );
           },
           // Unreadable means it was deleted, on another device or in another tab.
           () => dispatch({ type: "CLOSE_TABS_UNDER", prefix: path }),
@@ -327,21 +335,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const addFolder = useCallback(async (dir?: string) => {
     const picked = dir ?? (await openFolderDialog());
     if (!picked) return null;
-    try {
-      const node = await readProjectNode(picked);
-      dispatch({ type: "ADD_ROOT", rootPath: picked, node });
-      return picked;
-    } catch (err) {
-      console.error(`Failed to open folder at "${picked}":`, err);
-      return null;
-    }
+    const opened = await tryFs("Could not open folder", picked, async () => {
+      dispatch({ type: "ADD_ROOT", rootPath: picked, node: await readProjectNode(picked) });
+    });
+    return opened ? picked : null;
   }, []);
 
   const openFilePicker = useCallback(async () => {
     const picked = await openFileDialog();
     if (!picked) return null;
-    await openFile(picked);
-    return picked;
+    return (await openFile(picked)) ? picked : null;
   }, [openFile]);
 
   const activeTab = useMemo(

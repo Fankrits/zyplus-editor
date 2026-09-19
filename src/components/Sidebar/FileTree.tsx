@@ -114,9 +114,15 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
   // Keyboard-triggered delete (react-arborist's own Delete/Backspace handling) and the
   // context menu's "Delete" both just queue a confirmation instead of deleting outright.
-  const handleDeleteRequest = useCallback(({ nodes }: { nodes: NodeApi<TreeNode>[] }) => {
-    setPendingDelete(nodes);
-  }, []);
+  // Project roots are never deleted from disk here — the context menu only
+  // offers them "Close Project", and the Delete key must not do more.
+  const handleDeleteRequest = useCallback(
+    ({ nodes }: { nodes: NodeApi<TreeNode>[] }) => {
+      const deletable = nodes.filter((n) => !isRoot(n.data.id));
+      if (deletable.length > 0) setPendingDelete(deletable);
+    },
+    [isRoot],
+  );
 
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;

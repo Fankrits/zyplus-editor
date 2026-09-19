@@ -1,6 +1,10 @@
 # Zyplus installer:  irm https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install.ps1 | iex
 # Or pin a version:  $env:ZYPLUS_VERSION = '0.1.0'
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 may not offer TLS 1.2, which GitHub requires; and its
+# progress bar slows Invoke-WebRequest down by an order of magnitude.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'
 
 $repo = 'Fankrits/zyplus-editor'
 $api = if ($env:ZYPLUS_VERSION) {
@@ -36,6 +40,6 @@ Unblock-File $exe
 
 # /S is the NSIS silent flag; Tauri's installer defaults to a per-user install.
 $p = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
-Remove-Item $exe -Force
+Remove-Item $exe -Force -ErrorAction SilentlyContinue
 if ($p.ExitCode -ne 0) { throw "Installer exited with code $($p.ExitCode)" }
 Write-Host "Installed Zyplus $version."

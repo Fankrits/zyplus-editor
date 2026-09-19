@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useWorkspaceActions, useWorkspaceTabs } from "../../state/workspaceStore";
 import { Wordmark } from "../Logo";
 import { FIND_EVENT } from "../../lib/commands";
@@ -20,6 +20,32 @@ const PlainTextEditor = lazy(() =>
   import("./PlainTextEditor").then((m) => ({ default: m.PlainTextEditor })),
 );
 const SearchBar = lazy(() => import("./SearchBar").then((m) => ({ default: m.SearchBar })));
+
+/**
+ * A lazy editor chunk that fails to load — offline, or a deploy replaced the
+ * old chunks — otherwise unmounts the whole app to a blank window. Keyed per
+ * tab, so switching tabs tries again.
+ */
+class EditorErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown) {
+    console.error("The editor failed to load:", err);
+  }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted">
+        The editor could not be loaded.
+        <button type="button" className="underline" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </div>
+    );
+  }
+}
 
 export function EditorPane() {
   const { activeTab } = useWorkspaceTabs();
@@ -52,6 +78,10 @@ export function EditorPane() {
     );
   }
 
+  // The editors read their content once, at mount. A reload (sync pull, another
+  // tab) has to remount them, or the next keystroke writes the old text back.
+  const editorKey = `${activeTab.id}#${activeTab.reloads ?? 0}`;
+
   return (
     <div className="relative flex h-full flex-1 min-w-0 flex-col">
       {search && (
@@ -68,13 +98,15 @@ export function EditorPane() {
       <div ref={contentRef} className="min-h-0 flex-1">
         {/* No spinner: the chunk is local and resolves in a frame or two, and a
             flash of anything here reads as the document itself flickering. */}
-        <Suspense fallback={null}>
-          {activeTab.mode === "rich" ? (
-            <RichTextEditor key={activeTab.id} initialValue={activeTab.content} onChange={handleChange} />
-          ) : (
-            <PlainTextEditor key={activeTab.id} initialValue={activeTab.content} onChange={handleChange} />
-          )}
-        </Suspense>
+        <EditorErrorBoundary key={editorKey}>
+          <Suspense fallback={null}>
+            {activeTab.mode === "rich" ? (
+              <RichTextEditor key={editorKey} initialValue={activeTab.content} onChange={handleChange} />
+            ) : (
+              <PlainTextEditor key={editorKey} initialValue={activeTab.content} onChange={handleChange} />
+            )}
+          </Suspense>
+        </EditorErrorBoundary>
       </div>
     </div>
   );

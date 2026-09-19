@@ -19,3 +19,8 @@ export const DATABASE_URL =
 
 /** One pool for the process; Better Auth and the note routes share it. */
 export const pool = new Pool({ connectionString: DATABASE_URL });
+
+// An idle client losing its connection (a database restart, a network blip) is
+// emitted here; with no listener, Node treats it as uncaught and the server
+// exits. The pool drops that client and connects a fresh one on next use.
+pool.on("error", (err) => console.error("Idle database client failed:", err));

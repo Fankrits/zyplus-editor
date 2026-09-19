@@ -52,8 +52,9 @@ function tokenStore(): Promise<Store> {
  * out of reach of a script injected through rendered Markdown.
  */
 async function readStoredToken(): Promise<string> {
-  if (!isTauri()) return localStorage.getItem("zyplus:auth-token") ?? "";
+  // Nothing here may throw: main.tsx awaits this before the first render.
   try {
+    if (!isTauri()) return localStorage.getItem("zyplus:auth-token") ?? "";
     return (await (await tokenStore()).get<string>(TOKEN_KEY)) ?? "";
   } catch (err) {
     console.warn("Failed to read the stored auth token:", err);

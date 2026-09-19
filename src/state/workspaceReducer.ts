@@ -1,4 +1,6 @@
-import { basenameOf, readProjectNode, readTextFile } from "../lib/fs";
+import { basenameOf, isUnder, readProjectNode, readTextFile } from "../lib/fs";
+
+export { isUnder };
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
 
 export type TabMode = "rich" | "plain";
@@ -19,6 +21,8 @@ export interface TabState {
   savedContent: string;
   isDirty: boolean;
   mode: TabMode;
+  /** Bumped when the file changed underneath the tab, so the editor remounts with it. */
+  reloads?: number;
 }
 
 export interface WorkspaceState {
@@ -39,7 +43,9 @@ export type Action =
   | { type: "REORDER_TAB"; id: string; targetId: string | null }
   | { type: "UPDATE_TAB_CONTENT"; id: string; content: string }
   | { type: "SET_TAB_MODE"; id: string; mode: TabMode }
-  | { type: "SAVE_TAB_SUCCESS"; id: string; content?: string }
+  | { type: "SAVE_TAB_SUCCESS"; id: string; content: string }
+  /** `force` also replaces a dirty tab — only once its edit is saved elsewhere. */
+  | { type: "RELOAD_TAB"; id: string; content: string; force?: boolean }
   | { type: "REMAP_TAB_PATHS"; oldPrefix: string; newPrefix: string }
   | { type: "CLOSE_TABS_UNDER"; prefix: string }
   | {
@@ -56,10 +62,6 @@ export const initialState: WorkspaceState = {
   tabs: [],
   activeTabId: null,
 };
-
-export function isUnder(path: string, prefix: string): boolean {
-  return path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "\\");
-}
 
 export function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: string | null) {
   if (prevActiveId !== closedId) return prevActiveId;
@@ -99,6 +101,8 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
     case "SET_TREE":
       return { ...state, tree: action.tree };
     case "OPEN_TAB":
+      // Two opens can race past the caller's already-open check while each awaits its read.
+      if (state.tabs.some((t) => t.id === action.tab.id)) return { ...state, activeTabId: action.tab.id };
       return {
         ...state,
         tabs: [...state.tabs, action.tab],
@@ -146,11 +150,21 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
         ...state,
         tabs: state.tabs.map((t) => {
           if (t.id !== action.id) return t;
-          // `content` (autosave) is what actually reached disk; edits made while
-          // the write was in flight keep the tab dirty.
-          const saved = action.content ?? t.content;
-          return { ...t, savedContent: saved, isDirty: t.content !== saved };
+          // `content` is what actually reached disk; edits made while the
+          // write was in flight keep the tab dirty.
+          return { ...t, savedContent: action.content, isDirty: t.content !== action.content };
         }),
+      };
+    case "RELOAD_TAB":
+      // Checked here, against live state, not by the caller before its read:
+      // the user may have typed while the file was being read.
+      return {
+        ...state,
+        tabs: state.tabs.map((t) =>
+          t.id === action.id && (action.force || !t.isDirty)
+            ? { ...t, content: action.content, savedContent: action.content, reloads: (t.reloads ?? 0) + 1 }
+            : t,
+        ),
       };
     case "REMAP_TAB_PATHS": {
       const { oldPrefix, newPrefix } = action;

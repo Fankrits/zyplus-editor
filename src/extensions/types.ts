@@ -8,8 +8,11 @@ export interface ExtensionManifest {
   languages: string[];
   /** Primary download URL from GitHub (releases or raw assets) */
   downloadUrl: string;
+  /** SHA-256 (hex) the download must match before it is saved or run. */
+  sha256: string;
   /** Optional CSS asset URL if needed */
   cssUrl?: string;
+  cssSha256?: string;
 }
 
 export interface ExtensionContext {

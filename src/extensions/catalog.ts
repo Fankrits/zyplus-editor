@@ -1,15 +1,17 @@
 import type { ExtensionManifest } from "./types";
+import checksums from "./checksums.json";
 
 const isDev = Boolean(typeof import.meta !== "undefined" && import.meta.env?.DEV);
 
 /**
- * Release builds fetch the bundles straight out of the repository, so this has
- * to name a ref that exists. It used to say `extension` — a branch deleted
- * after it merged — which made every install in every shipped build a 404, and
- * with it Mermaid and KaTeX. Renaming or deleting the ref breaks installs for
- * users already running an older build, so it tracks the default branch.
+ * Release builds fetch the bundles straight out of the repository, at the tag
+ * the build was released from: a tag never moves, so what a build downloads is
+ * exactly what it was released with, and `checksums.json` (written by
+ * `build:extensions` at that same commit) proves it. Builds made before this
+ * track `main`, which is why `main` has to keep serving `extensions/dist`.
  */
-export const ASSET_REF = "main";
+export const ASSET_REF =
+  typeof __APP_VERSION__ !== "undefined" ? `v${__APP_VERSION__}` : "main";
 
 function getAssetUrl(filename: string): string {
   if (isDev) {
@@ -29,6 +31,7 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     sizeBytesEstimate: 3_670_000,
     languages: ["mermaid", "flowchart", "diagram"],
     downloadUrl: getAssetUrl("mermaid.js"),
+    sha256: checksums["mermaid.js"],
   },
   {
     id: "katex",
@@ -40,7 +43,9 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     sizeBytesEstimate: 1_520_000,
     languages: ["latex", "math", "katex", "tex"],
     downloadUrl: getAssetUrl("katex.js"),
+    sha256: checksums["katex.js"],
     cssUrl: getAssetUrl("katex.css"),
+    cssSha256: checksums["katex.css"],
   },
 ];
 

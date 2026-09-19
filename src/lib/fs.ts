@@ -8,7 +8,7 @@ import {
   rename as renameRaw,
   exists,
 } from "@tauri-apps/plugin-fs";
-import { join as tauriJoin, dirname as tauriDirname, documentDir } from "@tauri-apps/api/path";
+import { join as tauriJoin, dirname as tauriDirname, homeDir } from "@tauri-apps/api/path";
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isMac, isWindows } from "./platform";
@@ -170,17 +170,36 @@ export function invalidNameReason(name: string): string | null {
   return null;
 }
 
-/** On the web there are no folders to pick, so this is always the notes folder. */
-export async function openFolderDialog(): Promise<string | null> {
-  if (!isTauri()) {
-    await ensureFolder(WEB_ROOT);
-    return WEB_ROOT;
-  }
-  const result = await openDialog({ directory: true });
-  return typeof result === "string" ? result : null;
+/**
+ * A picker that fails is reported and then treated as cancelled. Every caller
+ * already handles "nothing picked"; none handled a rejection, which surfaced
+ * as nothing at all.
+ */
+async function reportingPicker(title: string, fn: () => Promise<string | null>): Promise<string | null> {
+  let picked: string | null = null;
+  await tryFs(title, "", async () => {
+    picked = await fn();
+  });
+  return picked;
 }
 
-export async function openFileDialog(): Promise<string | null> {
+/** On the web there are no folders to pick, so this is always the notes folder. */
+export function openFolderDialog(): Promise<string | null> {
+  return reportingPicker("Could not choose a folder", async () => {
+    if (!isTauri()) {
+      await ensureFolder(WEB_ROOT);
+      return WEB_ROOT;
+    }
+    const result = await openDialog({ directory: true });
+    return typeof result === "string" ? result : null;
+  });
+}
+
+export function openFileDialog(): Promise<string | null> {
+  return reportingPicker("Could not open a file", pickFile);
+}
+
+async function pickFile(): Promise<string | null> {
   if (!isTauri()) return importFromDevice();
   const result = await openDialog({
     directory: false,
@@ -274,10 +293,10 @@ export function displayJoin(parent: string, name: string): string {
   return parent.endsWith(sep) ? `${parent}${name}` : `${parent}${sep}${name}`;
 }
 
-/** Suggested parent for the default folder (Documents on desktop). */
+/** Suggested parent for the default folder: home, since macOS prompts for every access to Documents. */
 export async function defaultFolderParent(): Promise<string> {
   if (!isTauri()) return "/";
-  return documentDir();
+  return homeDir();
 }
 
 /** Creates (or reuses) `<parent>/Zyplus` and returns its path. */
@@ -436,11 +455,24 @@ export async function createFolder(path: string): Promise<void> {
   await ensureFolder(path);
 }
 
+/** `path` is `prefix` itself or something inside it. */
+export function isUnder(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "\\");
+}
+
 export async function renamePath(oldPath: string, newPath: string): Promise<void> {
   // Only a name the user just typed gets validated. Dragging a file that
   // already carries an awkward name — legal on macOS, not on Windows — into
   // another folder must keep working; refusing that would strand the file.
   if (basenameOf(newPath) !== basenameOf(oldPath)) assertNameIsUsable(newPath);
+  if (isUnder(newPath, oldPath) && newPath !== oldPath) {
+    throw new Error(`Cannot move "${basenameOf(oldPath)}" into itself`);
+  }
+  // rename(2) replaces an existing file, and the web store would too. A
+  // case-only rename finds itself on a case-insensitive disk, which is fine.
+  if (newPath.toLowerCase() !== oldPath.toLowerCase() && (await pathExists(newPath))) {
+    throw new Error(`"${basenameOf(newPath)}" already exists there`);
+  }
   if (!isTauri()) {
     const moved = webEntriesUnder(oldPath);
     await applyWeb([

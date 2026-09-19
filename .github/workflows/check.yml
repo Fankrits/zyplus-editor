@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 # A newer push to the same branch makes the in-flight run irrelevant.
 concurrency:
   group: check-${{ github.ref }}
@@ -21,6 +24,7 @@ jobs:
         platform: [macos-latest, ubuntu-22.04, windows-latest]
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -43,3 +47,12 @@ jobs:
 
       # bun test, tsc, cargo fmt --check, cargo clippy, cargo test.
       - run: bun run check
+
+      # Releases download extensions/dist from their own tag and check it against
+      # src/extensions/checksums.json, so both must be committed, current, and in
+      # step. A source change without `bun run build:extensions` fails here.
+      - name: Extension bundles are up to date
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          bun run build:extensions
+          git diff --exit-code -- extensions/dist src/extensions/checksums.json

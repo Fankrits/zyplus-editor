@@ -57,12 +57,10 @@ function AppShell() {
   if (settingsSection !== null) settingsEverOpened.current = true;
 
   useEffect(() => {
-    // Waits for the first idle moment. Activating an installed extension means
-    // evaluating its bundle — Mermaid's is several megabytes — and doing that the
-    // instant the app mounts puts it in a race with the editor the user is
-    // actually waiting for. Nothing on screen depends on it until a code block
-    // needs rendering. `requestIdleCallback` is missing from older WebKit, where
-    // a short timeout is close enough.
+    // Only checks which extensions are installed, for the settings list; bundles
+    // are evaluated when a code block first needs one. Still waits for idle so
+    // the filesystem checks stay out of the startup path. `requestIdleCallback`
+    // is missing from older WebKit, where a short timeout is close enough.
     const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 200));
     const handle = idle(() => void extensionManager.initialize());
     return () => window.cancelIdleCallback?.(handle as number);
@@ -137,7 +135,7 @@ function AppShell() {
           if (!tab?.isDirty) return;
           // Only clear the dirty flag once the bytes are actually on disk.
           fs.saveDocument(tab.filePath, tab.content).then((saved) => {
-            if (saved) dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id });
+            if (saved) dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id, content: tab.content });
           });
           return;
         case "export-md":
@@ -145,7 +143,12 @@ function AppShell() {
           return;
         case "export-pdf":
           // `marked` only matters when exporting, so it stays out of the startup bundle.
-          if (tab) import("./lib/exportPdf").then((m) => m.exportPdf(tab.title, tab.content));
+          if (tab) {
+            import("./lib/exportPdf").then(
+              (m) => m.exportPdf(tab.title, tab.content),
+              (err) => console.error("Could not load the PDF exporter:", err),
+            );
+          }
           return;
         case "new-file":
         case "new-folder": {

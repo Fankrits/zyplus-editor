@@ -167,7 +167,7 @@ describe("sync engine", () => {
     expect(await notesIn("/B")).toEqual([]);
   });
 
-  it("keeps both sides of a real conflict, in exactly one copy", async () => {
+  it("lets the cloud win a real conflict, keeping the local edit in one copy", async () => {
     await on("/A");
     await fs.writeTextFile("/A/notes.md", "shared");
     await sync.syncNow();
@@ -182,13 +182,27 @@ describe("sync engine", () => {
 
     const names = await notesIn("/A");
     expect(names).toHaveLength(2);
-    expect(await fs.readTextFile("/A/notes.md")).toBe("A's edit");
+    expect(await fs.readTextFile("/A/notes.md")).toBe("B's edit");
     const copy = names.find((n) => n !== "notes.md")!;
-    expect(await fs.readTextFile(`/A/${copy}`)).toBe("B's edit");
-    // The device that edited last wins the live note, with no further copies.
-    expect(rows.get("notes.md")!.content).toBe("A's edit");
+    expect(await fs.readTextFile(`/A/${copy}`)).toBe("A's edit");
+    // The cloud keeps the live note, and the local edit goes up as its own note.
+    expect(rows.get("notes.md")!.content).toBe("B's edit");
+    expect(rows.get(copy)!.content).toBe("A's edit");
     await sync.syncNow();
     expect(await notesIn("/A")).toEqual(names);
+  });
+
+  it("files no conflict for a note whose content already matches the cloud", async () => {
+    await on("/A");
+    await fs.writeTextFile("/A/notes.md", "same everywhere");
+    await sync.syncNow();
+
+    // B already has the file — copied over by hand — but no manifest for it.
+    await fs.writeTextFile("/B/notes.md", "same everywhere");
+    await on("/B");
+
+    expect(await notesIn("/B")).toEqual(["notes.md"]);
+    expect(rows.size).toBe(1);
   });
 
   it("uploads a note edited outside the app", async () => {
@@ -269,5 +283,15 @@ describe("sync engine", () => {
 
     expect(await notesIn("/A")).toEqual(["notes.md"]);
     expect(rows.get("notes.md")).toMatchObject({ content: "still wanted", deleted: false });
+  });
+
+  it("a sync stopped mid-run bails quietly instead of reporting an error", async () => {
+    rows.set("n.md", { content: "remote", rev: ++seq, deleted: false });
+    await sync.startSync("/A", USER);
+    const running = sync.syncNow();
+    sync.stopSync();
+    await running;
+    expect(sync.getStatus().state).toBe("off");
+    expect(await fs.pathExists("/A/n.md")).toBe(false);
   });
 });

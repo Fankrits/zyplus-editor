@@ -13,7 +13,10 @@ function getMermaidConfig(isDark: boolean) {
 
   return {
     startOnLoad: false,
-    securityLevel: "loose" as const,
+    // "loose" skips label sanitizing, and Mermaid lays labels out in the live page
+    // before Milkdown ever sanitizes the SVG. Diagrams come from notes, which can
+    // come from anyone.
+    securityLevel: "strict" as const,
     suppressErrorRendering: true,
     theme: "base" as const,
     flowchart: {

@@ -13,10 +13,14 @@ const host = process.env.TAURI_DEV_HOST;
 const localExtensionsPlugin: Plugin = {
   name: "serve-local-extensions",
   configureServer(server) {
+    const base = path.resolve(process.cwd(), "extensions/dist");
     server.middlewares.use("/extensions-dist", (req, res, next) => {
-      const cleanUrl = (req.url || "").split("?")[0];
-      const filePath = path.join(process.cwd(), "extensions/dist", cleanUrl);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      const cleanUrl = decodeURIComponent((req.url || "").split("?")[0]);
+      // Resolved and checked, so `/extensions-dist/../../anything` serves nothing.
+      const filePath = path.resolve(base, "." + cleanUrl);
+      if (!filePath.startsWith(base + path.sep)) return next();
+      const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+      if (stat?.isFile()) {
         const ext = path.extname(filePath);
         const contentType =
           ext === ".js"
@@ -25,7 +29,6 @@ const localExtensionsPlugin: Plugin = {
             ? "text/css"
             : "text/plain";
         res.setHeader("Content-Type", contentType);
-        res.setHeader("Access-Control-Allow-Origin", "*");
         return fs.createReadStream(filePath).pipe(res);
       }
       next();

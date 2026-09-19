@@ -50,9 +50,13 @@ curl -fL --progress-bar -o "$TMP/dl" "$URL"
 if [ "$(uname -s)" = Darwin ]; then
   MNT=$(hdiutil attach -nobrowse -readonly "$TMP/dl" |
     sed -n 's/.*\(\/Volumes\/.*\)$/\1/p' | tail -1)
-  [ -d "$MNT/Zyplus.app" ] || { echo "Zyplus.app not found in dmg" >&2; exit 1; }
+  [ -n "$MNT" ] && [ -d "$MNT/Zyplus.app" ] || { echo "Zyplus.app not found in dmg" >&2; exit 1; }
+  # Copy beside the old app, then swap: a copy that fails partway (full disk)
+  # must leave the installed version working, not no version at all.
+  rm -rf /Applications/.Zyplus.app.new
+  cp -R "$MNT/Zyplus.app" /Applications/.Zyplus.app.new
   rm -rf /Applications/Zyplus.app
-  cp -R "$MNT/Zyplus.app" /Applications/
+  mv /Applications/.Zyplus.app.new /Applications/Zyplus.app
   xattr -dr com.apple.quarantine /Applications/Zyplus.app 2>/dev/null || true
   echo "Installed /Applications/Zyplus.app — open it with: open -a Zyplus"
 else

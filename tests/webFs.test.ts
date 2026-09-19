@@ -25,4 +25,19 @@ describe("web filesystem", () => {
     expect(await fs.pathExists("/w/notes/a copy.md")).toBe(false);
     expect(await fs.pathExists("/w/docsy.md")).toBe(true);
   });
+
+  it("refuses a rename that would overwrite or swallow itself", async () => {
+    await fs.writeTextFile("/v/a.md", "keep me");
+    await fs.writeTextFile("/v/b.md", "and me");
+    await fs.writeTextFile("/v/dir/sub/c.md", "c");
+
+    await expect(fs.renamePath("/v/a.md", "/v/b.md")).rejects.toThrow("already exists");
+    await expect(fs.renamePath("/v/dir", "/v/dir/sub/dir")).rejects.toThrow("into itself");
+    expect(await fs.readTextFile("/v/b.md")).toBe("and me");
+    expect(await fs.readTextFile("/v/dir/sub/c.md")).toBe("c");
+
+    // Case-only renames are still allowed.
+    await fs.renamePath("/v/a.md", "/v/A.md");
+    expect(await fs.readTextFile("/v/A.md")).toBe("keep me");
+  });
 });

@@ -27,6 +27,9 @@ describe("theme", () => {
     expect(getTheme()).toBe("system");
     localStorage.setItem("zyplus:theme", "neon");
     expect(getTheme()).toBe("system");
+    // Keys every object inherits are not themes either.
+    localStorage.setItem("zyplus:theme", "toString");
+    expect(getTheme()).toBe("system");
   });
 
   it("persists and applies an explicit theme", () => {

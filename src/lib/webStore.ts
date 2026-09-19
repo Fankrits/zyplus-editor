@@ -61,6 +61,6 @@ export function persistWeb(ops: WebOp[]): Promise<void> {
       channel?.postMessage(ops);
       resolve();
     };
-    tx.onerror = tx.onabort = () => reject(tx.error);
+    tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("The browser aborted the write"));
   });
 }

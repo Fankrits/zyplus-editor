@@ -169,21 +169,32 @@ export async function put(
  * on top of the tombstone instead of colliding with it and taking a conflict.
  */
 export async function softDelete(userId: string, relPath: string): Promise<{ rev: number } | null> {
-  const { rows } = await pool.query(
-    `update note
-        set deleted_at = now(),
-            content = '',
-            rev = nextval('note_rev'),
-            updated_at = now()
-      where user_id = $1 and rel_path = $2 and deleted_at is null
-    returning rev`,
-    [userId, relPath],
-  );
-  if (rows[0]) return { rev: Number(rows[0].rev) };
-
-  const { rows: existing } = await pool.query(
-    `select rev from note where user_id = $1 and rel_path = $2`,
-    [userId, relPath],
-  );
-  return existing[0] ? { rev: Number(existing[0].rev) } : null;
+  // Same lock as `put`: between the update and the fallback read, a put could
+  // revive the tombstone and this would hand back the live note's rev as if it
+  // were the tombstone's — letting a later re-create overwrite it unchecked.
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [userId]);
+    const { rows } = await client.query(
+      `update note
+          set deleted_at = now(),
+              content = '',
+              rev = nextval('note_rev'),
+              updated_at = now()
+        where user_id = $1 and rel_path = $2 and deleted_at is null
+      returning rev`,
+      [userId, relPath],
+    );
+    const { rows: existing } = rows[0]
+      ? { rows }
+      : await client.query(`select rev from note where user_id = $1 and rel_path = $2`, [userId, relPath]);
+    await client.query("commit");
+    return existing[0] ? { rev: Number(existing[0].rev) } : null;
+  } catch (err) {
+    await client.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
