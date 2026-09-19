@@ -436,11 +436,24 @@ export async function createFolder(path: string): Promise<void> {
   await ensureFolder(path);
 }
 
+/** `path` is `prefix` itself or something inside it. */
+export function isUnder(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "\\");
+}
+
 export async function renamePath(oldPath: string, newPath: string): Promise<void> {
   // Only a name the user just typed gets validated. Dragging a file that
   // already carries an awkward name — legal on macOS, not on Windows — into
   // another folder must keep working; refusing that would strand the file.
   if (basenameOf(newPath) !== basenameOf(oldPath)) assertNameIsUsable(newPath);
+  if (isUnder(newPath, oldPath) && newPath !== oldPath) {
+    throw new Error(`Cannot move "${basenameOf(oldPath)}" into itself`);
+  }
+  // rename(2) replaces an existing file, and the web store would too. A
+  // case-only rename finds itself on a case-insensitive disk, which is fine.
+  if (newPath.toLowerCase() !== oldPath.toLowerCase() && (await pathExists(newPath))) {
+    throw new Error(`"${basenameOf(newPath)}" already exists there`);
+  }
   if (!isTauri()) {
     const moved = webEntriesUnder(oldPath);
     await applyWeb([

@@ -1,4 +1,6 @@
-import { basenameOf, readProjectNode, readTextFile } from "../lib/fs";
+import { basenameOf, isUnder, readProjectNode, readTextFile } from "../lib/fs";
+
+export { isUnder };
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
 
 export type TabMode = "rich" | "plain";
@@ -59,10 +61,6 @@ export const initialState: WorkspaceState = {
   tabs: [],
   activeTabId: null,
 };
-
-export function isUnder(path: string, prefix: string): boolean {
-  return path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "\\");
-}
 
 export function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: string | null) {
   if (prevActiveId !== closedId) return prevActiveId;
