@@ -16,12 +16,13 @@
         "title": "Zyplus",
         "width": 800,
         "height": 600,
-        "dragDropEnabled": false,
-        "devtools": true
+        "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://raw.githubusercontent.com; object-src 'none'; base-uri 'self'; frame-src 'none'; form-action 'none'",
+      "devCsp": null,
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
