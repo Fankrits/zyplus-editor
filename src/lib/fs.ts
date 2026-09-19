@@ -8,7 +8,7 @@ import {
   rename as renameRaw,
   exists,
 } from "@tauri-apps/plugin-fs";
-import { join as tauriJoin, dirname as tauriDirname, homeDir } from "@tauri-apps/api/path";
+import { join as tauriJoin, dirname as tauriDirname, appDataDir } from "@tauri-apps/api/path";
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isMac, isWindows } from "./platform";
@@ -293,15 +293,19 @@ export function displayJoin(parent: string, name: string): string {
   return parent.endsWith(sep) ? `${parent}${name}` : `${parent}${sep}${name}`;
 }
 
-/** Suggested parent for the default folder: home, since macOS prompts for every access to Documents. */
-export async function defaultFolderParent(): Promise<string> {
-  if (!isTauri()) return "/";
-  return homeDir();
+/**
+ * The notes folder: `<app data>/Zyplus` on desktop. There is exactly one, and it
+ * is not user-configurable — the app's own data dir is the one place no OS
+ * guards with a Files & Folders prompt.
+ */
+export async function defaultFolderPath(): Promise<string> {
+  if (!isTauri()) return WEB_ROOT;
+  return joinPath(await appDataDir(), DEFAULT_FOLDER_NAME);
 }
 
-/** Creates (or reuses) `<parent>/Zyplus` and returns its path. */
-export async function createDefaultFolder(parent: string): Promise<string> {
-  const path = await joinPath(parent, DEFAULT_FOLDER_NAME);
+/** Creates (or reuses) the notes folder and returns its path. */
+export async function createDefaultFolder(): Promise<string> {
+  const path = await defaultFolderPath();
   await ensureFolder(path);
   return path;
 }
