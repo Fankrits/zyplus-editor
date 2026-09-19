@@ -368,3 +368,12 @@
   height: 1em;
   transform: translateY(0.1em);
 }
+
+/* Expand button added beside "Edit" on diagram previews (RichTextEditor.tsx). */
+.milkdown .milkdown-code-block .tools-button-group .diagram-zoom-button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
