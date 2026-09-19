@@ -8,7 +8,7 @@ import {
   rename as renameRaw,
   exists,
 } from "@tauri-apps/plugin-fs";
-import { join as tauriJoin, dirname as tauriDirname, documentDir } from "@tauri-apps/api/path";
+import { join as tauriJoin, dirname as tauriDirname, homeDir } from "@tauri-apps/api/path";
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isMac, isWindows } from "./platform";
@@ -274,10 +274,10 @@ export function displayJoin(parent: string, name: string): string {
   return parent.endsWith(sep) ? `${parent}${name}` : `${parent}${sep}${name}`;
 }
 
-/** Suggested parent for the default folder (Documents on desktop). */
+/** Suggested parent for the default folder: home, since macOS prompts for every access to Documents. */
 export async function defaultFolderParent(): Promise<string> {
   if (!isTauri()) return "/";
-  return documentDir();
+  return homeDir();
 }
 
 /** Creates (or reuses) `<parent>/Zyplus` and returns its path. */
