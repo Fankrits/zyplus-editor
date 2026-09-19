@@ -5,8 +5,8 @@
 # Why: an ad-hoc signature is its own hash, so every release is a "new app" to
 # macOS and it forgets every Files & Folders grant. A fixed certificate makes
 # the grant stick across updates. Not a Developer ID: Gatekeeper still warns on
-# first open, as it does today. Keep the .p12 somewhere safe; losing it means
-# users are prompted once more after the next release.
+# first open, as it does today. Keep the backup safe; losing it means users
+# are prompted once more after the next release.
 set -euo pipefail
 
 name="Zyplus Self-Signed"
@@ -35,5 +35,10 @@ openssl pkcs12 -export -legacy -inkey "$dir/key.pem" -in "$dir/cert.pem" \
 
 base64 <"$dir/cert.p12" | tr -d '\n' | gh secret set MACOS_SIGNING_CERT
 printf %s "$pass" | gh secret set MACOS_SIGNING_CERT_PASSWORD
-cp "$dir/cert.p12" "./zyplus-signing.p12"
-echo "Secrets set. Backup: ./zyplus-signing.p12 (password: $pass) — move it out of the repo."
+# Backup outside the repo; its password goes to the login keychain, not the terminal.
+backup="$HOME/.zyplus/zyplus-signing.p12"
+mkdir -p "$(dirname "$backup")"
+install -m 600 "$dir/cert.p12" "$backup"
+security add-generic-password -U -a zyplus -s zyplus-signing-p12 -w "$pass"
+echo "Secrets set. Backup: $backup"
+echo "Password: security find-generic-password -a zyplus -s zyplus-signing-p12 -w"
