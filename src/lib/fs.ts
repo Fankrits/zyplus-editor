@@ -170,17 +170,36 @@ export function invalidNameReason(name: string): string | null {
   return null;
 }
 
-/** On the web there are no folders to pick, so this is always the notes folder. */
-export async function openFolderDialog(): Promise<string | null> {
-  if (!isTauri()) {
-    await ensureFolder(WEB_ROOT);
-    return WEB_ROOT;
-  }
-  const result = await openDialog({ directory: true });
-  return typeof result === "string" ? result : null;
+/**
+ * A picker that fails is reported and then treated as cancelled. Every caller
+ * already handles "nothing picked"; none handled a rejection, which surfaced
+ * as nothing at all.
+ */
+async function reportingPicker(title: string, fn: () => Promise<string | null>): Promise<string | null> {
+  let picked: string | null = null;
+  await tryFs(title, "", async () => {
+    picked = await fn();
+  });
+  return picked;
 }
 
-export async function openFileDialog(): Promise<string | null> {
+/** On the web there are no folders to pick, so this is always the notes folder. */
+export function openFolderDialog(): Promise<string | null> {
+  return reportingPicker("Could not choose a folder", async () => {
+    if (!isTauri()) {
+      await ensureFolder(WEB_ROOT);
+      return WEB_ROOT;
+    }
+    const result = await openDialog({ directory: true });
+    return typeof result === "string" ? result : null;
+  });
+}
+
+export function openFileDialog(): Promise<string | null> {
+  return reportingPicker("Could not open a file", pickFile);
+}
+
+async function pickFile(): Promise<string | null> {
   if (!isTauri()) return importFromDevice();
   const result = await openDialog({
     directory: false,

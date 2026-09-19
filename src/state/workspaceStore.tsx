@@ -20,6 +20,7 @@ import {
   readProjectNode,
   readTextFile,
   setStoreChangedListener,
+  tryFs,
   writeTextFile,
 } from "../lib/fs";
 
@@ -323,21 +324,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const addFolder = useCallback(async (dir?: string) => {
     const picked = dir ?? (await openFolderDialog());
     if (!picked) return null;
-    try {
-      const node = await readProjectNode(picked);
-      dispatch({ type: "ADD_ROOT", rootPath: picked, node });
-      return picked;
-    } catch (err) {
-      console.error(`Failed to open folder at "${picked}":`, err);
-      return null;
-    }
+    const opened = await tryFs("Could not open folder", picked, async () => {
+      dispatch({ type: "ADD_ROOT", rootPath: picked, node: await readProjectNode(picked) });
+    });
+    return opened ? picked : null;
   }, []);
 
   const openFilePicker = useCallback(async () => {
     const picked = await openFileDialog();
     if (!picked) return null;
-    await openFile(picked);
-    return picked;
+    return (await openFile(picked)) ? picked : null;
   }, [openFile]);
 
   const activeTab = useMemo(

@@ -113,16 +113,23 @@ export function SettingsModal({
   const pickDefaultFolder = async () => {
     const picked = await fs.openFolderDialog();
     if (!picked) return;
-    setDefaultFolder(picked);
+    // Read first: a folder that cannot be read must not become the default.
     if (!state.roots.includes(picked)) {
-      dispatch({ type: "ADD_ROOT", rootPath: picked, node: await fs.readProjectNode(picked) });
+      const opened = await fs.tryFs("Could not open folder", picked, async () => {
+        dispatch({ type: "ADD_ROOT", rootPath: picked, node: await fs.readProjectNode(picked) });
+      });
+      if (!opened) return;
     }
+    setDefaultFolder(picked);
   };
 
   // The OS is the source of truth: another app may have taken .md since last time.
   useEffect(() => {
     if (!isOpen) return;
-    fs.isDefaultMarkdownApp().then((yes) => setDefaultAppState(yes ? "done" : null));
+    fs.isDefaultMarkdownApp().then(
+      (yes) => setDefaultAppState(yes ? "done" : null),
+      (err) => console.warn("Could not ask which app opens .md files:", err),
+    );
   }, [isOpen]);
 
   const makeDefaultApp = async () => {
@@ -304,11 +311,12 @@ export function SettingsModal({
                                     isSelected={isInstalled}
                                     isDisabled={isDownloading}
                                     onChange={(checked) => {
-                                      if (checked) {
-                                        downloadAndInstall(manifest.id);
-                                      } else {
-                                        uninstallAndRemove(manifest.id);
-                                      }
+                                      // Failures land in the extension's own state, which
+                                      // this list renders; the rejection is only a duplicate.
+                                      const done = checked
+                                        ? downloadAndInstall(manifest.id)
+                                        : uninstallAndRemove(manifest.id);
+                                      done.catch(() => {});
                                     }}
                                   >
                                     <Switch.Content>

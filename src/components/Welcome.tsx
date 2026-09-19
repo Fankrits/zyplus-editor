@@ -27,7 +27,10 @@ export function Welcome({ onReady, onSkip, onOpenFile, onOpenFolder }: WelcomePr
 
   const chooseParent = useCallback(async () => {
     const picked = await fs.openFolderDialog();
-    if (picked) setParent(picked);
+    if (picked) {
+      setParent(picked);
+      setError(null); // it was about the previous location
+    }
   }, []);
 
   const create = useCallback(async () => {
