@@ -290,7 +290,10 @@ export function TabBar({
           label: "Export as PDF…",
           icon: Pdf01Icon,
           onSelect: () =>
-            import("../../lib/exportPdf").then((m) => m.exportPdf(activeTab.title, activeTab.content)),
+            import("../../lib/exportPdf").then(
+              (m) => m.exportPdf(activeTab.title, activeTab.content),
+              (err) => console.error("Could not load the PDF exporter:", err),
+            ),
         },
         ...(isNativeApp
           ? [{ key: "reveal", label: REVEAL_LABEL, icon: FolderOpenIcon, onSelect: () => revealPath(activeTab.filePath) }]

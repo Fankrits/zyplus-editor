@@ -60,12 +60,20 @@ const DOCUMENT_CSS = `
 /** Wraps rendered markdown in a self-contained, print-ready HTML document. */
 export function renderPrintDocument(title: string, markdown: string): string {
   const body = marked.parse(markdown, { async: false, gfm: true, breaks: false });
+  // `marked` passes raw HTML in a note straight through, and a note can come
+  // from anyone. The policy lets the readiness ping below run and nothing else:
+  // no <script> in the note, no onerror=, nothing fetched but images.
+  const nonce = crypto.randomUUID();
+  const csp =
+    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; ` +
+    `img-src data: blob: https: http:; connect-src 'self'; base-uri 'none'; form-action 'none'`;
   return `<!doctype html>
 <html><head><meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="${csp}" />
 <title>${escapeHtml(title)}</title>
 <style>${DOCUMENT_CSS}</style>
 </head><body>${body}
-<script>
+<script nonce="${nonce}">
   // Tells the native exporter the document has laid out and can be printed.
   // An offscreen webview has no IPC, so the channel back is a request on the
   // same custom protocol that served this page.
@@ -91,12 +99,20 @@ export const isPdfExportSupported = (): boolean => !isTauri() || isMac;
  * fire-and-forget, so a rejection here would surface as nothing at all.
  */
 export async function exportPdf(title: string, markdown: string): Promise<void> {
+  // The native side has one print window and one ready signal; a second export
+  // started before the first finished printed the wrong document or timed out.
+  if (exporting) return;
+  exporting = true;
   try {
     await runExport(title, markdown);
   } catch (err) {
     await reportFailure(err);
+  } finally {
+    exporting = false;
   }
 }
+
+let exporting = false;
 
 async function runExport(title: string, markdown: string): Promise<void> {
   const html = renderPrintDocument(title, markdown);
@@ -104,11 +120,18 @@ async function runExport(title: string, markdown: string): Promise<void> {
 
   if (!isTauri()) {
     // Browser dev: no native print job to run, so fall back to the print dialog.
-    const w = window.open("", "_blank");
-    if (!w) return;
-    w.document.write(html);
-    w.document.close();
-    w.addEventListener("load", () => w.print());
+    // A blob URL rather than document.write into about:blank, which shares the
+    // app's origin; the load listener is attached before anything can load.
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    const w = window.open(url, "_blank");
+    if (!w) {
+      URL.revokeObjectURL(url);
+      throw new Error("The print window was blocked. Allow pop-ups for this site and try again.");
+    }
+    w.addEventListener("load", () => {
+      URL.revokeObjectURL(url);
+      w.print();
+    });
     return;
   }
 

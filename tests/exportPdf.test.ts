@@ -28,4 +28,16 @@ describe("renderPrintDocument", () => {
     expect(html).toContain("&lt;/title&gt;");
     expect(html).not.toContain("<script>x</script>");
   });
+
+  // Raw HTML in a note reaches the page as-is; the page's own policy is what
+  // keeps a note's <script> or onerror= from running.
+  it("allows only its own readiness script to run", () => {
+    const html = renderPrintDocument("t", "<script>alert(2)</script>\n\ntext");
+    const nonce = /script-src 'nonce-([^']+)'/.exec(html)?.[1];
+    expect(nonce).toBeTruthy();
+    expect(html).toContain("default-src 'none'");
+    expect(/script-src ([^;]+)/.exec(html)?.[1]).toBe(`'nonce-${nonce}'`);
+    expect(html).toContain(`<script nonce="${nonce}">`);
+    expect(html.match(/<script nonce=/g)).toHaveLength(1);
+  });
 });

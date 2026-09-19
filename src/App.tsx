@@ -143,7 +143,12 @@ function AppShell() {
           return;
         case "export-pdf":
           // `marked` only matters when exporting, so it stays out of the startup bundle.
-          if (tab) import("./lib/exportPdf").then((m) => m.exportPdf(tab.title, tab.content));
+          if (tab) {
+            import("./lib/exportPdf").then(
+              (m) => m.exportPdf(tab.title, tab.content),
+              (err) => console.error("Could not load the PDF exporter:", err),
+            );
+          }
           return;
         case "new-file":
         case "new-folder": {
