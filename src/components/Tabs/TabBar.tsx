@@ -197,7 +197,7 @@ export function TabBar({
       const tab = getState().tabs.find((t) => t.id === id);
       if (!tab) return;
       if (await saveDocument(tab.filePath, tab.content)) {
-        dispatch({ type: "SAVE_TAB_SUCCESS", id });
+        dispatch({ type: "SAVE_TAB_SUCCESS", id, content: tab.content });
       }
     },
     [getState, dispatch],
@@ -312,9 +312,13 @@ export function TabBar({
     if (pendingTab) {
       // A failed write must not close the tab: that would discard exactly the
       // changes the user just asked to keep. The prompt stays up instead.
-      if (!(await saveDocument(pendingTab.filePath, pendingTab.content))) return;
-      dispatch({ type: "SAVE_TAB_SUCCESS", id: pendingTab.id });
-      dispatch({ type: "CLOSE_TAB", id: pendingTab.id });
+      // Re-read at action time: the tab may have been edited while the prompt was up.
+      const tab = getState().tabs.find((t) => t.id === pendingTab.id);
+      if (tab) {
+        if (!(await saveDocument(tab.filePath, tab.content))) return;
+        dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id, content: tab.content });
+        dispatch({ type: "CLOSE_TAB", id: tab.id });
+      }
     }
     setPendingCloseId(null);
   };

@@ -264,10 +264,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const tab = stateRef.current.tabs.find((t) => t.filePath === path);
         if (!tab || tab.isDirty) continue;
         readTextFile(path).then(
-          (content) => {
-            dispatch({ type: "UPDATE_TAB_CONTENT", id: tab.id, content });
-            dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id, content });
-          },
+          (content) => dispatch({ type: "RELOAD_TAB", id: tab.id, content }),
           // Unreadable means it was deleted, on another device or in another tab.
           () => dispatch({ type: "CLOSE_TABS_UNDER", prefix: path }),
         );

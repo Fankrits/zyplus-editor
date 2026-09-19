@@ -135,7 +135,7 @@ function AppShell() {
           if (!tab?.isDirty) return;
           // Only clear the dirty flag once the bytes are actually on disk.
           fs.saveDocument(tab.filePath, tab.content).then((saved) => {
-            if (saved) dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id });
+            if (saved) dispatch({ type: "SAVE_TAB_SUCCESS", id: tab.id, content: tab.content });
           });
           return;
         case "export-md":

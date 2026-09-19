@@ -311,6 +311,34 @@ describe("SAVE_TAB_SUCCESS", () => {
   });
 });
 
+describe("OPEN_TAB", () => {
+  const tab = { id: "/r/a.md", filePath: "/r/a.md", title: "a.md", content: "", savedContent: "", isDirty: false, mode: "rich" as const };
+
+  it("focuses an already-open file instead of opening it twice", () => {
+    const once = workspaceReducer({ roots: [], tree: [], tabs: [], activeTabId: null }, { type: "OPEN_TAB", tab });
+    const twice = workspaceReducer({ ...once, activeTabId: null }, { type: "OPEN_TAB", tab });
+    expect(twice.tabs).toHaveLength(1);
+    expect(twice.activeTabId).toBe(tab.id);
+  });
+});
+
+describe("RELOAD_TAB", () => {
+  const tab = { id: "/r/a.md", filePath: "/r/a.md", title: "a.md", content: "old", savedContent: "old", isDirty: false, mode: "rich" as const };
+
+  it("takes the new content and bumps reloads so the editor remounts", () => {
+    const state: WorkspaceState = { roots: [], tree: [], tabs: [tab], activeTabId: tab.id };
+    const next = workspaceReducer(state, { type: "RELOAD_TAB", id: tab.id, content: "pulled" });
+    expect(next.tabs[0]).toMatchObject({ content: "pulled", savedContent: "pulled", isDirty: false, reloads: 1 });
+  });
+
+  it("leaves a tab alone that became dirty while the file was being read", () => {
+    const dirty = { ...tab, content: "typing", isDirty: true };
+    const state: WorkspaceState = { roots: [], tree: [], tabs: [dirty], activeTabId: tab.id };
+    const next = workspaceReducer(state, { type: "RELOAD_TAB", id: tab.id, content: "pulled" });
+    expect(next.tabs[0]).toBe(dirty);
+  });
+});
+
 describe("UPDATE_TAB_CONTENT", () => {
   const tab = {
     id: "/p/a.md",

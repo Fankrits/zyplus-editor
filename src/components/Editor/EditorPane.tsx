@@ -52,6 +52,10 @@ export function EditorPane() {
     );
   }
 
+  // The editors read their content once, at mount. A reload (sync pull, another
+  // tab) has to remount them, or the next keystroke writes the old text back.
+  const editorKey = `${activeTab.id}#${activeTab.reloads ?? 0}`;
+
   return (
     <div className="relative flex h-full flex-1 min-w-0 flex-col">
       {search && (
@@ -70,9 +74,9 @@ export function EditorPane() {
             flash of anything here reads as the document itself flickering. */}
         <Suspense fallback={null}>
           {activeTab.mode === "rich" ? (
-            <RichTextEditor key={activeTab.id} initialValue={activeTab.content} onChange={handleChange} />
+            <RichTextEditor key={editorKey} initialValue={activeTab.content} onChange={handleChange} />
           ) : (
-            <PlainTextEditor key={activeTab.id} initialValue={activeTab.content} onChange={handleChange} />
+            <PlainTextEditor key={editorKey} initialValue={activeTab.content} onChange={handleChange} />
           )}
         </Suspense>
       </div>
