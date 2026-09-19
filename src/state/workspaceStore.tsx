@@ -256,15 +256,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Files can change without this window writing them: a sync pull, or another
   // tab of the web build. Either way the tree and any open tab showing one of
   // them have to catch up. A dirty tab is left alone — the user's own edit is
-  // newer, and their next save pushes it.
+  // newer, and their next save pushes it — unless sync is cloud-first about it:
+  // the cloud replaced the note and its local edit moved to `replaced[path]`.
+  // Then the unsaved buffer follows it there, and the tab shows the cloud copy;
+  // otherwise the next autosave would write the stale edit back over the cloud.
   useEffect(() => {
-    const apply = (changedPaths: string[]) => {
+    const apply = (changedPaths: string[], replaced: Record<string, string> = {}) => {
       void refreshTree();
       for (const path of changedPaths) {
         const tab = stateRef.current.tabs.find((t) => t.filePath === path);
-        if (!tab || tab.isDirty) continue;
+        const copy = replaced[path];
+        if (!tab || (tab.isDirty && !copy)) continue;
         readTextFile(path).then(
-          (content) => dispatch({ type: "RELOAD_TAB", id: tab.id, content }),
+          (content) => {
+            const live = stateRef.current.tabs.find((t) => t.id === tab.id);
+            if (!copy || !live?.isDirty) return dispatch({ type: "RELOAD_TAB", id: tab.id, content });
+            dispatch({ type: "RELOAD_TAB", id: tab.id, content, force: true });
+            writeTextFile(copy, live.content).catch((err) =>
+              console.warn("Could not keep the unsaved edit in", copy, err),
+            );
+          },
           // Unreadable means it was deleted, on another device or in another tab.
           () => dispatch({ type: "CLOSE_TABS_UNDER", prefix: path }),
         );

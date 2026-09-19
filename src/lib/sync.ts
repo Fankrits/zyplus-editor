@@ -58,15 +58,19 @@ export interface SyncStatus {
  * Pure core                                                           *
  * ------------------------------------------------------------------ */
 
-export type PullAction = "download" | "conflict" | "delete" | "keep-local" | "none";
+export type PullAction = "download" | "adopt" | "conflict" | "delete" | "keep-local" | "none";
 
 /**
- * What to do with one changed remote note.
+ * What to do with one changed remote note. Cloud-first: the cloud copy is the
+ * note, and a diverged local edit is what moves aside.
  *
- * The whole thing turns on a single question: is the local file still exactly
- * what the server last gave us? If it is, the remote copy is strictly newer and
- * can be applied. If it is not, both sides moved and neither may be discarded —
- * local content stays put and the remote copy lands beside it.
+ * The whole thing turns on two questions. Does disk already hold exactly what
+ * the cloud has? Then there is nothing to reconcile, whatever the manifest says
+ * — a lost manifest or a folder copied to a new machine used to file a conflict
+ * copy of every note. Otherwise, is the local file still what the server last
+ * gave us? If it is, the remote copy is strictly newer and can be applied. If it
+ * is not, both sides moved: the cloud copy takes the note's name and the local
+ * edit is kept beside it.
  */
 export function decidePull(args: {
   remoteDeleted: boolean;
@@ -75,8 +79,10 @@ export function decidePull(args: {
   localHash: string | null;
   /** Hash recorded at the last successful sync; null when never synced. */
   knownHash: string | null;
+  /** Hash of the cloud content; null for a tombstone. */
+  remoteHash: string | null;
 }): PullAction {
-  const { remoteDeleted, localExists, localHash, knownHash } = args;
+  const { remoteDeleted, localExists, localHash, knownHash, remoteHash } = args;
   const localUntouched = localHash !== null && localHash === knownHash;
 
   if (remoteDeleted) {
@@ -84,6 +90,7 @@ export function decidePull(args: {
     return localUntouched ? "delete" : "keep-local";
   }
   if (!localExists) return "download";
+  if (localHash === remoteHash) return "adopt";
   return localUntouched ? "download" : "conflict";
 }
 
@@ -214,7 +221,9 @@ async function applyingRemote<T>(write: () => Promise<T>): Promise<T> {
 
 let status: SyncStatus = { state: "off", lastSyncedAt: null, error: null };
 const statusListeners = new Set<(s: SyncStatus) => void>();
-const pulledListeners = new Set<(changedPaths: string[]) => void>();
+/** `replaced` maps a note the cloud overwrote to the copy holding its local edit. */
+type PulledListener = (changedPaths: string[], replaced: Record<string, string>) => void;
+const pulledListeners = new Set<PulledListener>();
 
 export function getStatus(): SyncStatus {
   return status;
@@ -230,7 +239,7 @@ export function useSyncStatus(): SyncStatus {
 }
 
 /** Fires after a pull touched disk, with the absolute paths that changed. */
-export function onPulled(cb: (changedPaths: string[]) => void): () => void {
+export function onPulled(cb: PulledListener): () => void {
   pulledListeners.add(cb);
   return () => pulledListeners.delete(cb);
 }
@@ -321,28 +330,28 @@ async function pushOne(relPath: string, mine: number): Promise<void> {
   }
 
   const content = await readTextFile(abs);
-  const send = (baseRev: number) =>
-    authFetch("/api/notes", {
-      method: "PUT",
-      body: JSON.stringify({ relPath, content, baseRev }),
-    });
+  const hash = await hashOf(content);
+  // Already what the cloud holds — a pull just adopted or downloaded it.
+  if (known?.hash === hash) return;
 
-  let res = await send(known?.rev ?? 0);
+  const res = await authFetch("/api/notes", {
+    method: "PUT",
+    body: JSON.stringify({ relPath, content, baseRev: known?.rev ?? 0 }),
+  });
 
   if (res.status === 409) {
-    // Both sides moved. Local content is what the user is looking at, so it
-    // wins; the server's copy is preserved beside it and the upload is retried
-    // on top of the revision that beat us.
-    const loser = (await res.json()) as { rev: number; content: string };
+    // Another device wrote since our pull. The cloud wins, so this is settled by
+    // the next pull like any other remote change — `decidePull` adopts it when
+    // the content matches, and otherwise moves this edit aside. `queue` runs
+    // that pull and then retries whatever is still left to upload.
     ensureCurrent(mine);
-    await writeConflictCopy(relPath, loser.content);
-    res = await send(loser.rev);
+    queue(relPath);
+    return;
   }
 
   if (res.status === 413) throw new StorageFullError(`No storage left for ${relPath}`);
   if (!res.ok) throw new Error(`Upload of ${relPath} failed (${res.status})`);
   const { rev } = (await res.json()) as { rev: number };
-  const hash = await hashOf(content);
   ensureCurrent(mine);
   manifest!.files[relPath] = { hash, rev };
 }
@@ -382,7 +391,8 @@ async function flush(): Promise<void> {
 
 /* --- pull --- */
 
-async function writeConflictCopy(relPath: string, content: string): Promise<void> {
+/** Writes `content` beside `relPath` under a free conflict name, and returns that name. */
+async function writeConflictCopy(relPath: string, content: string): Promise<string> {
   let candidate = conflictName(relPath, new Date());
   for (let n = 1; n < 50 && (await pathExists(toAbsPath(root!, candidate))); n++) {
     candidate = conflictName(relPath, new Date(), n);
@@ -392,6 +402,7 @@ async function writeConflictCopy(relPath: string, content: string): Promise<void
     await ensureFolder(parentOf(abs));
     await writeTextFile(abs, content);
   });
+  return candidate;
 }
 
 async function fetchContent(relPath: string): Promise<string> {
@@ -459,6 +470,7 @@ export async function pull(): Promise<void> {
   const rootNow = root!;
 
   const changed: string[] = [];
+  const replaced: Record<string, string> = {};
 
   for (const note of notes) {
     const known = manifestNow.files[note.relPath];
@@ -473,40 +485,53 @@ export async function pull(): Promise<void> {
     }
 
     const abs = toAbsPath(rootNow, note.relPath);
+    const remoteDeleted = note.deletedAt !== null;
+    // Fetched before disk is read, so no network wait sits between reading the
+    // local file and overwriting it — a save landing in that gap was lost.
+    const remote = remoteDeleted ? null : await fetchContent(note.relPath);
+    const remoteHash = remote === null ? null : await hashOf(remote);
+    current();
     const localExists = await pathExists(abs);
-    const localHash = localExists ? await hashOf(await readTextFile(abs)) : null;
+    const local = localExists ? await readTextFile(abs) : null;
+    const localHash = local === null ? null : await hashOf(local);
     current();
 
     const action = decidePull({
-      remoteDeleted: note.deletedAt !== null,
+      remoteDeleted,
       localExists,
       localHash,
       knownHash: known?.hash ?? null,
+      remoteHash,
     });
 
-    if (action === "download") {
-      const content = await fetchContent(note.relPath);
-      current();
+    if (action === "adopt") {
+      manifestNow.files[note.relPath] = { hash: remoteHash!, rev: note.rev };
+    } else if (action === "download" || action === "conflict") {
+      if (action === "conflict") {
+        // Cloud-first: the local edit moves aside and goes up as its own note,
+        // so the other devices see it too rather than it living only here.
+        const copy = await writeConflictCopy(note.relPath, local!);
+        current();
+        pending.add(copy);
+        const copyAbs = toAbsPath(rootNow, copy);
+        replaced[abs] = copyAbs;
+        changed.push(copyAbs);
+      }
       await applyingRemote(async () => {
         await ensureFolder(parentOf(abs));
-        await writeTextFile(abs, content);
+        await writeTextFile(abs, remote!);
       });
-      manifestNow.files[note.relPath] = { hash: await hashOf(content), rev: note.rev };
+      manifestNow.files[note.relPath] = { hash: remoteHash!, rev: note.rev };
       changed.push(abs);
     } else if (action === "delete") {
       await applyingRemote(() => deletePath(abs, false));
       manifestNow.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
       changed.push(abs);
-    } else if (action === "conflict" || action === "keep-local") {
-      if (action === "conflict") {
-        const theirs = await fetchContent(note.relPath);
-        current();
-        await writeConflictCopy(note.relPath, theirs);
-        changed.push(abs);
-      }
-      // Local is still the newer edit, so re-upload it on top of this revision.
-      // Recording the rev is what makes that retry land: starting from 0 instead
-      // collided with the very row we just read and filed a second conflict copy.
+    } else if (action === "keep-local") {
+      // Deleted in the cloud but edited here: the edit is not thrown away, so it
+      // is re-uploaded on top of the tombstone. Recording the rev is what makes
+      // that retry land: starting from 0 instead collided with the very row we
+      // just read and filed a second conflict copy.
       manifestNow.files[note.relPath] = { hash: UNSYNCED, rev: note.rev };
       pending.add(note.relPath);
     }
@@ -517,7 +542,7 @@ export async function pull(): Promise<void> {
   current();
   await saveManifest();
   setStatus({ state: "idle", lastSyncedAt: Date.now(), error: null });
-  if (changed.length > 0) for (const cb of pulledListeners) cb(changed);
+  if (changed.length > 0) for (const cb of pulledListeners) cb(changed, replaced);
 }
 
 /** One pull followed by whatever is queued, never overlapping itself. */

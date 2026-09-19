@@ -44,7 +44,8 @@ export type Action =
   | { type: "UPDATE_TAB_CONTENT"; id: string; content: string }
   | { type: "SET_TAB_MODE"; id: string; mode: TabMode }
   | { type: "SAVE_TAB_SUCCESS"; id: string; content: string }
-  | { type: "RELOAD_TAB"; id: string; content: string }
+  /** `force` also replaces a dirty tab — only once its edit is saved elsewhere. */
+  | { type: "RELOAD_TAB"; id: string; content: string; force?: boolean }
   | { type: "REMAP_TAB_PATHS"; oldPrefix: string; newPrefix: string }
   | { type: "CLOSE_TABS_UNDER"; prefix: string }
   | {
@@ -160,7 +161,7 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
       return {
         ...state,
         tabs: state.tabs.map((t) =>
-          t.id === action.id && !t.isDirty
+          t.id === action.id && (action.force || !t.isDirty)
             ? { ...t, content: action.content, savedContent: action.content, reloads: (t.reloads ?? 0) + 1 }
             : t,
         ),
