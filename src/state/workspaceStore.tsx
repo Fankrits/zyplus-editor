@@ -122,6 +122,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
   const getState = useCallback(() => stateRef.current, []);
+  const restoreFailed = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -143,15 +144,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             });
           }
         } catch (err) {
+          // The workspace stays empty, but the stored session is kept: writing
+          // the empty one over it would lose every folder and tab for good over
+          // what may be one bad launch. It is replaced once the user opens something.
           console.warn("Failed to restore workspace session:", err);
-          if (!isMounted) return;
-          dispatch({
-            type: "RESTORE_WORKSPACE",
-            roots: [],
-            tree: [],
-            tabs: [],
-            activeTabId: null,
-          });
+          restoreFailed.current = true;
         }
       }
 
@@ -203,6 +200,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const lastPersisted = useRef<string | null>(null);
   useEffect(() => {
     if (!isHydrated) return;
+    if (restoreFailed.current && state.roots.length === 0 && state.tabs.length === 0) return;
+    restoreFailed.current = false;
     const session: PersistedWorkspaceSession = {
       version: 2,
       roots: state.roots,
