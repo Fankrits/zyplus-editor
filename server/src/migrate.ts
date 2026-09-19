@@ -11,14 +11,18 @@ import { pool } from "./db";
  * and piped schema.sql through `podman exec` — neither exists on a host, and an
  * unpinned CLI can migrate with a different Better Auth than the server runs.
  */
-const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
-const pending = [...toBeCreated, ...toBeAdded].map((t) => t.table);
-await runMigrations();
-console.log(pending.length ? `Better Auth: migrated ${pending.join(", ")}` : "Better Auth: up to date");
+try {
+  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
+  const pending = [...toBeCreated, ...toBeAdded].map((t) => t.table);
+  await runMigrations();
+  console.log(pending.length ? `Better Auth: migrated ${pending.join(", ")}` : "Better Auth: up to date");
 
-// schema.sql is several statements with no parameters, which the simple query
-// protocol runs as one batch — and inside one implicit transaction.
-await pool.query(await Bun.file(new URL("../schema.sql", import.meta.url)).text());
-console.log("Note schema: applied");
-
-await pool.end();
+  // schema.sql is several statements with no parameters, which the simple query
+  // protocol runs as one batch — and inside one implicit transaction.
+  await pool.query(await Bun.file(new URL("../schema.sql", import.meta.url)).text());
+  console.log("Note schema: applied");
+} finally {
+  // Otherwise a failed migration leaves the pool's sockets open and the deploy
+  // step hangs instead of failing.
+  await pool.end();
+}
