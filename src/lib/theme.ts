@@ -28,7 +28,8 @@ const BASE_KEY = "zyplus:theme-base";
 export function getTheme(): Theme {
   if (typeof window === "undefined" || !window.localStorage) return "system";
   const stored = localStorage.getItem(THEME_KEY);
-  return stored && stored in THEMES ? (stored as Theme) : "system";
+  // Own keys only: `in` also accepts "toString" and friends off the prototype.
+  return stored && Object.prototype.hasOwnProperty.call(THEMES, stored) ? (stored as Theme) : "system";
 }
 
 /** HeroUI keys both its CSS variables and the `dark:` variant off `data-theme`. */
