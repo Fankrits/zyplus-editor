@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 # A newer push to the same branch makes the in-flight run irrelevant.
 concurrency:
   group: check-${{ github.ref }}
@@ -21,6 +24,7 @@ jobs:
         platform: [macos-latest, ubuntu-22.04, windows-latest]
 
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
