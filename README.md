@@ -28,6 +28,7 @@ Built with Tauri&nbsp;2, React&nbsp;19 and TypeScript.
 |---|---|
 | ✍️ **Two modes** | WYSIWYG rich text (Milkdown/Crepe) or raw markdown (CodeMirror) — `⌘E` to switch, per tab |
 | 🎨 **Rich rendering** | GitHub alert callouts, Mermaid diagrams, KaTeX math, syntax-highlighted code |
+| 🧩 **Extensions** | Optional, installed from Settings: Mermaid, KaTeX, and a JSON editor (tree / table / text, built on [vanilla-jsoneditor](https://github.com/josdejong/svelte-jsoneditor)) for `.json` files |
 | 🗂️ **Real workspace** | Multiple project folders, tabs, file tree, find & replace, optional autosave |
 | 📄 **PDF export** | Genuinely paginated PDFs through the native print pipeline — not `window.print()` |
 | 🖱️ **OS integration** | Registered editor for `.md`, `.markdown`, `.mdown`, `.mkd`, `.txt` — double-click opens a tab |

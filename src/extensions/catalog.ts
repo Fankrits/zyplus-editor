@@ -47,6 +47,26 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     cssUrl: getAssetUrl("katex.css"),
     cssSha256: checksums["katex.css"],
   },
+  {
+    id: "json",
+    name: "JSON Editor",
+    description:
+      "Opens .json files in a tree, table or text view. Edit values, format, sort, search and repair, with big numbers kept exact.",
+    version: "1.0.0",
+    author: "Zyplus",
+    sizeBytesEstimate: 1_100_000,
+    languages: [],
+    fileExtensions: [".json"],
+    fileModes: [
+      { id: "text", label: "Text" },
+      { id: "tree", label: "Tree" },
+      { id: "table", label: "Table" },
+    ],
+    downloadUrl: getAssetUrl("json.js"),
+    sha256: checksums["json.js"],
+    cssUrl: getAssetUrl("json.css"),
+    cssSha256: checksums["json.css"],
+  },
 ];
 
 export function getManifestById(id: string): ExtensionManifest | undefined {

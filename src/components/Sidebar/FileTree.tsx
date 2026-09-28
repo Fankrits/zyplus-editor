@@ -25,6 +25,7 @@ import {
   type TreeNode,
 } from "../../state/workspaceStore";
 import * as fs from "../../lib/fs";
+import { extensionManager } from "../../extensions/extensionManager";
 import {
   ContextMenu,
   useContextMenu,
@@ -67,7 +68,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
         node.toggle();
         return;
       }
-      if (!fs.isMarkdownFile(node.data.name)) return;
+      if (!fs.isMarkdownFile(node.data.name) && !extensionManager.getFileEditorId(node.data.name)) return;
       onOpenFile(node.data.id, node.data.name);
     },
     [onOpenFile],

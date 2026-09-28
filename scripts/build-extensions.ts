@@ -57,11 +57,27 @@ async function buildExtensions() {
   }
   fs.writeFileSync(path.join(outdir, "katex.css"), cssContent, "utf-8");
 
+  console.log("Building JSON editor extension bundle...");
+  const jsonBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/json.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "json.js",
+  });
+  if (!jsonBuild.success) {
+    console.error("JSON editor build failed:", jsonBuild.logs);
+    process.exit(1);
+  }
+  // The editor's own styles ship inside the bundle; this maps its variables onto the app's theme tokens.
+  fs.copyFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/json.css"), path.join(outdir, "json.css"));
+
   // Release builds download these from the repository and run them, so each
   // build carries the hashes of the exact files at its own commit. Hashed as
   // text, the way the app hashes what it downloads.
   const checksums: Record<string, string> = {};
-  for (const name of ["mermaid.js", "katex.js", "katex.css"]) {
+  for (const name of ["mermaid.js", "katex.js", "katex.css", "json.js", "json.css"]) {
     const text = fs.readFileSync(path.join(outdir, name), "utf-8");
     checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
   }

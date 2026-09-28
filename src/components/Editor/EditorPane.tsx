@@ -2,6 +2,8 @@ import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState, ty
 import { useWorkspaceActions, useWorkspaceTabs } from "../../state/workspaceStore";
 import { Wordmark } from "../Logo";
 import { FIND_EVENT } from "../../lib/commands";
+import { useFileEditorId } from "../../extensions/useExtensions";
+import { ExtensionFileEditor } from "./ExtensionFileEditor";
 
 /**
  * The editors are the heaviest thing the app owns — Milkdown/ProseMirror for the
@@ -52,6 +54,7 @@ export function EditorPane() {
   const { dispatch } = useWorkspaceActions();
   const contentRef = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState<{ replace: boolean } | null>(null);
+  const fileEditorId = useFileEditorId(activeTab?.filePath);
 
   useEffect(() => {
     const open = (e: Event) => {
@@ -65,6 +68,14 @@ export function EditorPane() {
     (markdown: string) => {
       if (!activeTab) return;
       dispatch({ type: "UPDATE_TAB_CONTENT", id: activeTab.id, content: markdown });
+    },
+    [activeTab, dispatch],
+  );
+
+  const handleViewChange = useCallback(
+    (view: string) => {
+      if (!activeTab) return;
+      dispatch({ type: "SET_TAB_VIEW", id: activeTab.id, view });
     },
     [activeTab, dispatch],
   );
@@ -84,7 +95,8 @@ export function EditorPane() {
 
   return (
     <div className="relative flex h-full flex-1 min-w-0 flex-col">
-      {search && (
+      {/* An extension's editor has its own search. */}
+      {search && !fileEditorId && (
         <Suspense fallback={null}>
           <SearchBar
             key={activeTab.id + activeTab.mode}
@@ -100,7 +112,16 @@ export function EditorPane() {
             flash of anything here reads as the document itself flickering. */}
         <EditorErrorBoundary key={editorKey}>
           <Suspense fallback={null}>
-            {activeTab.mode === "rich" ? (
+            {fileEditorId ? (
+              <ExtensionFileEditor
+                key={editorKey}
+                extensionId={fileEditorId}
+                initialValue={activeTab.content}
+                onChange={handleChange}
+                mode={activeTab.view}
+                onModeChange={handleViewChange}
+              />
+            ) : activeTab.mode === "rich" ? (
               <RichTextEditor key={editorKey} initialValue={activeTab.content} onChange={handleChange} />
             ) : (
               <PlainTextEditor key={editorKey} initialValue={activeTab.content} onChange={handleChange} />

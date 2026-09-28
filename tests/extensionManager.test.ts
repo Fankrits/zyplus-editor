@@ -9,6 +9,7 @@ describe("Extension System", () => {
     // Reset states
     await extensionManager.uninstallAndRemove("mermaid");
     await extensionManager.uninstallAndRemove("katex");
+    await extensionManager.uninstallAndRemove("json");
   });
 
   it("should provide valid catalog definitions for Mermaid and KaTeX", () => {
@@ -124,6 +125,22 @@ describe("Extension System", () => {
     }
   });
 
+  it("hands .json files to the JSON editor only once it is enabled", () => {
+    const json = getManifestById("json");
+    expect(json?.fileExtensions).toEqual([".json"]);
+    expect(json?.cssUrl).toBeDefined();
+
+    expect(extensionManager.getFileEditorId("/notes/config.json")).toBeNull();
+
+    localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["json"]));
+    expect(extensionManager.getFileEditorId("/notes/config.json")).toBe("json");
+    expect(extensionManager.getFileEditorId("C:\\notes\\CONFIG.JSON")).toBe("json");
+    expect(extensionManager.getFileEditorId("/notes/todo.md")).toBeNull();
+    expect(extensionManager.getFileEditorId("/notes/data.json.bak")).toBeNull();
+    // It owns files, not code blocks: a ```json fence in a note keeps rendering as plain code.
+    expect(extensionManager.getPreviewRenderer("json")).toBeNull();
+  });
+
   // The bundle is fetched from the network and then run with the app's full
   // privileges; anything but the exact file this build shipped with is refused.
   it("refuses a bundle whose hash does not match, and keeps nothing of it", async () => {
@@ -149,6 +166,11 @@ describe("Extension System", () => {
        export default () => ({ id: "mermaid", renderCodeBlockPreview: () => "<svg>lazy</svg>" });`,
     );
     localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["mermaid"]));
+    // As an install records itself; without this the copy reads as stale and is re-downloaded.
+    localStorage.setItem(
+      "zyplus:installed-extension-versions",
+      JSON.stringify({ mermaid: getManifestById("mermaid")!.sha256 }),
+    );
 
     await extensionManager.initialize();
     expect(extensionManager.getState("mermaid")?.status).toBe("installed");
@@ -164,6 +186,75 @@ describe("Extension System", () => {
     // Loaded once, then rendered synchronously.
     expect(extensionManager.getPreviewRenderer("mermaid")?.("mermaid", "graph TD", () => {})).toBe("<svg>lazy</svg>");
     expect(g.__mermaidEvals).toBe(1);
+  });
+
+  // An install is a copy. One made by an older build would run forever, so nothing
+  // that changed in the bundle (a fix, a restyle) could ever reach anyone who had
+  // already installed it.
+  describe("an installed copy from an older build", () => {
+    const bundle = (marker: string) =>
+      `export default () => ({ id: "mermaid", marker: "${marker}" });`;
+    const marker = (rt: unknown) => (rt as { marker: string }).marker;
+    const installed = async () => {
+      const { readTextFile, joinPath } = await import("../src/lib/fs");
+      const { getExtensionDir } = await import("../src/extensions/loader");
+      return readTextFile(await joinPath(await getExtensionDir("mermaid"), "index.js"));
+    };
+
+    it("is replaced by the bundle this build pins, before it runs", async () => {
+      // Installed by an older build: no record of which bundle it came from.
+      await saveExtensionFiles("mermaid", bundle("old"));
+      localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["mermaid"]));
+
+      const manifest = getManifestById("mermaid")!;
+      const realHash = manifest.sha256;
+      manifest.sha256 = await hashOf(bundle("new"));
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(bundle("new"))) as unknown as typeof fetch;
+      try {
+        expect(marker(await extensionManager.loadRuntime("mermaid"))).toBe("new");
+        expect(await installed()).toBe(bundle("new"));
+      } finally {
+        globalThis.fetch = originalFetch;
+        manifest.sha256 = realHash;
+      }
+    });
+
+    it("keeps working offline, using the copy it has", async () => {
+      await saveExtensionFiles("mermaid", bundle("old"));
+      localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["mermaid"]));
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        throw new TypeError("Failed to fetch");
+      }) as unknown as typeof fetch;
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      try {
+        expect(marker(await extensionManager.loadRuntime("mermaid"))).toBe("old");
+        expect(await installed()).toBe(bundle("old"));
+      } finally {
+        globalThis.fetch = originalFetch;
+        console.warn = originalWarn;
+      }
+    });
+
+    it("is not replaced by a download that fails its integrity check", async () => {
+      await saveExtensionFiles("mermaid", bundle("old"));
+      localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["mermaid"]));
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => new Response(bundle("tampered"))) as unknown as typeof fetch;
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      try {
+        expect(marker(await extensionManager.loadRuntime("mermaid"))).toBe("old");
+        expect(await installed()).toBe(bundle("old"));
+      } finally {
+        globalThis.fetch = originalFetch;
+        console.warn = originalWarn;
+      }
+    });
   });
 
   it("should handle download failures cleanly without leaving corrupted state", async () => {

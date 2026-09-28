@@ -361,4 +361,27 @@ describe("UPDATE_TAB_CONTENT", () => {
     const undone = workspaceReducer(edited, { type: "UPDATE_TAB_CONTENT", id: tab.id, content: "on disk" });
     expect(undone.tabs[0].isDirty).toBe(false);
   });
+  // An extension's editor (the JSON one) reports its view back after every switch the tab
+  // bar asks for; without this a no-op report would rebuild every tab and re-render the app.
+  it("records an extension editor's view, and ignores a report of the one already set", () => {
+    const tab: TabState = {
+      id: "/p/a.json",
+      filePath: "/p/a.json",
+      title: "a.json",
+      content: "{}",
+      savedContent: "{}",
+      isDirty: false,
+      mode: "rich",
+    };
+    const empty: WorkspaceState = { roots: [], tree: [], tabs: [], activeTabId: null };
+    const state = workspaceReducer(empty, { type: "OPEN_TAB", tab });
+    expect(state.tabs[0].view).toBeUndefined();
+
+    const tree = workspaceReducer(state, { type: "SET_TAB_VIEW", id: tab.id, view: "tree" });
+    expect(tree.tabs[0].view).toBe("tree");
+    expect(tree.tabs[0].mode).toBe("rich"); // the markdown editors' switch is untouched
+
+    expect(workspaceReducer(tree, { type: "SET_TAB_VIEW", id: tab.id, view: "tree" })).toBe(tree);
+    expect(workspaceReducer(tree, { type: "SET_TAB_VIEW", id: "/p/other.json", view: "text" })).toBe(tree);
+  });
 });

@@ -21,6 +21,8 @@ export interface TabState {
   savedContent: string;
   isDirty: boolean;
   mode: TabMode;
+  /** The view an extension's editor is showing (the JSON editor's "tree", say); `mode` is for the markdown editors. */
+  view?: string;
   /** Bumped when the file changed underneath the tab, so the editor remounts with it. */
   reloads?: number;
 }
@@ -43,6 +45,7 @@ export type Action =
   | { type: "REORDER_TAB"; id: string; targetId: string | null }
   | { type: "UPDATE_TAB_CONTENT"; id: string; content: string }
   | { type: "SET_TAB_MODE"; id: string; mode: TabMode }
+  | { type: "SET_TAB_VIEW"; id: string; view: string }
   | { type: "SAVE_TAB_SUCCESS"; id: string; content: string }
   | { type: "RELOAD_TAB"; id: string; content: string }
   | { type: "REMAP_TAB_PATHS"; oldPrefix: string; newPrefix: string }
@@ -144,6 +147,16 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
         ...state,
         tabs: state.tabs.map((t) => (t.id === action.id ? { ...t, mode: action.mode } : t)),
       };
+    case "SET_TAB_VIEW": {
+      // The editor reports its view back after every change the tab bar asks for, and may
+      // still be reporting as its tab closes; neither should rebuild the state.
+      const tab = state.tabs.find((t) => t.id === action.id);
+      if (!tab || tab.view === action.view) return state;
+      return {
+        ...state,
+        tabs: state.tabs.map((t) => (t.id === action.id ? { ...t, view: action.view } : t)),
+      };
+    }
     case "SAVE_TAB_SUCCESS":
       return {
         ...state,

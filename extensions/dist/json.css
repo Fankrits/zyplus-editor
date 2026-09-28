@@ -1,0 +1,500 @@
+/*
+ * vanilla-jsoneditor is themed entirely through --jse-* custom properties, and
+ * every one of them is repointed here at the app's HeroUI tokens — the same move
+ * milkdown-heroui-theme.css makes for Crepe. The tokens are what each palette in
+ * App.css restates, so the editor follows light, dark and every ported palette
+ * without a line of JS, and switching theme repaints it live.
+ *
+ * Shipped as the extension's stylesheet (`build:extensions` copies it to
+ * extensions/dist/json.css), so it exists only while the extension is installed.
+ */
+:root {
+  --jse-theme: light;
+
+  /* HeroUI's focus rings (its `focus-ring` and `focus-field-ring` utilities), for the rules below. */
+  --zy-ring: 0 0 0 2px var(--background), 0 0 0 4px var(--focus);
+  --zy-field-ring: 0 0 0 2px var(--focus);
+
+  /* Same faces as the rest of the app; the mono stack is the plain editor's. */
+  --jse-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --jse-font-family-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "JetBrains Mono", monospace;
+  --jse-font-size: 14px;
+  --jse-font-size-mono: 15px;
+  --jse-font-size-main-menu: 14px;
+  --jse-menu-button-size: 30px;
+
+  /* Colors, fonts, sizes */
+  --jse-theme-color: var(--accent);
+  --jse-theme-color-highlight: color-mix(in oklab, var(--accent) 88%, var(--foreground));
+  --jse-background-color: var(--background);
+  --jse-text-color: var(--foreground);
+  --jse-text-color-inverse: var(--background);
+  --jse-text-readonly: var(--muted);
+  --jse-error-color: var(--danger);
+  --jse-warning-color: var(--warning);
+  --jse-info-color: var(--accent);
+
+  /* Main, menu, modal */
+  --jse-main-border: 1px solid var(--separator);
+  --jse-menu-color: var(--foreground);
+  --jse-modal-background: var(--overlay);
+  --jse-overlay-background: var(--backdrop);
+  --jse-modal-overlay-background: var(--backdrop);
+  --jse-modal-code-background: var(--default);
+  --jse-modal-editor-theme-color: var(--muted);
+  --jse-modal-editor-theme-color-highlight: var(--foreground);
+
+  /* Tooltip in text mode */
+  --jse-tooltip-color: var(--overlay-foreground);
+  --jse-tooltip-background: var(--overlay);
+  --jse-tooltip-border: 1px solid var(--border);
+  --jse-tooltip-action-button-color: var(--accent-foreground);
+  --jse-tooltip-action-button-background: var(--accent);
+
+  /* Panels: navigation bar, gutter, search box */
+  --jse-panel-background: var(--background);
+  --jse-panel-color: var(--foreground);
+  --jse-panel-color-readonly: var(--muted);
+  --jse-panel-background-border: 1px solid var(--separator);
+  --jse-panel-border: 1px solid var(--separator);
+  --jse-panel-button-color: var(--muted);
+  --jse-panel-button-color-highlight: var(--foreground);
+  --jse-panel-button-background-highlight: var(--default);
+
+  /* Navigation bar */
+  --jse-navigation-bar-background: var(--default);
+  --jse-navigation-bar-background-highlight: color-mix(in oklab, var(--default) 80%, var(--foreground));
+  --jse-navigation-bar-dropdown-color: var(--foreground);
+
+  /* Context menu */
+  --jse-context-menu-background: var(--overlay);
+  --jse-context-menu-background-highlight: var(--default);
+  --jse-context-menu-separator-color: var(--separator);
+  --jse-context-menu-color: var(--overlay-foreground);
+  --jse-context-menu-pointer-background: var(--default);
+  --jse-context-menu-pointer-background-highlight: color-mix(in oklab, var(--default) 80%, var(--foreground));
+  --jse-context-menu-pointer-color: var(--overlay-foreground);
+
+  /* Contents: keys and values */
+  --jse-key-color: var(--foreground);
+  --jse-value-color: var(--foreground);
+  /* HeroUI's success/warning are bright enough to vanish on a light canvas, so the
+     value colors lean toward the foreground (the diagrams' "-text" tokens do the same). */
+  --jse-value-color-number: color-mix(in oklab, var(--warning) 62%, var(--foreground));
+  --jse-value-color-boolean: color-mix(in oklab, var(--accent) 80%, var(--foreground));
+  --jse-value-color-null: color-mix(in oklab, var(--accent) 80%, var(--foreground));
+  --jse-value-color-string: color-mix(in oklab, var(--success) 62%, var(--foreground));
+  --jse-value-color-url: var(--accent);
+  --jse-delimiter-color: var(--muted);
+  --jse-edit-outline: 2px solid var(--accent);
+
+  /* Contents: selected or hovered */
+  --jse-selection-background-color: var(--accent-soft);
+  --jse-selection-background-inactive-color: var(--default);
+  --jse-hover-background-color: color-mix(in oklab, var(--default) 60%, transparent);
+  --jse-active-line-background-color: transparent;
+  --jse-search-match-background-color: var(--warning-soft);
+
+  /* Contents: collapsed items in an array */
+  --jse-collapsed-items-background-color: var(--default);
+  --jse-collapsed-items-selected-background-color: var(--accent-soft);
+  --jse-collapsed-items-link-color: var(--muted);
+  --jse-collapsed-items-link-color-highlight: var(--accent);
+
+  /* Contents: search results */
+  --jse-search-match-color: var(--warning-soft);
+  --jse-search-match-outline: none;
+  --jse-search-match-active-color: var(--warning);
+  --jse-search-match-active-outline: none;
+
+  /* Contents: inline tags */
+  --jse-tag-background: var(--default);
+  --jse-tag-color: var(--muted);
+
+  /* Contents: table */
+  --jse-table-header-background: var(--surface-secondary);
+  --jse-table-header-background-highlight: var(--default);
+  --jse-table-row-odd-background: color-mix(in oklab, var(--foreground) 4%, transparent);
+
+  /* Controls in modals: inputs, buttons, links */
+  --jse-input-background: var(--default);
+  /* HeroUI fields are filled and borderless; the border width and color are its own tokens. */
+  --jse-input-border: var(--field-border-width, 0px) solid var(--field-border, transparent);
+  --jse-button-background: var(--accent);
+  --jse-button-background-highlight: color-mix(in oklab, var(--accent) 88%, var(--foreground));
+  --jse-button-color: var(--accent-foreground);
+  --jse-button-secondary-background: var(--default);
+  --jse-button-secondary-background-highlight: color-mix(in oklab, var(--default) 80%, var(--foreground));
+  --jse-button-secondary-background-disabled: var(--surface-secondary);
+  --jse-button-secondary-color: var(--default-foreground);
+  --jse-a-color: var(--accent);
+  --jse-a-color-highlight: color-mix(in oklab, var(--accent) 80%, var(--foreground));
+
+  /* svelte-select */
+  --jse-svelte-select-background: var(--default);
+  --jse-svelte-select-border: var(--field-border-width, 0px) solid var(--field-border, transparent);
+  --jse-svelte-select-border-radius: var(--field-radius);
+  --list-background: var(--overlay);
+  --item-hover-bg: var(--default);
+  --multi-item-bg: var(--default);
+  --input-color: var(--foreground);
+  --multi-clear-bg: var(--muted);
+  --multi-item-clear-icon-color: var(--foreground);
+  --multi-item-outline: 1px solid var(--border);
+  --list-shadow: var(--overlay-shadow);
+
+  /* Variables the library reads with a hard-coded fallback and no other way in. Found by
+     listing every --jse-* it uses that this file did not set. */
+  --jse-controls-box-shadow: var(--overlay-shadow);
+  --jse-message-success-color: var(--success-foreground);
+  --jse-message-success-background: var(--success);
+  --jse-message-error-color: var(--danger-foreground);
+  --jse-message-warning-color: var(--warning-foreground);
+  --jse-message-info-color: var(--accent-foreground);
+  --jse-button-primary-color: var(--accent-foreground);
+  --jse-item-is-active-bg: var(--accent);
+  --jse-context-menu-pointer-hover-background: var(--accent-soft-hover);
+  --jse-context-menu-color-disabled: color-mix(in oklab, var(--overlay-foreground) 40%, transparent);
+  --jse-input-color: var(--field-foreground);
+  --jse-input-radius: var(--field-radius);
+  /* HeroUI's fields show focus with a ring, not a border. */
+  --jse-input-border-focus: var(--field-border-width, 0px) solid var(--field-border-focus, transparent);
+
+  /* Found by reading the library's source, not its rendered CSS: these have literal fallbacks
+     (the warning bar is #ffde5c, the info bar #4f91ff, a disabled primary button #9d9d9d) and
+     only show up once such a bar or button is on screen. */
+  --jse-button-primary-background: var(--accent);
+  --jse-button-primary-background-highlight: color-mix(in oklab, var(--accent) 88%, var(--foreground));
+  --jse-button-primary-background-disabled: color-mix(in oklab, var(--accent) 50%, transparent);
+  --jse-message-error-background: var(--danger);
+  --jse-message-warning-background: var(--warning);
+  --jse-message-info-background: var(--accent);
+  --jse-message-action-background: color-mix(in oklab, currentColor 18%, transparent);
+  --jse-message-action-background-highlight: color-mix(in oklab, currentColor 28%, transparent);
+  --jse-context-menu-tip-background: var(--default);
+  --jse-context-menu-tip-color: var(--muted);
+
+  /* Color picker */
+  --jse-color-picker-background: var(--overlay);
+  --jse-color-picker-border-box-shadow: var(--border) 0 0 0 1px;
+}
+
+:root[data-theme="dark"] {
+  --jse-theme: dark;
+}
+
+/*
+ * Chrome. The variables above recolor the editor, but its toolbar is drawn in
+ * the accent color with white-on-blue buttons. Zyplus's own toolbar is the tab
+ * bar: transparent on the canvas, round buttons, `default` fill for the active
+ * one (the Rich / Plain switch). Restyled to match. The library's selectors are
+ * as specific as these and its stylesheet is injected later, hence !important.
+ */
+.jse-main {
+  background: var(--background);
+}
+
+.jse-main .jse-menu {
+  height: auto !important;
+  padding: 0.375rem 0.75rem !important;
+  gap: 0.125rem;
+  align-items: center;
+  background: transparent !important;
+  border-bottom: 1px solid var(--separator);
+}
+
+.jse-main .jse-menu .jse-button {
+  height: 28px !important;
+  min-width: 28px;
+  border-radius: 9999px !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  font-weight: 500;
+}
+
+.jse-main .jse-menu .jse-button:hover:not(:disabled),
+.jse-main .jse-menu .jse-button:focus-visible {
+  background: var(--default) !important;
+  color: var(--foreground) !important;
+}
+
+.jse-main .jse-menu .jse-button:disabled {
+  opacity: 0.4;
+}
+
+.jse-main .jse-menu .jse-button.jse-selected {
+  background: var(--default) !important;
+  color: var(--default-foreground) !important;
+}
+
+.jse-main .jse-menu .jse-separator {
+  align-self: center;
+  height: 16px;
+  margin: 0 0.375rem;
+  background: var(--separator) !important;
+}
+
+.jse-main .jse-navigation-bar {
+  border-bottom: none !important;
+  padding: 0 0.75rem;
+}
+
+/*
+ * Breathing room like the other editors. It goes on the tree's root node, as a
+ * margin: padding on `.jse-contents` itself (the scroll container) makes the
+ * tree measure its rows wrong and stretch every one of them.
+ */
+.jse-main .jse-contents > .jse-json-node.jse-root {
+  margin: 0.5rem 0.75rem 6rem 0.25rem;
+}
+
+/* Text mode is CodeMirror, like the plain editor: same rhythm and caret as plainTextTheme.ts (its 15px comes from --jse-font-size-mono). */
+.jse-main .jse-text-mode .cm-scroller,
+.jse-main .jse-text-mode .cm-content {
+  line-height: 1.65 !important;
+  letter-spacing: -0.01em;
+}
+
+.jse-main .jse-text-mode .cm-cursor,
+.jse-main .jse-text-mode .cm-dropCursor {
+  border-left: 2px solid var(--accent) !important;
+}
+
+/*
+ * Popups. Modals, the context menu and tooltips are layers beside `.jse-main`, not
+ * inside it, so nothing above reaches them. (The toolbar's ⋮ button is also called
+ * `.jse-contextmenu`, so the popup's root is reached through its layer.) Metrics are the app's own: HeroUI's
+ * popover is `--radius-3xl` (24px) with the overlay shadow and no border, its menu
+ * is 6px of padding with 2px between items, and an item is 16px round, 36px tall.
+ */
+.jse-modal,
+.jse-absolute-popup .jse-contextmenu,
+.jse-dropdown-items {
+  background: var(--overlay);
+  color: var(--overlay-foreground);
+  box-shadow: var(--overlay-shadow) !important;
+  border: none !important;
+}
+
+.jse-modal {
+  border-radius: min(32px, var(--radius-3xl, 1.5rem)) !important;
+  overflow: hidden;
+}
+
+/* The dialog is `overflow: visible` (its select lists must escape), so its square inner panel would paint over the corners. */
+.jse-modal [class*="modal-inner"] {
+  border-radius: inherit;
+}
+
+.jse-modal::backdrop {
+  background: var(--jse-overlay-background);
+}
+
+.jse-absolute-popup .jse-contextmenu,
+.jse-dropdown-items {
+  padding: 6px !important;
+  border-radius: min(32px, var(--radius-3xl, 1.5rem)) !important;
+  font-size: 14px;
+}
+
+.jse-contextmenu .jse-context-menu-button,
+.jse-contextmenu .jse-open-dropdown,
+.jse-dropdown-items button {
+  height: auto !important;
+  min-height: 36px;
+  padding: 6px 10px !important;
+  border-radius: 1rem !important;
+  color: var(--overlay-foreground);
+}
+
+.jse-contextmenu .jse-tip {
+  border-radius: 1rem;
+  background: var(--default);
+  color: var(--muted);
+}
+
+.jse-contextmenu .jse-label {
+  color: var(--muted);
+}
+
+.jse-tooltip {
+  border-radius: 0.75rem !important;
+}
+
+.jse-context-menu-pointer {
+  border-radius: 9999px !important;
+}
+
+/* The modal's header is a plain title, and its body has HeroUI's 1.5rem of padding. */
+.jse-modal [class*="modal-inner"] > .jse-header {
+  height: auto !important;
+  padding: 1.25rem 1.5rem 0.25rem !important;
+  background: transparent !important;
+  color: var(--foreground) !important;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.jse-modal [class*="modal-inner"] > .jse-header button,
+.jse-config,
+.jse-message button,
+.jse-validation-errors-overview button {
+  border-radius: 9999px !important;
+}
+
+.jse-modal [class*="modal-inner"] > .jse-header button {
+  color: var(--muted) !important;
+}
+
+/* The library's hover on these is a hard-coded white wash; a wash of the text color follows the theme. */
+.jse-modal [class*="modal-inner"] > .jse-header button:hover,
+.jse-config:hover,
+.jse-message .jse-text.jse-clickable:hover,
+.jse-message button:hover,
+.jse-validation-errors-overview button.jse-validation-errors:hover {
+  background: color-mix(in oklab, currentColor 14%, transparent) !important;
+  color: inherit !important;
+}
+
+.jse-modal .jse-modal-contents {
+  padding: 0.5rem 1.5rem 1.5rem !important;
+}
+
+/* Buttons: HeroUI's are pills at 14px / 500 with its focus ring, wherever the library draws one. */
+.jse-modal button.jse-primary,
+.jse-modal button.jse-secondary,
+.jse-welcome .jse-contents button,
+.jse-table-mode-welcome .jse-nested-arrays button.jse-nested-array-action,
+.jse-text-mode .jse-fold-progress .jse-fold-cancel-button {
+  border-radius: 9999px !important;
+  padding: 0.5rem 1.25rem !important;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.jse-modal button:focus-visible,
+.jse-main button:focus-visible,
+.jse-contextmenu button:focus-visible,
+.jse-dropdown-items button:focus-visible,
+.jse-navigation-bar button:focus-visible {
+  outline: none !important;
+  box-shadow: var(--zy-ring);
+}
+
+/*
+ * Fields: filled, borderless, `--field-radius`, HeroUI's field ring on focus. They all sit
+ * on an overlay, where `--field-background` is the very same color (dark theme), so they use
+ * HeroUI's secondary input variant: `--default`, `--default-hover` on hover. A select's own
+ * filter input (inside `.svelte-select`) is deliberately not one of them: it is transparent and
+ * sits over the selected value, and filling it hides that value.
+ */
+.jse-modal textarea,
+.jse-modal input.jse-path,
+.jse-modal table.jse-transform-wizard input:not([type="checkbox"]):not(.svelte-select input),
+.jse-search-box .jse-search-form input,
+.jse-navigation-bar-path-editor input.jse-navigation-bar-text,
+.jse-text-mode .cm-search input {
+  border: var(--field-border-width, 0px) solid var(--field-border, transparent) !important;
+  border-radius: var(--field-radius) !important;
+  background: var(--default) !important;
+  color: var(--field-foreground) !important;
+  padding: 0.5rem 0.75rem;
+  font-size: 14px;
+}
+
+.jse-modal textarea:hover,
+.jse-modal input.jse-path:hover,
+.jse-modal table.jse-transform-wizard input:not([type="checkbox"]):not(.svelte-select input):hover,
+.jse-search-box .jse-search-form input:hover {
+  background: var(--default-hover) !important;
+}
+
+.jse-modal textarea:focus,
+.jse-modal input.jse-path:focus,
+.jse-modal table.jse-transform-wizard input:not([type="checkbox"]):not(.svelte-select input):focus,
+.jse-search-box .jse-search-form input:focus,
+.jse-navigation-bar-path-editor input:focus,
+.jse-text-mode .cm-search input:focus {
+  outline: none !important;
+  background: var(--default) !important;
+  box-shadow: var(--zy-field-ring);
+}
+
+/* Search box and the select lists beside it: popover surfaces. */
+.jse-search-box,
+.svelte-select-list,
+.jse-select-query-language .jse-select-query-language-container {
+  border-radius: 1rem !important;
+  background: var(--overlay) !important;
+  color: var(--overlay-foreground) !important;
+  box-shadow: var(--overlay-shadow) !important;
+  border: none !important;
+}
+
+.svelte-select-list .item {
+  border-radius: 0.75rem;
+}
+
+.jse-search-box .jse-search-form button,
+.jse-navigation-bar-item button.jse-navigation-bar-button,
+.jse-navigation-bar-path-editor button,
+.jse-navigation-bar .jse-navigation-bar-edit {
+  border-radius: 9999px !important;
+}
+
+/* The message bar (errors, warnings) keeps its solid HeroUI status colors; its buttons are pills. */
+.jse-message {
+  font-size: 14px;
+}
+
+.jse-message .jse-actions button,
+.jse-message .jse-action {
+  font-weight: 500;
+}
+
+/* Small inline pieces: the "3 items" tag, the value under the cursor, the swatch, the copied toast. */
+.jse-tag {
+  border-radius: 9999px !important;
+  padding: 0 0.5em;
+}
+
+.jse-key,
+.jse-value,
+div.jse-editable-div,
+div.jse-editable-div[contenteditable="true"] {
+  border-radius: 0.375rem !important;
+}
+
+.jse-color-picker-button {
+  border-radius: 0.375rem !important;
+}
+
+.jse-navigation-bar-path-editor .jse-copied-text {
+  border-radius: 0.5rem !important;
+}
+
+.jse-boolean-toggle input,
+.jse-main input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.jse-text-mode .cm-tooltip {
+  border: none !important;
+  border-radius: 1rem !important;
+  overflow: hidden;
+  background: var(--overlay) !important;
+  color: var(--overlay-foreground) !important;
+  box-shadow: var(--overlay-shadow) !important;
+}
+
+.jse-text-mode .jse-fold-progress .jse-fold-progress-track,
+.jse-text-mode .jse-fold-progress .jse-fold-progress-fill {
+  border-radius: 9999px !important;
+}
+
+/* The text-mode footer ("Line 3, Column 7") is a quiet caption, not a second line of code. */
+.jse-main .jse-status-bar {
+  padding: 0.25rem 0.75rem !important;
+  font-size: 12px !important;
+  color: var(--muted) !important;
+}
