@@ -18,15 +18,12 @@ import {
   TrashIcon,
   Cancel01Icon,
   Alert01Icon,
-  CloudIcon,
 } from "@hugeicons/core-free-icons";
 import {
   useWorkspaceActions,
-  useWorkspaceSession,
   useWorkspaceTree,
   type TreeNode,
 } from "../../state/workspaceStore";
-import { useSyncStatus } from "../../lib/sync";
 import * as fs from "../../lib/fs";
 import {
   ContextMenu,
@@ -49,11 +46,6 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   const { dispatch, refreshTree } = useWorkspaceActions();
   const isRoot = useCallback((id: string) => state.roots.includes(id), [state.roots]);
 
-  // Exactly one project mirrors to the cloud. Badging it is the only place the
-  // two kinds of folder look different — everything else about them is the same.
-  const { defaultFolder } = useWorkspaceSession();
-  const syncStatus = useSyncStatus();
-  const syncedRoot = syncStatus.state === "off" ? null : defaultFolder;
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [pendingDelete, setPendingDelete] = useState<NodeApi<TreeNode>[] | null>(null);
@@ -253,10 +245,9 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
         onNodeContextMenu={handleNodeContextMenu}
         onRequestCreate={onRequestCreate}
         isRoot={isRoot(props.node.data.id)}
-        isSynced={props.node.data.id === syncedRoot}
       />
     ),
-    [handleNodeContextMenu, onRequestCreate, isRoot, syncedRoot],
+    [handleNodeContextMenu, onRequestCreate, isRoot],
   );
 
   return (
@@ -315,7 +306,6 @@ interface NodeProps extends NodeRendererProps<TreeNode> {
   onNodeContextMenu: (e: ContextMenuOrigin, node: NodeApi<TreeNode>) => void;
   onRequestCreate: (kind: "file" | "folder", targetDir: string) => void;
   isRoot: boolean;
-  isSynced: boolean;
 }
 
 function Node({
@@ -325,7 +315,6 @@ function Node({
   onNodeContextMenu,
   onRequestCreate,
   isRoot,
-  isSynced,
 }: NodeProps) {
   // `style.paddingLeft` already equals node.level * the Tree's `indent` prop (react-arborist
   // computes this for us) — just add a small constant base inset on top of it.
@@ -407,15 +396,6 @@ function Node({
         className="shrink-0 opacity-70"
       />
       <span className={`min-w-0 flex-1 truncate ${isRoot ? "font-semibold" : ""}`}>{node.data.name}</span>
-      {isSynced && (
-        <HugeiconsIcon
-          icon={CloudIcon}
-          size={14}
-          strokeWidth={1.75}
-          className="shrink-0 text-muted"
-          aria-label="Synced across your devices"
-        />
-      )}
       {node.data.isFolder && (
         // Hover reveals these on a pointer device; where there is no hover they
         // are simply always on, or touch users could never reach them.

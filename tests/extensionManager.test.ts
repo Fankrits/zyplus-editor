@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { ASSET_REF, EXTENSION_CATALOG, formatBytes, getManifestById } from "../src/extensions/catalog";
-import { hashOf } from "../src/lib/sync";
-import { extensionManager } from "../src/extensions/extensionManager";
+import { extensionManager, hashOf } from "../src/extensions/extensionManager";
 import { isExtensionInstalledLocally, saveExtensionFiles } from "../src/extensions/loader";
 
 describe("Extension System", () => {

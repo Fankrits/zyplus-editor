@@ -8,7 +8,6 @@ import {
   InformationCircleIcon,
   FolderOpenIcon,
   CheckmarkCircle02Icon,
-  CloudIcon,
   PuzzleIcon,
   Delete02Icon,
   AlertCircleIcon,
@@ -20,14 +19,12 @@ import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL } from "../lib/shortcuts";
 import { isNativeApp, isMac } from "../lib/platform";
 import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
-import { AccountSection } from "./AccountSection";
 import { Field } from "./Field";
 import { useExtensions } from "../extensions/useExtensions";
 import { formatBytes } from "../extensions/catalog";
 
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings01Icon },
-  { id: "account", label: "Account", icon: CloudIcon },
   { id: "theme", label: "Theme", icon: PaintBoardIcon },
   { id: "extensions", label: "Extensions", icon: PuzzleIcon },
   { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
@@ -166,7 +163,7 @@ export function SettingsModal({
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 text-sm">
                   {section === "general" && (
                     <div className="flex flex-col gap-5">
-                      <Field label="Notes folder" hint="Where new files land when nothing is open. Synced when you're signed in.">
+                      <Field label="Notes folder" hint="Where new files land when nothing is open.">
                         <div className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
                           <HugeiconsIcon icon={FolderOpenIcon} size={16} className="shrink-0 text-muted" />
                           <span
@@ -221,8 +218,6 @@ export function SettingsModal({
                       </Field>
                     </div>
                   )}
-
-                  {section === "account" && <AccountSection />}
 
                   {section === "theme" && (
                     <Field label="Appearance" hint="System follows your OS setting.">

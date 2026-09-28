@@ -7,7 +7,11 @@ import {
   saveExtensionFiles,
 } from "./loader";
 import type { ExtensionManifest, ExtensionRuntime, ExtensionState } from "./types";
-import { hashOf } from "../lib/sync";
+
+export async function hashOf(content: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /** Downloaded code runs with the app's full privileges, so it has to be the code this build shipped with. */
 async function assertIntact(name: string, text: string, expected: string | undefined): Promise<void> {

@@ -78,7 +78,7 @@ export function EditorPane() {
     );
   }
 
-  // The editors read their content once, at mount. A reload (sync pull, another
+  // The editors read their content once, at mount. A reload (another
   // tab) has to remount them, or the next keystroke writes the old text back.
   const editorKey = `${activeTab.id}#${activeTab.reloads ?? 0}`;
 

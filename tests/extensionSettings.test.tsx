@@ -2,9 +2,8 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { WorkspaceProvider } from "../src/state/workspaceStore";
 import { SettingsModal } from "../src/components/SettingsModal";
-import { extensionManager } from "../src/extensions/extensionManager";
+import { extensionManager, hashOf } from "../src/extensions/extensionManager";
 import { getManifestById } from "../src/extensions/catalog";
-import { hashOf } from "../src/lib/sync";
 
 describe("SettingsModal Extensions Tab", () => {
   beforeEach(async () => {
