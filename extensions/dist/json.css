@@ -236,7 +236,7 @@
 
 .jse-main .jse-navigation-bar {
   border-bottom: none !important;
-  padding: 0 0.75rem;
+  padding: 0 0.75rem !important;
 }
 
 /*
@@ -452,6 +452,24 @@
 .jse-navigation-bar-path-editor button,
 .jse-navigation-bar .jse-navigation-bar-edit {
   border-radius: 9999px !important;
+}
+
+/*
+ * The copy button ships with zero padding of its own (just an icon at font-size),
+ * so it stretches to the input's full height at only ~14px wide — border-radius
+ * 9999px turns that into a squashed stadium shape instead of a circle, sitting
+ * flush against the input text with no breathing room. Sized and centered to
+ * match --jse-menu-button-size, the icon-button size the rest of the editor uses.
+ */
+.jse-navigation-bar-path-editor button.jse-navigation-bar-copy {
+  align-self: center !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: var(--jse-menu-button-size) !important;
+  height: var(--jse-menu-button-size) !important;
+  padding: 0 !important;
+  margin: 0 0.25rem !important;
 }
 
 /* The message bar (errors, warnings) keeps its solid HeroUI status colors; its buttons are pills. */
