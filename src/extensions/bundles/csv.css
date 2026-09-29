@@ -55,6 +55,19 @@
   box-shadow: var(--zy-field-ring) !important;
 }
 
+/*
+ * Tabulator's own base stylesheet gives `.tabulator-table` (the row container,
+ * one level up from `.tabulator-row`) a hardcoded white background. Rows
+ * themselves are opaque here so it never shows directly — except the even-row
+ * zebra tint below, which is a translucent overlay and composites against
+ * whatever is behind the row. Left unset, that leftover white turns a 4%
+ * tint into a solid near-white row instead of a subtle stripe.
+ */
+.tabulator-table {
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
+}
+
 .tabulator-row {
   background-color: var(--background) !important;
   border-bottom: 1px solid var(--separator) !important;
