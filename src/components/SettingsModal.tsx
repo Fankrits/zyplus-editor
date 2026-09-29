@@ -79,6 +79,53 @@ function ThemePreview({ theme }: { theme: Theme }) {
   );
 }
 
+/** A "make Zyplus the default app for X" row: claims a UTI via LaunchServices on macOS. */
+function DefaultAppField({
+  isOpen,
+  uti,
+  label,
+  hint,
+}: {
+  isOpen: boolean;
+  uti: string;
+  label: string;
+  hint: string;
+}) {
+  const [state, setState] = useState<string | null>(null);
+
+  // The OS is the source of truth: another app may have taken this type since last time.
+  useEffect(() => {
+    if (!isOpen) return;
+    fs.isDefaultAppFor(uti).then(
+      (yes) => setState(yes ? "done" : null),
+      (err) => console.warn(`Could not ask which app opens ${label}:`, err),
+    );
+  }, [isOpen, uti, label]);
+
+  const makeDefault = async () => {
+    try {
+      await fs.setDefaultAppFor(uti);
+      setState("done");
+    } catch (err) {
+      setState(String(err));
+    }
+  };
+
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="secondary" isDisabled={!isMac || state === "done"} onPress={makeDefault}>
+          {state === "done" ? "Zyplus is the default" : "Make default"}
+        </Button>
+        {state === "done" && (
+          <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-accent" />
+        )}
+        {state && state !== "done" && <span className="text-xs text-danger">{state}</span>}
+      </div>
+    </Field>
+  );
+}
+
 export type { SectionId as SettingsSection };
 
 export function SettingsModal({
@@ -98,30 +145,11 @@ export function SettingsModal({
   const section = controlledSection ?? localSection;
   const setSection = onSectionChange ?? setLocalSection;
   const [theme, setThemeState] = useState<Theme>(getTheme);
-  const [defaultAppState, setDefaultAppState] = useState<string | null>(null);
   const { states: extensionStates, downloadAndInstall, uninstallAndRemove } = useExtensions();
 
   const pickTheme = (next: Theme) => {
     setTheme(next);
     setThemeState(next);
-  };
-
-  // The OS is the source of truth: another app may have taken .md since last time.
-  useEffect(() => {
-    if (!isOpen) return;
-    fs.isDefaultMarkdownApp().then(
-      (yes) => setDefaultAppState(yes ? "done" : null),
-      (err) => console.warn("Could not ask which app opens .md files:", err),
-    );
-  }, [isOpen]);
-
-  const makeDefaultApp = async () => {
-    try {
-      await fs.setDefaultMarkdownApp();
-      setDefaultAppState("done");
-    } catch (err) {
-      setDefaultAppState(String(err));
-    }
   };
 
   return (
@@ -180,31 +208,38 @@ export function SettingsModal({
                         </div>
                       </Field>
                       {isNativeApp && (
-                      <Field
-                        label="Default Markdown app"
-                        hint={
-                          isMac
-                            ? "Open .md files with Zyplus when you double-click them."
-                            : "Set Zyplus as the handler for .md in your system's default apps settings."
-                        }
-                      >
-                        <div className="flex items-center gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            isDisabled={!isMac || defaultAppState === "done"}
-                            onPress={makeDefaultApp}
-                          >
-                            {defaultAppState === "done" ? "Zyplus is the default" : "Make default"}
-                          </Button>
-                          {defaultAppState === "done" && (
-                            <HugeiconsIcon icon={CheckmarkCircle02Icon} size={16} className="text-accent" />
-                          )}
-                          {defaultAppState && defaultAppState !== "done" && (
-                            <span className="text-xs text-danger">{defaultAppState}</span>
-                          )}
-                        </div>
-                      </Field>
+                        <>
+                          <DefaultAppField
+                            isOpen={isOpen}
+                            uti={fs.DEFAULT_APP_UTI.markdown}
+                            label="Default Markdown app"
+                            hint={
+                              isMac
+                                ? "Open .md files with Zyplus when you double-click them."
+                                : "Set Zyplus as the handler for .md in your system's default apps settings."
+                            }
+                          />
+                          <DefaultAppField
+                            isOpen={isOpen}
+                            uti={fs.DEFAULT_APP_UTI.csv}
+                            label="Default CSV app"
+                            hint={
+                              isMac
+                                ? "Open .csv files with Zyplus when you double-click them."
+                                : "Set Zyplus as the handler for .csv in your system's default apps settings."
+                            }
+                          />
+                          <DefaultAppField
+                            isOpen={isOpen}
+                            uti={fs.DEFAULT_APP_UTI.json}
+                            label="Default JSON app"
+                            hint={
+                              isMac
+                                ? "Open .json files with Zyplus when you double-click them."
+                                : "Set Zyplus as the handler for .json in your system's default apps settings."
+                            }
+                          />
+                        </>
                       )}
                       <Field label="Autosave" hint="Saves open files a moment after you stop typing.">
                         <Switch isSelected={isAutosaveEnabled} onChange={setIsAutosaveEnabled}>

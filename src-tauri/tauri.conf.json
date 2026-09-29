@@ -59,6 +59,39 @@
         "description": "Plain text document",
         "role": "Editor",
         "mimeType": "text/plain"
+      },
+      {
+        "ext": [
+          "csv"
+        ],
+        "contentTypes": [
+          "public.comma-separated-values-text"
+        ],
+        "name": "CSV",
+        "description": "Comma-separated values",
+        "role": "Editor",
+        "mimeType": "text/csv"
+      },
+      {
+        "ext": [
+          "tsv"
+        ],
+        "name": "TSV",
+        "description": "Tab-separated values",
+        "role": "Editor",
+        "mimeType": "text/tab-separated-values"
+      },
+      {
+        "ext": [
+          "json"
+        ],
+        "contentTypes": [
+          "public.json"
+        ],
+        "name": "JSON",
+        "description": "JSON document",
+        "role": "Editor",
+        "mimeType": "application/json"
       }
     ],
     "createUpdaterArtifacts": true

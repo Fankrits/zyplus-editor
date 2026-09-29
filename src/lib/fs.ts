@@ -521,14 +521,21 @@ export async function takePendingFiles(): Promise<string[]> {
   return invoke<string[]>("take_pending_files");
 }
 
-/** Registers Zyplus as the system handler for Markdown. macOS only. */
-export async function setDefaultMarkdownApp(): Promise<void> {
+/** Uniform Type Identifiers for the file types Zyplus can claim as default. macOS only. */
+export const DEFAULT_APP_UTI = {
+  markdown: "net.daringfireball.markdown",
+  csv: "public.comma-separated-values-text",
+  json: "public.json",
+} as const;
+
+/** Registers Zyplus as the system handler for a UTI (see `DEFAULT_APP_UTI`). macOS only. */
+export async function setDefaultAppFor(uti: string): Promise<void> {
   if (!isTauri()) throw new Error("Only available in the desktop app.");
-  await invoke("set_default_markdown_app");
+  await invoke("set_default_app_for", { uti });
 }
 
-/** Whether Markdown already opens in Zyplus. */
-export async function isDefaultMarkdownApp(): Promise<boolean> {
+/** Whether the given UTI already opens in Zyplus. */
+export async function isDefaultAppFor(uti: string): Promise<boolean> {
   if (!isTauri()) return false;
-  return invoke<boolean>("is_default_markdown_app");
+  return invoke<boolean>("is_default_app_for", { uti });
 }
