@@ -67,6 +67,25 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     cssUrl: getAssetUrl("json.css"),
     cssSha256: checksums["json.css"],
   },
+  {
+    id: "csv",
+    name: "CSV / TSV Editor",
+    description:
+      "Opens .csv and .tsv files in a table or text view. Edit rows and columns with lossless round-tripping for ragged rows.",
+    version: "1.0.0",
+    author: "Zyplus",
+    sizeBytesEstimate: 900_000,
+    languages: ["csv", "tsv"],
+    fileExtensions: [".csv", ".tsv"],
+    fileModes: [
+      { id: "table", label: "Table" },
+      { id: "text", label: "Text" },
+    ],
+    downloadUrl: getAssetUrl("csv.js"),
+    sha256: checksums["csv.js"],
+    cssUrl: getAssetUrl("csv.css"),
+    cssSha256: checksums["csv.css"],
+  },
 ];
 
 export function getManifestById(id: string): ExtensionManifest | undefined {

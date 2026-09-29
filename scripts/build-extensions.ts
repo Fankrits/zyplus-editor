@@ -73,11 +73,37 @@ async function buildExtensions() {
   // The editor's own styles ship inside the bundle; this maps its variables onto the app's theme tokens.
   fs.copyFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/json.css"), path.join(outdir, "json.css"));
 
+  console.log("Building CSV editor extension bundle...");
+  const csvBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "csv.js",
+  });
+  if (!csvBuild.success) {
+    console.error("CSV editor build failed:", csvBuild.logs);
+    process.exit(1);
+  }
+  // Tabulator's own CSS (`tabulator.min.css`) is the structural stylesheet its markup
+  // requires to lay out as a grid at all (flex, absolute-positioned headers, column
+  // widths) — without it the table renders as plain stacked blocks. Our own csv.css is
+  // only the HeroUI recoloring on top of it, the same relationship katex.min.css has to
+  // its font-inlined build above. Tabulator's own colors are harmless: every one we care
+  // about is overridden with `!important`.
+  const tabulatorBaseCss = fs.readFileSync(
+    path.resolve(import.meta.dirname, "../node_modules/tabulator-tables/dist/css/tabulator.min.css"),
+    "utf-8",
+  );
+  const csvOverrideCss = fs.readFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.css"), "utf-8");
+  fs.writeFileSync(path.join(outdir, "csv.css"), tabulatorBaseCss + "\n" + csvOverrideCss);
+
   // Release builds download these from the repository and run them, so each
   // build carries the hashes of the exact files at its own commit. Hashed as
   // text, the way the app hashes what it downloads.
   const checksums: Record<string, string> = {};
-  for (const name of ["mermaid.js", "katex.js", "katex.css", "json.js", "json.css"]) {
+  for (const name of ["mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css"]) {
     const text = fs.readFileSync(path.join(outdir, name), "utf-8");
     checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
   }
