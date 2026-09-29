@@ -52,9 +52,16 @@
   padding: 4px 8px !important;
 }
 
+/*
+ * `--zy-field-ring` bleeds outward (its background/focus layers sit outside the
+ * input's own box), which Tabulator's `.tabulator-col { overflow: hidden }`
+ * then clips to a handful of stray corner arcs instead of a clean ring. The
+ * plain cell editor isn't inside that clipped ancestor, so it can use the
+ * shared outward ring fine — this one needs to stay inside its own box.
+ */
 .tabulator-header .tabulator-col .tabulator-col-content .tabulator-col-title .tabulator-title-editor:focus {
   outline: none !important;
-  box-shadow: var(--zy-field-ring) !important;
+  box-shadow: inset 0 0 0 2px var(--focus) !important;
 }
 
 /*
