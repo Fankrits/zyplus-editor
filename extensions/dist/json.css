@@ -420,6 +420,18 @@
   box-shadow: var(--zy-field-ring);
 }
 
+/*
+ * The path editor's own wrapping div carries a second, square-cornered border
+ * (`--jse-edit-outline`, the same token an inline tree edit uses) independent
+ * of the rounded field ring above on the input it wraps — two focus-styled
+ * boxes nested in each other. Muted here down to just the input's own ring;
+ * `:not(.error)` leaves the wrapper's border-color alone when the typed path
+ * is invalid, so that red outline still shows.
+ */
+.jse-navigation-bar-path-editor:not(.error) {
+  border-color: transparent !important;
+}
+
 /* Search box and the select lists beside it: popover surfaces. */
 .jse-search-box,
 .svelte-select-list,
