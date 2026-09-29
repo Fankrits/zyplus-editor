@@ -33,6 +33,7 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.11.0",
     "@uiw/react-codemirror": "^4.25.11",
+    "chart.js": "4.5.1",
     "katex": "^0.18.7",
     "lossless-json": "^4.3.1",
     "marked": "^18.0.12",

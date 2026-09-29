@@ -99,11 +99,25 @@ async function buildExtensions() {
   const csvOverrideCss = fs.readFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.css"), "utf-8");
   fs.writeFileSync(path.join(outdir, "csv.css"), tabulatorBaseCss + "\n" + csvOverrideCss);
 
+  console.log("Building Charts extension bundle...");
+  const chartBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/chart.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "chart.js",
+  });
+  if (!chartBuild.success) {
+    console.error("Chart build failed:", chartBuild.logs);
+    process.exit(1);
+  }
+
   // Release builds download these from the repository and run them, so each
   // build carries the hashes of the exact files at its own commit. Hashed as
   // text, the way the app hashes what it downloads.
   const checksums: Record<string, string> = {};
-  for (const name of ["mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css"]) {
+  for (const name of ["mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css", "chart.js"]) {
     const text = fs.readFileSync(path.join(outdir, name), "utf-8");
     checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
   }

@@ -86,6 +86,17 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     cssUrl: getAssetUrl("csv.css"),
     cssSha256: checksums["csv.css"],
   },
+  {
+    id: "chart",
+    name: "Charts",
+    description: "Renders bar, line, pie, doughnut, and scatter charts from JSON configuration.",
+    version: "1.0.0",
+    author: "Zyplus",
+    sizeBytesEstimate: 210_000,
+    languages: ["chart", "chartjs"],
+    downloadUrl: getAssetUrl("chart.js"),
+    sha256: checksums["chart.js"],
+  },
 ];
 
 export function getManifestById(id: string): ExtensionManifest | undefined {
