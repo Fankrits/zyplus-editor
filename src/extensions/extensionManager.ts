@@ -293,6 +293,13 @@ class ExtensionManager {
     return manifest && this.getEnabledIds().includes(manifest.id) ? manifest.id : null;
   }
 
+  /** The catalog entry that could edit this file but isn't enabled yet, if any. */
+  public getAvailableButDisabledExtension(path: string): ExtensionManifest | null {
+    const lower = path.toLowerCase();
+    const manifest = EXTENSION_CATALOG.find((m) => m.fileExtensions?.some((ext) => lower.endsWith(ext)));
+    return manifest && !this.getEnabledIds().includes(manifest.id) ? manifest : null;
+  }
+
   /** An installed extension's runtime, evaluating its bundle on first use. */
   public loadRuntime(id: string): Promise<ExtensionRuntime> {
     const manifest = getManifestById(id);

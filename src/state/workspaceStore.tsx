@@ -24,6 +24,7 @@ import {
 } from "../lib/fs";
 
 import { WELCOME_NOTE, WELCOME_NOTE_NAME } from "../lib/welcomeNote";
+import { suggestExtensionFor } from "../extensions/suggestExtension";
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
   workspaceReducer,
@@ -293,6 +294,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           mode: "rich",
         },
       });
+      suggestExtensionFor(path);
       return true;
     } catch (err) {
       console.error(`Failed to open file at "${path}":`, err);
