@@ -9,9 +9,9 @@ import {
   exists,
 } from "@tauri-apps/plugin-fs";
 import { join as tauriJoin, dirname as tauriDirname, appDataDir } from "@tauri-apps/api/path";
-import { isTauri, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { isMac, isWindows } from "./platform";
+import { isMac, isNativeApp, isWindows } from "./platform";
 import { onOtherTabWrite, openWebStore, persistWeb, type WebOp } from "./webStore";
 import type { TreeNode } from "../state/workspaceReducer";
 
@@ -48,7 +48,7 @@ export const WEB_ROOT = "/Zyplus";
 
 /** Loads the web build's stored files. Call once before rendering; a no-op on desktop. */
 export async function initWebFs(): Promise<void> {
-  if (isTauri()) return;
+  if (isNativeApp) return;
   webFiles.clear();
   webDirs.clear();
   try {
@@ -138,11 +138,11 @@ function mockDirname(p: string): string {
  * every time one reached for it directly.
  */
 export async function joinPath(...parts: string[]): Promise<string> {
-  return isTauri() ? tauriJoin(...parts) : mockJoin(...parts);
+  return isNativeApp ? tauriJoin(...parts) : mockJoin(...parts);
 }
 
 export async function dirnameOf(path: string): Promise<string> {
-  return isTauri() ? tauriDirname(path) : mockDirname(path);
+  return isNativeApp ? tauriDirname(path) : mockDirname(path);
 }
 
 /** Last segment of a path, either separator. The one copy in the app. */
@@ -186,7 +186,7 @@ async function reportingPicker(title: string, fn: () => Promise<string | null>):
 /** On the web there are no folders to pick, so this is always the notes folder. */
 export function openFolderDialog(): Promise<string | null> {
   return reportingPicker("Could not choose a folder", async () => {
-    if (!isTauri()) {
+    if (!isNativeApp) {
       await ensureFolder(WEB_ROOT);
       return WEB_ROOT;
     }
@@ -200,7 +200,7 @@ export function openFileDialog(): Promise<string | null> {
 }
 
 async function pickFile(): Promise<string | null> {
-  if (!isTauri()) return importFromDevice();
+  if (!isNativeApp) return importFromDevice();
   const result = await openDialog({
     directory: false,
     multiple: false,
@@ -247,7 +247,7 @@ async function freePath(dir: string, name: string, label = ""): Promise<string> 
 
 /** Reads a directory tree top to bottom, skipping dotfiles/dot-directories. */
 export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
-  const entries = isTauri() ? await readDir(dirPath) : webReadDir(dirPath);
+  const entries = isNativeApp ? await readDir(dirPath) : webReadDir(dirPath);
   // Subfolders are read together rather than one after another: a tree three
   // levels deep used to cost the sum of every folder in it, in series, and this
   // runs at startup and again whenever another tab changes the notes.
@@ -299,7 +299,7 @@ export function displayJoin(parent: string, name: string): string {
  * guards with a Files & Folders prompt.
  */
 export async function defaultFolderPath(): Promise<string> {
-  if (!isTauri()) return WEB_ROOT;
+  if (!isNativeApp) return WEB_ROOT;
   return joinPath(await appDataDir(), DEFAULT_FOLDER_NAME);
 }
 
@@ -312,13 +312,13 @@ export async function createDefaultFolder(): Promise<string> {
 
 /** Whether a path exists. */
 export async function pathExists(path: string): Promise<boolean> {
-  if (!isTauri()) return webEntriesUnder(path).length > 0;
+  if (!isNativeApp) return webEntriesUnder(path).length > 0;
   return exists(path);
 }
 
 /** Creates a folder and any missing parents. Unlike `createFolder`, existing is fine. */
 export async function ensureFolder(path: string): Promise<void> {
-  if (isTauri()) {
+  if (isNativeApp) {
     await mkdir(path, { recursive: true });
     return;
   }
@@ -328,7 +328,7 @@ export async function ensureFolder(path: string): Promise<void> {
 }
 
 export async function readTextFile(path: string): Promise<string> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     const content = webFiles.get(path);
     if (content === undefined) throw new Error(`File not found: ${path}`);
     return content;
@@ -337,7 +337,7 @@ export async function readTextFile(path: string): Promise<string> {
 }
 
 export async function writeTextFile(path: string, content: string): Promise<void> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     await applyWeb([[path, content]]);
   } else {
     await writeTextFileRaw(path, content);
@@ -403,7 +403,7 @@ export async function tryFs(
   } catch (err) {
     console.error(`${title} — "${path}":`, err);
     try {
-      if (isTauri()) await message(explainFsError(err, path), { title, kind: "error" });
+      if (isNativeApp) await message(explainFsError(err, path), { title, kind: "error" });
       else window.alert(`${title}\n\n${explainFsError(err, path)}`);
     } catch {
       // Reporting the failure failing is not worth a second failure path.
@@ -461,7 +461,7 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
   if (newPath.toLowerCase() !== oldPath.toLowerCase() && (await pathExists(newPath))) {
     throw new Error(`"${basenameOf(newPath)}" already exists there`);
   }
-  if (!isTauri()) {
+  if (!isNativeApp) {
     const moved = webEntriesUnder(oldPath);
     await applyWeb([
       ...moved.map(([p]): WebOp => [p, undefined]),
@@ -473,7 +473,7 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
 }
 
 export async function deletePath(path: string, isFolder: boolean): Promise<void> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     await applyWeb(webEntriesUnder(path).map(([p]): WebOp => [p, undefined]));
   } else {
     await remove(path, { recursive: isFolder });
@@ -490,7 +490,7 @@ export async function duplicateFile(path: string): Promise<string> {
 
 /** Writes `content` to a path the user picks. Outside Tauri, falls back to a browser download. */
 export async function saveFileAs(defaultName: string, content: string): Promise<void> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
     const link = Object.assign(document.createElement("a"), { href: url, download: defaultName });
     link.click();
@@ -507,7 +507,7 @@ export async function saveFileAs(defaultName: string, content: string): Promise<
  * every caller is a fire-and-forget menu item.
  */
 export async function revealPath(path: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!isNativeApp) return;
   try {
     await revealItemInDir(path);
   } catch (err) {
@@ -517,7 +517,7 @@ export async function revealPath(path: string): Promise<void> {
 
 /** Files the OS handed us (double-click / "Open With"). Drains the native queue. */
 export async function takePendingFiles(): Promise<string[]> {
-  if (!isTauri()) return [];
+  if (!isNativeApp) return [];
   return invoke<string[]>("take_pending_files");
 }
 
@@ -530,12 +530,12 @@ export const DEFAULT_APP_UTI = {
 
 /** Registers Zyplus as the system handler for a UTI (see `DEFAULT_APP_UTI`). macOS only. */
 export async function setDefaultAppFor(uti: string): Promise<void> {
-  if (!isTauri()) throw new Error("Only available in the desktop app.");
+  if (!isNativeApp) throw new Error("Only available in the desktop app.");
   await invoke("set_default_app_for", { uti });
 }
 
 /** Whether the given UTI already opens in Zyplus. */
 export async function isDefaultAppFor(uti: string): Promise<boolean> {
-  if (!isTauri()) return false;
+  if (!isNativeApp) return false;
   return invoke<boolean>("is_default_app_for", { uti });
 }

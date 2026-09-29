@@ -7,33 +7,26 @@ async function buildExtensions() {
     fs.mkdirSync(outdir, { recursive: true });
   }
 
-  console.log("Building Mermaid extension bundle...");
-  const mermaidBuild = await Bun.build({
-    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/mermaid.ts")],
-    outdir,
-    target: "browser",
-    format: "esm",
-    minify: true,
-    naming: "mermaid.js",
-  });
-  if (!mermaidBuild.success) {
-    console.error("Mermaid build failed:", mermaidBuild.logs);
-    process.exit(1);
-  }
+  const bundle = async (id: string) => {
+    console.log(`Building ${id} extension bundle...`);
+    const result = await Bun.build({
+      entrypoints: [path.resolve(import.meta.dirname, `../src/extensions/bundles/${id}.ts`)],
+      outdir,
+      target: "browser",
+      format: "esm",
+      minify: true,
+      naming: `${id}.js`,
+    });
+    if (!result.success) {
+      console.error(`${id} build failed:`, result.logs);
+      process.exit(1);
+    }
+  };
+  const copyCss = (id: string) =>
+    fs.copyFileSync(path.resolve(import.meta.dirname, `../src/extensions/bundles/${id}.css`), path.join(outdir, `${id}.css`));
 
-  console.log("Building KaTeX extension bundle...");
-  const katexBuild = await Bun.build({
-    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/katex.ts")],
-    outdir,
-    target: "browser",
-    format: "esm",
-    minify: true,
-    naming: "katex.js",
-  });
-  if (!katexBuild.success) {
-    console.error("KaTeX build failed:", katexBuild.logs);
-    process.exit(1);
-  }
+  await bundle("mermaid");
+  await bundle("katex");
 
   console.log("Preparing KaTeX CSS bundle with inlined fonts...");
   const katexDist = path.resolve(import.meta.dirname, "../node_modules/katex/dist");
@@ -57,35 +50,11 @@ async function buildExtensions() {
   }
   fs.writeFileSync(path.join(outdir, "katex.css"), cssContent, "utf-8");
 
-  console.log("Building JSON editor extension bundle...");
-  const jsonBuild = await Bun.build({
-    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/json.ts")],
-    outdir,
-    target: "browser",
-    format: "esm",
-    minify: true,
-    naming: "json.js",
-  });
-  if (!jsonBuild.success) {
-    console.error("JSON editor build failed:", jsonBuild.logs);
-    process.exit(1);
-  }
+  await bundle("json");
   // The editor's own styles ship inside the bundle; this maps its variables onto the app's theme tokens.
-  fs.copyFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/json.css"), path.join(outdir, "json.css"));
+  copyCss("json");
 
-  console.log("Building CSV editor extension bundle...");
-  const csvBuild = await Bun.build({
-    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.ts")],
-    outdir,
-    target: "browser",
-    format: "esm",
-    minify: true,
-    naming: "csv.js",
-  });
-  if (!csvBuild.success) {
-    console.error("CSV editor build failed:", csvBuild.logs);
-    process.exit(1);
-  }
+  await bundle("csv");
   // Tabulator's own CSS (`tabulator.min.css`) is the structural stylesheet its markup
   // requires to lay out as a grid at all (flex, absolute-positioned headers, column
   // widths) — without it the table renders as plain stacked blocks. Our own csv.css is
@@ -99,46 +68,15 @@ async function buildExtensions() {
   const csvOverrideCss = fs.readFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.css"), "utf-8");
   fs.writeFileSync(path.join(outdir, "csv.css"), tabulatorBaseCss + "\n" + csvOverrideCss);
 
-  console.log("Building Charts extension bundle...");
-  const chartBuild = await Bun.build({
-    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/chart.ts")],
-    outdir,
-    target: "browser",
-    format: "esm",
-    minify: true,
-    naming: "chart.js",
-  });
-  if (!chartBuild.success) {
-    console.error("Chart build failed:", chartBuild.logs);
-    process.exit(1);
-  }
-
-  console.log("Building Code & Config Files extension bundle...");
-  const codefilesBuild = await Bun.build({
-    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/codefiles.ts")],
-    outdir,
-    target: "browser",
-    format: "esm",
-    minify: true,
-    naming: "codefiles.js",
-  });
-  if (!codefilesBuild.success) {
-    console.error("Code & Config Files build failed:", codefilesBuild.logs);
-    process.exit(1);
-  }
-  fs.copyFileSync(
-    path.resolve(import.meta.dirname, "../src/extensions/bundles/codefiles.css"),
-    path.join(outdir, "codefiles.css"),
-  );
+  await bundle("chart");
+  await bundle("codefiles");
+  copyCss("codefiles");
 
   // Release builds download these from the repository and run them, so each
   // build carries the hashes of the exact files at its own commit. Hashed as
   // text, the way the app hashes what it downloads.
   const checksums: Record<string, string> = {};
-  for (const name of [
-    "mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css", "chart.js",
-    "codefiles.js", "codefiles.css",
-  ]) {
+  for (const name of fs.readdirSync(outdir).filter((f) => /\.(js|css)$/.test(f)).sort()) {
     const text = fs.readFileSync(path.join(outdir, name), "utf-8");
     checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
   }

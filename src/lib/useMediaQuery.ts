@@ -5,7 +5,6 @@ export function useMediaQuery(query: string): boolean {
   // resubscribe on every render of every component using this.
   const subscribe = useCallback(
     (callback: () => void) => {
-      if (typeof window === "undefined" || !window.matchMedia) return () => {};
       // `change` fires on every crossing of the breakpoint, resize or not.
       const mql = window.matchMedia(query);
       mql.addEventListener("change", callback);
@@ -13,11 +12,7 @@ export function useMediaQuery(query: string): boolean {
     },
     [query],
   );
-  const getSnapshot = useCallback(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return false;
-    return window.matchMedia(query).matches;
-  }, [query]);
-  return useSyncExternalStore(subscribe, getSnapshot, () => false);
+  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => false);
 }
 
 export function useIsDesktop(): boolean {

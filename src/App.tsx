@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button, Drawer, Input, Label, Modal, TextField, ToastProvider } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -27,7 +26,7 @@ import { suggestExtensionFor } from "./extensions/suggestExtension";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { matchShortcut, type CommandId } from "./lib/shortcuts";
-import { isMac } from "./lib/platform";
+import { isMac, isNativeApp } from "./lib/platform";
 
 type CreateKind = "file" | "folder" | null;
 
@@ -93,7 +92,7 @@ function AppShell() {
     };
 
     let unlisten: Promise<() => void> | null = null;
-    if (isTauri()) {
+    if (isNativeApp) {
       unlisten = listen("open-files", () => {
         if (!cancelled) drain();
       });

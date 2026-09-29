@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { isNativeApp } from "../lib/platform";
 import { appDataDir } from "@tauri-apps/api/path";
 import {
   deletePath,
@@ -16,7 +16,7 @@ import { isDarkTheme } from "../lib/theme";
  * through the same filesystem layer as notes, in a dot-folder no project shows.
  */
 export async function getExtensionsRootDir(): Promise<string> {
-  return isTauri() ? joinPath(await appDataDir(), "extensions") : "/.extensions";
+  return isNativeApp ? joinPath(await appDataDir(), "extensions") : "/.extensions";
 }
 
 export async function getExtensionDir(id: string): Promise<string> {

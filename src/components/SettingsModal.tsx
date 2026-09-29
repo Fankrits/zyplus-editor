@@ -21,6 +21,7 @@ import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
 import { Field } from "./Field";
 import { useExtensions } from "../extensions/useExtensions";
+import { extensionManager } from "../extensions/extensionManager";
 import { formatBytes } from "../extensions/catalog";
 
 const SECTIONS = [
@@ -145,7 +146,7 @@ export function SettingsModal({
   const section = controlledSection ?? localSection;
   const setSection = onSectionChange ?? setLocalSection;
   const [theme, setThemeState] = useState<Theme>(getTheme);
-  const { states: extensionStates, downloadAndInstall, uninstallAndRemove } = useExtensions();
+  const extensionStates = useExtensions();
 
   const pickTheme = (next: Theme) => {
     setTheme(next);
@@ -330,8 +331,8 @@ export function SettingsModal({
                                       // Failures land in the extension's own state, which
                                       // this list renders; the rejection is only a duplicate.
                                       const done = checked
-                                        ? downloadAndInstall(manifest.id)
-                                        : uninstallAndRemove(manifest.id);
+                                        ? extensionManager.downloadAndInstall(manifest.id)
+                                        : extensionManager.uninstallAndRemove(manifest.id);
                                       done.catch(() => {});
                                     }}
                                   >
@@ -376,7 +377,7 @@ export function SettingsModal({
                                       size="sm"
                                       variant="secondary"
                                       isDisabled={isDownloading}
-                                      onPress={() => downloadAndInstall(manifest.id)}
+                                      onPress={() => extensionManager.downloadAndInstall(manifest.id)}
                                       className="h-6 px-2.5 text-[11px]"
                                     >
                                       Install
@@ -385,7 +386,7 @@ export function SettingsModal({
                                   {isInstalled && (
                                     <button
                                       type="button"
-                                      onClick={() => uninstallAndRemove(manifest.id)}
+                                      onClick={() => extensionManager.uninstallAndRemove(manifest.id)}
                                       className="flex items-center gap-1 text-muted hover:text-danger text-[11px] transition-colors cursor-pointer"
                                       title="Delete from device"
                                     >
