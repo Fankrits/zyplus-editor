@@ -26,3 +26,9 @@ export function useExtensions(): {
     uninstallAndRemove: (id: string) => extensionManager.uninstallAndRemove(id),
   };
 }
+
+/** The extension editing this file, or null. Re-renders when an extension is installed or removed. */
+export function useFileEditorId(path: string | undefined): string | null {
+  useExtensions();
+  return path ? extensionManager.getFileEditorId(path) : null;
+}

@@ -7,7 +7,11 @@ import {
   saveExtensionFiles,
 } from "./loader";
 import type { ExtensionManifest, ExtensionRuntime, ExtensionState } from "./types";
-import { hashOf } from "../lib/sync";
+
+export async function hashOf(content: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /** Downloaded code runs with the app's full privileges, so it has to be the code this build shipped with. */
 async function assertIntact(name: string, text: string, expected: string | undefined): Promise<void> {
@@ -17,6 +21,11 @@ async function assertIntact(name: string, text: string, expected: string | undef
 }
 
 const ENABLED_STORAGE_KEY = "zyplus:enabled-extensions";
+/** Which bundle each installed extension was installed from, by `versionOf`. */
+const INSTALLED_STORAGE_KEY = "zyplus:installed-extension-versions";
+
+/** Identifies the exact files a build pins for an extension. */
+const versionOf = (manifest: ExtensionManifest) => manifest.sha256 + (manifest.cssSha256 ?? "");
 
 type Listener = () => void;
 
@@ -76,6 +85,26 @@ class ExtensionManager {
     }
   }
 
+  private getInstalledVersions(): Record<string, string> {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(INSTALLED_STORAGE_KEY) ?? "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private setInstalledVersion(id: string, version: string | null) {
+    const versions = this.getInstalledVersions();
+    if (version === null) delete versions[id];
+    else versions[id] = version;
+    try {
+      localStorage.setItem(INSTALLED_STORAGE_KEY, JSON.stringify(versions));
+    } catch (err) {
+      console.warn("Failed to persist installed extension versions to localStorage:", err);
+    }
+  }
+
   /**
    * Only works out what is installed, for the settings list. Evaluating a bundle
    * (Mermaid's is several megabytes) waits until a code block first asks for it,
@@ -95,12 +124,60 @@ class ExtensionManager {
     this.notify();
   }
 
+  /** Downloads an extension's files and checks each against the hash this build pins. */
+  private async fetchBundle(
+    manifest: ExtensionManifest,
+    progress?: (percent: number) => void,
+  ): Promise<{ js: string; css?: string }> {
+    const jsRes = await fetch(manifest.downloadUrl);
+    if (!jsRes.ok) {
+      throw new Error(`Failed to download ${manifest.name}: HTTP ${jsRes.status} ${jsRes.statusText}`);
+    }
+    const js = await jsRes.text();
+    await assertIntact(manifest.name, js, manifest.sha256);
+    progress?.(70);
+
+    let css: string | undefined;
+    if (manifest.cssUrl) {
+      const cssRes = await fetch(manifest.cssUrl);
+      if (cssRes.ok) {
+        css = await cssRes.text();
+        await assertIntact(`${manifest.name} styles`, css, manifest.cssSha256);
+      }
+    }
+    progress?.(90);
+    return { js, css };
+  }
+
+  /**
+   * An installed bundle is a copy made when the extension was installed. Left
+   * alone, one from an older build runs forever, with that build's look and bugs
+   * and no fix ever reaching it. So before it first runs it is replaced by the one
+   * this build pins. Offline, or on any failure, the installed copy is used as it
+   * is and the next launch tries again.
+   */
+  private async ensureCurrent(manifest: ExtensionManifest, stillWanted: () => boolean): Promise<void> {
+    if (this.getInstalledVersions()[manifest.id] === versionOf(manifest)) return;
+    try {
+      const { js, css } = await this.fetchBundle(manifest);
+      if (manifest.cssUrl && css === undefined) throw new Error(`${manifest.name} styles could not be downloaded`);
+      // Uninstalled while this was downloading: writing now would bring it back.
+      if (!stillWanted()) return;
+      await saveExtensionFiles(manifest.id, js, css);
+      this.setInstalledVersion(manifest.id, versionOf(manifest));
+    } catch (err) {
+      console.warn(`Could not update ${manifest.name}; using the installed copy.`, err);
+    }
+  }
+
   /** Evaluates an extension's bundle once; concurrent callers share the load. */
   private load(manifest: ExtensionManifest): Promise<ExtensionRuntime> {
     const { id } = manifest;
     let pending = this.loading.get(id);
     if (pending) return pending;
-    pending = loadExtensionModule(manifest).then(
+    pending = this.ensureCurrent(manifest, () => this.loading.get(id) === pending)
+      .then(() => loadExtensionModule(manifest))
+      .then(
       (runtime) => {
         // Uninstalled while it was loading.
         if (this.loading.get(id) === pending) this.activeRuntimes.set(id, runtime);
@@ -136,40 +213,15 @@ class ExtensionManager {
     this.notify();
 
     try {
-      // 1. Fetch JavaScript bundle
-      const jsRes = await fetch(manifest.downloadUrl);
-      if (!jsRes.ok) {
-        throw new Error(`Failed to download ${manifest.name}: HTTP ${jsRes.status} ${jsRes.statusText}`);
-      }
-      const jsCode = await jsRes.text();
-      await assertIntact(manifest.name, jsCode, manifest.sha256);
-
-      this.states.set(id, {
-        manifest,
-        status: "downloading",
-        downloadProgress: 70,
+      // 1. Fetch and verify the bundle
+      const { js: jsCode, css: cssCode } = await this.fetchBundle(manifest, (percent) => {
+        this.states.set(id, { manifest, status: "downloading", downloadProgress: percent });
+        this.notify();
       });
-      this.notify();
-
-      // 2. Fetch CSS bundle if specified
-      let cssCode: string | undefined;
-      if (manifest.cssUrl) {
-        const cssRes = await fetch(manifest.cssUrl);
-        if (cssRes.ok) {
-          cssCode = await cssRes.text();
-          await assertIntact(`${manifest.name} styles`, cssCode, manifest.cssSha256);
-        }
-      }
-
-      this.states.set(id, {
-        manifest,
-        status: "downloading",
-        downloadProgress: 90,
-      });
-      this.notify();
 
       // 3. Save to local disk under $APP_DATA/extensions/<id>/
       await saveExtensionFiles(id, jsCode, cssCode);
+      this.setInstalledVersion(id, versionOf(manifest));
 
       // 4. Dynamically load runtime (fresh, in case an older copy was loaded)
       this.loading.delete(id);
@@ -189,6 +241,7 @@ class ExtensionManager {
       console.error(`Failed to install extension ${id}:`, err);
       // Clean up any partially written files
       await deleteExtensionFiles(id);
+      this.setInstalledVersion(id, null);
       this.states.set(id, {
         manifest,
         status: "error",
@@ -218,6 +271,7 @@ class ExtensionManager {
 
     // 2. Completely remove files from user's disk
     await deleteExtensionFiles(id);
+    this.setInstalledVersion(id, null);
 
     // 3. Remove from enabled persistence
     const current = new Set(this.getEnabledIds());
@@ -230,6 +284,26 @@ class ExtensionManager {
       status: "uninstalled",
     });
     this.notify();
+  }
+
+  /** The enabled extension that edits this file in place of the built-in editors, if any. */
+  public getFileEditorId(path: string): string | null {
+    const lower = path.toLowerCase();
+    const manifest = EXTENSION_CATALOG.find((m) => m.fileExtensions?.some((ext) => lower.endsWith(ext)));
+    return manifest && this.getEnabledIds().includes(manifest.id) ? manifest.id : null;
+  }
+
+  /** The catalog entry that could edit this file but isn't enabled yet, if any. */
+  public getAvailableButDisabledExtension(path: string): ExtensionManifest | null {
+    const lower = path.toLowerCase();
+    const manifest = EXTENSION_CATALOG.find((m) => m.fileExtensions?.some((ext) => lower.endsWith(ext)));
+    return manifest && !this.getEnabledIds().includes(manifest.id) ? manifest : null;
+  }
+
+  /** An installed extension's runtime, evaluating its bundle on first use. */
+  public loadRuntime(id: string): Promise<ExtensionRuntime> {
+    const manifest = getManifestById(id);
+    return manifest ? this.load(manifest) : Promise.reject(new Error(`Unknown extension: ${id}`));
   }
 
   public getPreviewRenderer(

@@ -22,7 +22,6 @@ Callouts and syntax-highlighted code work out of the box. Diagrams and math rend
 \`\`\`mermaid
 flowchart LR
     A[Write] --> B[Save]
-    B --> C[Sync]
 \`\`\`
 
 \`\`\`latex
@@ -41,5 +40,5 @@ e^{i\\pi} + 1 = 0
 | Export as PDF | \`⌘P\` |
 | All shortcuts | \`⌘/\` |
 
-Sign in from Settings to sync this folder across your devices. Happy writing!
+Happy writing!
 `;

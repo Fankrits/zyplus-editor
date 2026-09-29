@@ -57,11 +57,88 @@ async function buildExtensions() {
   }
   fs.writeFileSync(path.join(outdir, "katex.css"), cssContent, "utf-8");
 
+  console.log("Building JSON editor extension bundle...");
+  const jsonBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/json.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "json.js",
+  });
+  if (!jsonBuild.success) {
+    console.error("JSON editor build failed:", jsonBuild.logs);
+    process.exit(1);
+  }
+  // The editor's own styles ship inside the bundle; this maps its variables onto the app's theme tokens.
+  fs.copyFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/json.css"), path.join(outdir, "json.css"));
+
+  console.log("Building CSV editor extension bundle...");
+  const csvBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "csv.js",
+  });
+  if (!csvBuild.success) {
+    console.error("CSV editor build failed:", csvBuild.logs);
+    process.exit(1);
+  }
+  // Tabulator's own CSS (`tabulator.min.css`) is the structural stylesheet its markup
+  // requires to lay out as a grid at all (flex, absolute-positioned headers, column
+  // widths) — without it the table renders as plain stacked blocks. Our own csv.css is
+  // only the HeroUI recoloring on top of it, the same relationship katex.min.css has to
+  // its font-inlined build above. Tabulator's own colors are harmless: every one we care
+  // about is overridden with `!important`.
+  const tabulatorBaseCss = fs.readFileSync(
+    path.resolve(import.meta.dirname, "../node_modules/tabulator-tables/dist/css/tabulator.min.css"),
+    "utf-8",
+  );
+  const csvOverrideCss = fs.readFileSync(path.resolve(import.meta.dirname, "../src/extensions/bundles/csv.css"), "utf-8");
+  fs.writeFileSync(path.join(outdir, "csv.css"), tabulatorBaseCss + "\n" + csvOverrideCss);
+
+  console.log("Building Charts extension bundle...");
+  const chartBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/chart.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "chart.js",
+  });
+  if (!chartBuild.success) {
+    console.error("Chart build failed:", chartBuild.logs);
+    process.exit(1);
+  }
+
+  console.log("Building Code & Config Files extension bundle...");
+  const codefilesBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/codefiles.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "codefiles.js",
+  });
+  if (!codefilesBuild.success) {
+    console.error("Code & Config Files build failed:", codefilesBuild.logs);
+    process.exit(1);
+  }
+  fs.copyFileSync(
+    path.resolve(import.meta.dirname, "../src/extensions/bundles/codefiles.css"),
+    path.join(outdir, "codefiles.css"),
+  );
+
   // Release builds download these from the repository and run them, so each
   // build carries the hashes of the exact files at its own commit. Hashed as
   // text, the way the app hashes what it downloads.
   const checksums: Record<string, string> = {};
-  for (const name of ["mermaid.js", "katex.js", "katex.css"]) {
+  for (const name of [
+    "mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css", "chart.js",
+    "codefiles.js", "codefiles.css",
+  ]) {
     const text = fs.readFileSync(path.join(outdir, name), "utf-8");
     checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
   }

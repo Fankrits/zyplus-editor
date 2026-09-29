@@ -11,6 +11,8 @@ import {
   PlusSignIcon,
   TextFontIcon,
   SourceCodeIcon,
+  ListTreeIcon,
+  Table01Icon,
   SidebarLeftIcon,
   MoreHorizontalIcon,
   Search01Icon,
@@ -35,6 +37,15 @@ import {
   type ContextMenuOrigin,
 } from "../ContextMenu";
 import { emit, CLOSE_TAB_EVENT, FIND_EVENT } from "../../lib/commands";
+import { useFileEditorId } from "../../extensions/useExtensions";
+import { getManifestById } from "../../extensions/catalog";
+
+/** Icons for the views an extension's editor offers (`fileModes`); a view without one shows its label alone. */
+const VIEW_ICONS: Record<string, typeof SourceCodeIcon> = {
+  text: SourceCodeIcon,
+  tree: ListTreeIcon,
+  table: Table01Icon,
+};
 
 interface TabItemProps {
   tab: Pick<TabState, "id" | "title" | "isDirty">;
@@ -137,6 +148,8 @@ export function TabBar({
   const { defaultFolder } = useWorkspaceSession();
   const { dispatch, getState } = useWorkspaceActions();
   const activeTab = state.activeTab;
+  const fileEditorId = useFileEditorId(activeTab?.filePath);
+  const fileModes = fileEditorId ? getManifestById(fileEditorId)?.fileModes : undefined;
   const newFileDir =
     defaultFolder && roots.includes(defaultFolder) ? defaultFolder : roots[0];
   const [pendingCloseId, setPendingCloseId] = useState<string | null>(null);
@@ -392,26 +405,45 @@ export function TabBar({
         </div>
         {activeTab && (
           <div className="ml-auto flex shrink-0 items-center gap-1 pl-1">
-            <Button
-              size="sm"
-              isIconOnly={!isDesktop}
-              aria-label="Rich text editor"
-              variant={activeTab.mode === "rich" ? "secondary" : "ghost"}
-              onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "rich" })}
-            >
-              <HugeiconsIcon icon={TextFontIcon} size={15} />
-              {isDesktop && "Rich"}
-            </Button>
-            <Button
-              size="sm"
-              isIconOnly={!isDesktop}
-              aria-label="Plain text editor"
-              variant={activeTab.mode === "plain" ? "secondary" : "ghost"}
-              onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "plain" })}
-            >
-              <HugeiconsIcon icon={SourceCodeIcon} size={15} />
-              {isDesktop && "Plain"}
-            </Button>
+            {/* Same slot for both: an extension's editor shows its own views, markdown shows Rich / Plain. */}
+            {fileEditorId ? (
+              fileModes?.map((m) => (
+                <Button
+                  key={m.id}
+                  size="sm"
+                  isIconOnly={!isDesktop}
+                  aria-label={`${m.label} view`}
+                  variant={activeTab.view === m.id ? "secondary" : "ghost"}
+                  onPress={() => dispatch({ type: "SET_TAB_VIEW", id: activeTab.id, view: m.id })}
+                >
+                  {VIEW_ICONS[m.id] && <HugeiconsIcon icon={VIEW_ICONS[m.id]} size={15} />}
+                  {(isDesktop || !VIEW_ICONS[m.id]) && m.label}
+                </Button>
+              ))
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  isIconOnly={!isDesktop}
+                  aria-label="Rich text editor"
+                  variant={activeTab.mode === "rich" ? "secondary" : "ghost"}
+                  onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "rich" })}
+                >
+                  <HugeiconsIcon icon={TextFontIcon} size={15} />
+                  {isDesktop && "Rich"}
+                </Button>
+                <Button
+                  size="sm"
+                  isIconOnly={!isDesktop}
+                  aria-label="Plain text editor"
+                  variant={activeTab.mode === "plain" ? "secondary" : "ghost"}
+                  onPress={() => dispatch({ type: "SET_TAB_MODE", id: activeTab.id, mode: "plain" })}
+                >
+                  <HugeiconsIcon icon={SourceCodeIcon} size={15} />
+                  {isDesktop && "Plain"}
+                </Button>
+              </>
+            )}
             <button
               type="button"
               aria-label="Document actions"

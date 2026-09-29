@@ -72,7 +72,7 @@ export async function initWebFs(): Promise<void> {
 /**
  * Notified when the notes changed without this tab writing them — another tab of
  * the web build did. Registered by the workspace store, which reloads the tree
- * and any open tab the same way it does after a sync pull.
+ * and any open tab.
  */
 let onStoreChanged: ((paths: string[]) => void) | null = null;
 
@@ -250,7 +250,7 @@ export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
   const entries = isTauri() ? await readDir(dirPath) : webReadDir(dirPath);
   // Subfolders are read together rather than one after another: a tree three
   // levels deep used to cost the sum of every folder in it, in series, and this
-  // runs at startup and again after every sync pull that touched anything.
+  // runs at startup and again whenever another tab changes the notes.
   // ponytail: no concurrency cap — a notebook's worth of folders is fine; a disk
   // with thousands would want one.
   const nodes = await Promise.all(
@@ -310,22 +310,7 @@ export async function createDefaultFolder(): Promise<string> {
   return path;
 }
 
-/**
- * Notified after every change this module makes to disk, so the sync layer can
- * mirror it. Registered by `lib/sync.ts`; a no-op until then, and left alone
- * entirely when the user is signed out.
- *
- * It lives here rather than at the call sites — `saveDocument`, the context
- * menu, autosave, the tab bar — so that a save path added later is synced
- * without anyone remembering to wire it up.
- */
-let onLocalChange: ((path: string) => void) | null = null;
-
-export function setLocalChangeListener(fn: ((path: string) => void) | null): void {
-  onLocalChange = fn;
-}
-
-/** Whether a path exists. Sync needs this to tell a delete from a write. */
+/** Whether a path exists. */
 export async function pathExists(path: string): Promise<boolean> {
   if (!isTauri()) return webEntriesUnder(path).length > 0;
   return exists(path);
@@ -357,7 +342,6 @@ export async function writeTextFile(path: string, content: string): Promise<void
   } else {
     await writeTextFileRaw(path, content);
   }
-  onLocalChange?.(path);
 }
 
 /** Whether the OS refused us, rather than us having asked for something silly. */
@@ -486,9 +470,6 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
   } else {
     await renameRaw(oldPath, newPath);
   }
-  // Both ends: the old path becomes a delete upstream, the new one an upload.
-  onLocalChange?.(oldPath);
-  onLocalChange?.(newPath);
 }
 
 export async function deletePath(path: string, isFolder: boolean): Promise<void> {
@@ -497,7 +478,6 @@ export async function deletePath(path: string, isFolder: boolean): Promise<void>
   } else {
     await remove(path, { recursive: isFolder });
   }
-  onLocalChange?.(path);
 }
 
 /** Copies a file alongside itself as "name copy.ext", "name copy 2.ext", ... and returns the new path. */
@@ -541,14 +521,21 @@ export async function takePendingFiles(): Promise<string[]> {
   return invoke<string[]>("take_pending_files");
 }
 
-/** Registers Zyplus as the system handler for Markdown. macOS only. */
-export async function setDefaultMarkdownApp(): Promise<void> {
+/** Uniform Type Identifiers for the file types Zyplus can claim as default. macOS only. */
+export const DEFAULT_APP_UTI = {
+  markdown: "net.daringfireball.markdown",
+  csv: "public.comma-separated-values-text",
+  json: "public.json",
+} as const;
+
+/** Registers Zyplus as the system handler for a UTI (see `DEFAULT_APP_UTI`). macOS only. */
+export async function setDefaultAppFor(uti: string): Promise<void> {
   if (!isTauri()) throw new Error("Only available in the desktop app.");
-  await invoke("set_default_markdown_app");
+  await invoke("set_default_app_for", { uti });
 }
 
-/** Whether Markdown already opens in Zyplus. */
-export async function isDefaultMarkdownApp(): Promise<boolean> {
+/** Whether the given UTI already opens in Zyplus. */
+export async function isDefaultAppFor(uti: string): Promise<boolean> {
   if (!isTauri()) return false;
-  return invoke<boolean>("is_default_markdown_app");
+  return invoke<boolean>("is_default_app_for", { uti });
 }

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Button, Drawer, Input, Label, Modal, TextField } from "@heroui/react";
+import { Button, Drawer, Input, Label, Modal, TextField, ToastProvider } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
@@ -23,6 +23,7 @@ const SettingsModal = lazy(() =>
   import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })),
 );
 import { extensionManager } from "./extensions/extensionManager";
+import { suggestExtensionFor } from "./extensions/suggestExtension";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { matchShortcut, type CommandId } from "./lib/shortcuts";
@@ -275,6 +276,7 @@ function AppShell() {
         type: "OPEN_TAB",
         tab: { id: path, filePath: path, title: name, content: "", savedContent: "", isDirty: false, mode: "rich" },
       });
+      suggestExtensionFor(path);
     }
     closeCreateModal();
   };
@@ -400,6 +402,7 @@ function App() {
   return (
     <WorkspaceProvider>
       <AppShell />
+      <ToastProvider />
     </WorkspaceProvider>
   );
 }

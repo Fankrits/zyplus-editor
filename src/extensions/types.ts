@@ -6,6 +6,10 @@ export interface ExtensionManifest {
   author: string;
   sizeBytesEstimate: number;
   languages: string[];
+  /** File name endings (".json") the extension opens in place of the built-in editors. */
+  fileExtensions?: string[];
+  /** The views that editor offers. The tab bar shows them as a switch, where Rich / Plain are for markdown. */
+  fileModes?: { id: string; label: string }[];
   /** Primary download URL from GitHub (releases or raw assets) */
   downloadUrl: string;
   /** SHA-256 (hex) the download must match before it is saved or run. */
@@ -19,8 +23,29 @@ export interface ExtensionContext {
   isDarkTheme: () => boolean;
 }
 
+export interface FileEditorOptions {
+  /** The file's text. Read once, at mount; the host remounts the editor when the file changes on disk. */
+  initialValue: string;
+  /** Reports the whole file's new text after each edit. */
+  onChange: (text: string) => void;
+  /** The absolute path of the file being edited. Needed for extensions handling multiple file types. */
+  filePath?: string;
+  /** The view (one of the manifest's `fileModes`) to open in; the editor picks its own when absent. */
+  mode?: string;
+  /** Reports the view being shown: once at mount, then whenever it changes. */
+  onModeChange: (mode: string) => void;
+}
+
+export interface FileEditorHandle {
+  destroy: () => void;
+  /** Switches view. The host calls it when the user picks one in the tab bar. */
+  setMode?: (mode: string) => void;
+}
+
 export interface ExtensionRuntime {
   id: string;
+  /** Draws an editor for a file the extension claims (see `fileExtensions`) into `host`. */
+  mountFileEditor?: (host: HTMLElement, options: FileEditorOptions) => FileEditorHandle;
   renderCodeBlockPreview?: (
     language: string,
     content: string,

@@ -22,6 +22,7 @@
 @import "@heroui/styles/components/menu.css" layer(components);
 @import "@heroui/styles/components/switch.css" layer(components);
 @import "@heroui/styles/components/meter.css" layer(components);
+@import "@heroui/styles/components/toast.css" layer(components);
 @import "@heroui/styles/components/input.css" layer(components);
 @import "@heroui/styles/components/textfield.css" layer(components);
 @import "@heroui/styles/components/surface.css" layer(components);

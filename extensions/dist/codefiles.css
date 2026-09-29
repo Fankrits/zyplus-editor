@@ -1,0 +1,51 @@
+.codefiles-editor {
+  height: 100%;
+  background: transparent;
+}
+.codefiles-editor.cm-focused {
+  outline: none !important;
+}
+.codefiles-editor .cm-scroller {
+  overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "JetBrains Mono", monospace;
+  line-height: 1.65;
+  letter-spacing: -0.01em;
+}
+.codefiles-editor .cm-content {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 8rem 1rem;
+  font-size: 15px;
+  caret-color: var(--accent);
+}
+@media (min-width: 640px) {
+  .codefiles-editor .cm-content {
+    padding: 3rem 1.5rem 12rem 1.5rem;
+  }
+}
+.codefiles-editor .cm-line {
+  padding: 0;
+  max-width: 100%;
+}
+.codefiles-editor .cm-activeLine {
+  background-color: transparent;
+}
+.codefiles-editor.cm-focused .cm-selectionBackground, 
+.codefiles-editor .cm-selectionBackground, 
+.codefiles-editor ::selection {
+  background-color: var(--accent-soft) !important;
+}
+.codefiles-editor .cm-searchMatch {
+  background-color: var(--warning-soft);
+  border-radius: 3px;
+}
+.codefiles-editor .cm-searchMatch-selected, 
+.codefiles-editor .cm-searchMatch.cm-searchMatch-selected {
+  background-color: var(--warning);
+  color: var(--background);
+}
+.codefiles-editor .cm-cursor, 
+.codefiles-editor .cm-dropCursor {
+  border-left-color: var(--accent);
+  border-left-width: 2px;
+}
