@@ -20,7 +20,7 @@ function mountSwallowingEditor() {
       return { destroy: () => inner.remove() };
     },
   });
-  const view = render(<ExtensionFileEditor extensionId="json" initialValue="" onChange={() => {}} onModeChange={() => {}} />);
+  const view = render(<ExtensionFileEditor extensionId="json" filePath="test.json" initialValue="" onChange={() => {}} onModeChange={() => {}} />);
   return { view, inner: () => inner };
 }
 
@@ -88,6 +88,7 @@ describe("ExtensionFileEditor views", () => {
     const view = render(
       <ExtensionFileEditor
         extensionId="json"
+        filePath="test.json"
         initialValue="{}"
         onChange={() => {}}
         mode="table"
@@ -105,6 +106,7 @@ describe("ExtensionFileEditor views", () => {
     view.rerender(
       <ExtensionFileEditor
         extensionId="json"
+        filePath="test.json"
         initialValue="{}"
         onChange={() => {}}
         mode="tree"

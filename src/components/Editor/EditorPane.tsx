@@ -116,6 +116,7 @@ export function EditorPane() {
               <ExtensionFileEditor
                 key={editorKey}
                 extensionId={fileEditorId}
+                filePath={activeTab.filePath}
                 initialValue={activeTab.content}
                 onChange={handleChange}
                 mode={activeTab.view}

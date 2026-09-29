@@ -113,11 +113,32 @@ async function buildExtensions() {
     process.exit(1);
   }
 
+  console.log("Building Code & Config Files extension bundle...");
+  const codefilesBuild = await Bun.build({
+    entrypoints: [path.resolve(import.meta.dirname, "../src/extensions/bundles/codefiles.ts")],
+    outdir,
+    target: "browser",
+    format: "esm",
+    minify: true,
+    naming: "codefiles.js",
+  });
+  if (!codefilesBuild.success) {
+    console.error("Code & Config Files build failed:", codefilesBuild.logs);
+    process.exit(1);
+  }
+  fs.copyFileSync(
+    path.resolve(import.meta.dirname, "../src/extensions/bundles/codefiles.css"),
+    path.join(outdir, "codefiles.css"),
+  );
+
   // Release builds download these from the repository and run them, so each
   // build carries the hashes of the exact files at its own commit. Hashed as
   // text, the way the app hashes what it downloads.
   const checksums: Record<string, string> = {};
-  for (const name of ["mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css", "chart.js"]) {
+  for (const name of [
+    "mermaid.js", "katex.js", "katex.css", "json.js", "json.css", "csv.js", "csv.css", "chart.js",
+    "codefiles.js", "codefiles.css",
+  ]) {
     const text = fs.readFileSync(path.join(outdir, name), "utf-8");
     checksums[name] = new Bun.CryptoHasher("sha256").update(text).digest("hex");
   }

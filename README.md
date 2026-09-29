@@ -31,6 +31,7 @@ Built with Tauri&nbsp;2, React&nbsp;19 and TypeScript.
 | 🧩 **Extensions** | Optional, installed from Settings: Mermaid, KaTeX, and a JSON editor (tree / table / text, built on [vanilla-jsoneditor](https://github.com/josdejong/svelte-jsoneditor)) for `.json` files |
 | 📊 **CSV / TSV** | CSV and TSV editor extension (table or text view, built on [Tabulator](https://tabulator.info) and [Papa Parse](https://www.papaparse.com)) for `.csv` and `.tsv` files |
 | 📈 **Charts** | ` ```chart ` fenced code blocks render as bar, line, pie, doughnut or scatter charts, built on [Chart.js](https://www.chartjs.org) |
+| 💻 **Code & config files** | Syntax highlighting for YAML, TOML, XML, shell, JS/TS, Python, Rust, Go, SQL and more — opens files the built-in editors don't |
 | 🗂️ **Real workspace** | Multiple project folders, tabs, file tree, find & replace, optional autosave |
 | 📄 **PDF export** | Genuinely paginated PDFs through the native print pipeline — not `window.print()` |
 | 🖱️ **OS integration** | Registered editor for `.md`, `.markdown`, `.mdown`, `.mkd`, `.txt` — double-click opens a tab |

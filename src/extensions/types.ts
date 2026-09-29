@@ -28,6 +28,8 @@ export interface FileEditorOptions {
   initialValue: string;
   /** Reports the whole file's new text after each edit. */
   onChange: (text: string) => void;
+  /** The absolute path of the file being edited. Needed for extensions handling multiple file types. */
+  filePath?: string;
   /** The view (one of the manifest's `fileModes`) to open in; the editor picks its own when absent. */
   mode?: string;
   /** Reports the view being shown: once at mount, then whenever it changes. */

@@ -6,6 +6,7 @@ import { matchShortcut } from "../../lib/shortcuts";
 
 interface ExtensionFileEditorProps {
   extensionId: string;
+  filePath: string;
   initialValue: string;
   onChange: (text: string) => void;
   /** The view to show (one of the extension's `fileModes`), driven from the tab bar. */
@@ -16,6 +17,7 @@ interface ExtensionFileEditorProps {
 /** Hosts an editor an extension draws itself (see `mountFileEditor`), in place of the built-in ones. */
 export function ExtensionFileEditor({
   extensionId,
+  filePath,
   initialValue,
   onChange,
   mode,
@@ -39,6 +41,7 @@ export function ExtensionFileEditor({
         handle = runtime.mountFileEditor?.(hostRef.current, {
           // Read at mount only, like the built-in editors; EditorPane remounts on reload.
           initialValue,
+          filePath,
           onChange: (text) => onChangeRef.current(text),
           // Also read at mount only: after that the tab bar drives it, through `setMode` below.
           mode,

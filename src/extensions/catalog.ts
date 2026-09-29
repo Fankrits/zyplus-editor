@@ -97,6 +97,24 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     downloadUrl: getAssetUrl("chart.js"),
     sha256: checksums["chart.js"],
   },
+  {
+    id: "codefiles",
+    name: "Code & Config Files",
+    description: "Syntax highlighting and basic editor for various code, config and script files.",
+    version: "1.0.0",
+    author: "Zyplus",
+    sizeBytesEstimate: 950_000,
+    languages: [],
+    fileExtensions: [
+      ".yaml", ".yml", ".toml", ".xml", ".sh", ".bash", ".zsh", ".ini", ".env",
+      ".css", ".html", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".go", ".sql",
+      ".rb", ".php", ".c", ".cpp", ".h", ".java", ".kt", ".swift", ".dockerfile", ".gitignore",
+    ],
+    downloadUrl: getAssetUrl("codefiles.js"),
+    sha256: checksums["codefiles.js"],
+    cssUrl: getAssetUrl("codefiles.css"),
+    cssSha256: checksums["codefiles.css"],
+  },
 ];
 
 export function getManifestById(id: string): ExtensionManifest | undefined {
