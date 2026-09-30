@@ -19,6 +19,8 @@ export interface PersistedWorkspaceSession {
   isSidebarCollapsed: boolean;
   /** Write dirty tabs to disk shortly after typing stops. */
   isAutosaveEnabled: boolean;
+  /** Folders open in the sidebar, roots included. Absent in sessions saved before this was kept. */
+  openFolders?: string[];
 }
 
 export function loadSession(): PersistedWorkspaceSession | null {
@@ -62,6 +64,9 @@ export function loadSession(): PersistedWorkspaceSession | null {
       activeFilePath: typeof parsed.activeFilePath === "string" ? parsed.activeFilePath : null,
       isSidebarCollapsed: Boolean(parsed.isSidebarCollapsed),
       isAutosaveEnabled: Boolean(parsed.isAutosaveEnabled),
+      ...(Array.isArray(parsed.openFolders) && parsed.openFolders.every((f: unknown) => typeof f === "string")
+        ? { openFolders: parsed.openFolders as string[] }
+        : {}),
     };
   } catch {
     return null;

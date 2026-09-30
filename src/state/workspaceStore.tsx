@@ -85,6 +85,10 @@ interface WorkspaceActionsValue {
   refreshTree: () => Promise<void>;
   /** Reads a folder's contents into the tree, the first time it is opened. */
   loadFolder: (id: string) => Promise<void>;
+  /** Records a folder as open or closed in the sidebar, so the next launch restores it. */
+  setFolderOpen: (id: string, open: boolean) => void;
+  /** The folders open in the sidebar right now. */
+  getOpenFolders: () => string[];
   /** Opens a file in a tab, focusing it if already open. Returns true if opened successfully. */
   openFile: (path: string, name?: string) => Promise<boolean>;
   /** Prompts for a folder or adds the specified directory as a project root. Returns the path. */
@@ -122,6 +126,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => loadSession()?.isSidebarCollapsed ?? false,
   );
 
+  const [openFolders, setOpenFolders] = useState<string[]>([]);
+  const openFoldersRef = useRef(openFolders);
+  openFoldersRef.current = openFolders;
+  const getOpenFolders = useCallback(() => openFoldersRef.current, []);
+  const setFolderOpen = useCallback((id: string, open: boolean) => {
+    setOpenFolders((prev) =>
+      open ? (prev.includes(id) ? prev : [...prev, id]) : prev.includes(id) ? prev.filter((f) => f !== id) : prev,
+    );
+  }, []);
+
   const stateRef = useRef(state);
   stateRef.current = state;
   const getState = useCallback(() => stateRef.current, []);
@@ -138,6 +152,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           const restored = await restoreWorkspaceFromSession(stored);
           if (!isMounted) return;
           if (restored) {
+            // Only folders that came back readable count as open.
+            const readable = loadedFolderIds(restored.tree);
+            setOpenFolders((stored.openFolders ?? stored.roots).filter((id) => readable.has(id)));
             dispatch({
               type: "RESTORE_WORKSPACE",
               roots: restored.roots,
@@ -168,6 +185,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           const node = await readProjectNode(folder);
           if (!isMounted) return;
           setDefaultFolder(folder);
+          setOpenFolders([folder]);
           dispatch({ type: "ADD_ROOT", rootPath: folder, node });
           dispatch({
             type: "OPEN_TAB",
@@ -213,6 +231,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       activeFilePath: state.activeTabId,
       isSidebarCollapsed,
       isAutosaveEnabled,
+      openFolders,
     };
     const json = JSON.stringify(session);
     if (json === lastPersisted.current) return;
@@ -226,6 +245,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     defaultFolder,
     isAutosaveEnabled,
     isSidebarCollapsed,
+    openFolders,
   ]);
 
   useEffect(() => {
@@ -325,6 +345,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!picked) return null;
     const opened = await tryFs("Could not open folder", picked, async () => {
       dispatch({ type: "ADD_ROOT", rootPath: picked, node: await readProjectNode(picked) });
+      setFolderOpen(picked, true);
     });
     return opened ? picked : null;
   }, []);
@@ -369,6 +390,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       getState,
       refreshTree,
       loadFolder,
+      setFolderOpen,
+      getOpenFolders,
       openFile,
       addFolder,
       openFilePicker,
@@ -376,7 +399,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setIsAutosaveEnabled,
       setIsSidebarCollapsed,
     }),
-    [getState, refreshTree, loadFolder, openFile, addFolder, openFilePicker],
+    [getState, refreshTree, loadFolder, setFolderOpen, getOpenFolders, openFile, addFolder, openFilePicker],
   );
 
   return (

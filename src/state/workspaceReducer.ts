@@ -262,11 +262,15 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
 export async function restoreWorkspaceFromSession(
   stored: PersistedWorkspaceSession | null,
   fsApi: {
-    readProjectNode: (dir: string) => Promise<TreeNode>;
+    readProjectNode: (dir: string, loaded?: ReadonlySet<string>) => Promise<TreeNode>;
     readTextFile: (path: string) => Promise<string>;
   } = { readProjectNode, readTextFile },
 ): Promise<WorkspaceState | null> {
   if (!stored || (stored.roots.length === 0 && stored.tabs.length === 0)) return null;
+
+  // The folders that were open when the app closed are read too, so the sidebar comes back
+  // as it was. A session from before this was kept had only its roots open.
+  const openIds = new Set(stored.openFolders ?? stored.roots);
 
   // Every folder and every open file is read at once. In series this was the
   // longest thing between launching the app and seeing it, and each read waits
@@ -276,7 +280,7 @@ export async function restoreWorkspaceFromSession(
     // A project folder that is gone or unreadable is dropped silently.
     Promise.all(
       stored.roots.map((root) =>
-        fsApi.readProjectNode(root).then(
+        fsApi.readProjectNode(root, openIds).then(
           (node) => ({ root, node }),
           () => null,
         ),

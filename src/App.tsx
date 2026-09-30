@@ -41,6 +41,7 @@ function AppShell() {
     openFile,
     addFolder,
     openFilePicker,
+    setFolderOpen,
   } = useWorkspaceActions();
   // The shell deliberately does not subscribe to tab content: it would re-render
   // the sidebar, tab bar and editor on every keystroke. Commands read the live
@@ -254,8 +255,9 @@ function AppShell() {
       if (!read || !node) return;
       setDefaultFolder(folder);
       dispatch({ type: "ADD_ROOT", rootPath: folder, node });
+      setFolderOpen(folder, true);
     },
-    [dispatch, setDefaultFolder],
+    [dispatch, setDefaultFolder, setFolderOpen],
   );
 
   // Derived, not state: the reason updates as the user types, and an empty box

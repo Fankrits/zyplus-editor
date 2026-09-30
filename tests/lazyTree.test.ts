@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test";
 import * as fs from "../src/lib/fs";
+import { SESSION_STORAGE_KEY, clearSession, loadSession, saveSession } from "../src/lib/sessionStorage";
 import {
+  restoreWorkspaceFromSession,
   findTreeNode,
   loadedFolderIds,
   workspaceReducer,
@@ -75,5 +77,52 @@ describe("lazy file tree", () => {
   it("loadedFolderIds lists roots and opened folders, not unread ones or files", () => {
     const tree = [folder("/p", [folder("/p/open", [folder("/p/open/deeper", [], true), file("/p/open/f.md")]), folder("/p/closed", [], true), file("/p/r.md")])];
     expect([...loadedFolderIds(tree)].sort()).toEqual(["/p", "/p/open"]);
+  });
+});
+
+describe("open folders survive a restart", () => {
+  const stored = (extra: object) => ({
+    version: 2 as const,
+    roots: ["/p"],
+    defaultFolder: null,
+    tabs: [],
+    activeFilePath: null,
+    isSidebarCollapsed: false,
+    isAutosaveEnabled: false,
+    ...extra,
+  });
+
+  it("asks for the folders that were open, and only those", async () => {
+    const seen: ReadonlySet<string>[] = [];
+    const api = {
+      readProjectNode: async (dir: string, loaded: ReadonlySet<string> = new Set()) => {
+        seen.push(loaded);
+        return { id: dir, name: "p", isFolder: true, children: [] };
+      },
+      readTextFile: async () => "",
+    };
+    await restoreWorkspaceFromSession(stored({ openFolders: ["/p", "/p/a"] }), api);
+    expect([...seen[0]].sort()).toEqual(["/p", "/p/a"]);
+  });
+
+  it("treats a session saved before this was kept as having its projects open", async () => {
+    const seen: ReadonlySet<string>[] = [];
+    const api = {
+      readProjectNode: async (dir: string, loaded: ReadonlySet<string> = new Set()) => {
+        seen.push(loaded);
+        return { id: dir, name: "p", isFolder: true, children: [] };
+      },
+      readTextFile: async () => "",
+    };
+    await restoreWorkspaceFromSession(stored({}), api);
+    expect([...seen[0]]).toEqual(["/p"]);
+  });
+
+  it("keeps openFolders through save and load, and ignores a malformed one", () => {
+    saveSession(stored({ openFolders: ["/p", "/p/a"] }));
+    expect(loadSession()?.openFolders).toEqual(["/p", "/p/a"]);
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(stored({ openFolders: [1, 2] })));
+    expect(loadSession()?.openFolders).toBeUndefined();
+    clearSession();
   });
 });

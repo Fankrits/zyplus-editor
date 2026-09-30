@@ -46,7 +46,7 @@ interface FileTreeProps {
 
 export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
   const state = useWorkspaceTree();
-  const { dispatch, refreshTree, loadFolder, getState } = useWorkspaceActions();
+  const { dispatch, refreshTree, loadFolder, setFolderOpen, getOpenFolders, getState } = useWorkspaceActions();
   const isRoot = useCallback((id: string) => state.roots.includes(id), [state.roots]);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -65,23 +65,28 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
     return () => observer.disconnect();
   }, []);
 
-  // Folders arrive unread and closed. A project opens to show its first level; everything
-  // below it is read when the user gets there, which is what keeps a big project cheap.
-  const autoOpened = useRef(new Set<string>());
+  // The sidebar comes back as it was left: what was open is open, and its contents were
+  // read with the session. The tree keeps its own open state, so this seeds it once; a
+  // project added later is opened by the effect below.
+  const initialOpen = useRef(Object.fromEntries(getOpenFolders().map((id) => [id, true])));
+  const seenRoots = useRef(new Set(state.roots));
   useEffect(() => {
-    for (const id of autoOpened.current) if (!state.roots.includes(id)) autoOpened.current.delete(id);
+    for (const id of seenRoots.current) if (!state.roots.includes(id)) seenRoots.current.delete(id);
     for (const root of state.roots) {
-      if (autoOpened.current.has(root)) continue;
-      autoOpened.current.add(root);
-      treeRef.current?.open(root);
+      if (seenRoots.current.has(root)) continue;
+      seenRoots.current.add(root);
+      if (getOpenFolders().includes(root)) treeRef.current?.open(root);
     }
-  }, [state.roots]);
+  }, [state.roots, getOpenFolders]);
 
+  // Fires for every way a folder opens or closes. Its contents are read the first time.
   const handleToggle = useCallback(
     (id: string) => {
-      if (findTreeNode(getState().tree, id)?.unloaded) void loadFolder(id);
+      const open = treeRef.current?.isOpen(id) ?? false;
+      setFolderOpen(id, open);
+      if (open && findTreeNode(getState().tree, id)?.unloaded) void loadFolder(id);
     },
-    [getState, loadFolder],
+    [getState, loadFolder, setFolderOpen],
   );
 
   const handleActivate = useCallback(
@@ -279,6 +284,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
         ref={treeRef}
         data={state.tree}
         openByDefault={false}
+        initialOpenState={initialOpen.current}
         onToggle={handleToggle}
         width={size.width}
         height={size.height}
