@@ -24,10 +24,18 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 # Required by `tauri::generate_context!`, which expands to `::serde_json` paths.
 serde_json = "1"
-tauri-plugin-updater = "2.11.0"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-single-instance = "2"
 
+
+# The updater brings its own TLS (rustls + ring, about half a megabyte). Linux keeps it:
+# the system one there is OpenSSL, a dynamic library the AppImage would have to carry.
+# macOS and Windows ship a TLS stack of their own, so use that and drop the bundled one.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri-plugin-updater = "2.11.0"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-updater = { version = "2.11.0", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
