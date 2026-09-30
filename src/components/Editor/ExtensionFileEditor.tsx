@@ -31,6 +31,9 @@ export function ExtensionFileEditor({
   const onModeChangeRef = useRef(onModeChange);
   onModeChangeRef.current = onModeChange;
   const handleRef = useRef<FileEditorHandle | undefined>(undefined);
+  // The view picked while the extension was still loading; it mounts in that one.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   useEffect(() => {
     let handle: FileEditorHandle | undefined;
@@ -38,19 +41,27 @@ export function ExtensionFileEditor({
     extensionManager.loadRuntime(extensionId).then(
       (runtime) => {
         if (cancelled || !hostRef.current) return;
-        handle = runtime.mountFileEditor?.(hostRef.current, {
-          // Read at mount only, like the built-in editors; EditorPane remounts on reload.
-          initialValue,
-          filePath,
-          onChange: (text) => onChangeRef.current(text),
-          // Also read at mount only: after that the tab bar drives it, through `setMode` below.
-          mode,
-          onModeChange: (next) => onModeChangeRef.current(next),
-        });
+        // An extension's own mount code can throw; that is a failed editor, not an
+        // unhandled rejection over a blank pane.
+        try {
+          handle = runtime.mountFileEditor?.(hostRef.current, {
+            // Read at mount only, like the built-in editors; EditorPane remounts on reload.
+            initialValue,
+            filePath,
+            onChange: (text) => onChangeRef.current(text),
+            // Also read at mount only: after that the tab bar drives it, through `setMode` below.
+            mode: modeRef.current,
+            onModeChange: (next) => onModeChangeRef.current(next),
+          });
+        } catch (err) {
+          console.error(`Extension ${extensionId} failed to open ${filePath}:`, err);
+        }
         handleRef.current = handle;
         if (!handle) setFailed(true);
       },
-      () => setFailed(true),
+      () => {
+        if (!cancelled) setFailed(true);
+      },
     );
     return () => {
       cancelled = true;

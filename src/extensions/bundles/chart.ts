@@ -19,10 +19,8 @@ function getThemeColors() {
   const root = document.documentElement;
   const style = getComputedStyle(root);
   return {
-    bg: style.getPropertyValue("--diagram-bg").trim() || "#ffffff",
     text: style.getPropertyValue("--diagram-text").trim() || "#0f172a",
     border: style.getPropertyValue("--diagram-border").trim() || "#cbd5e1",
-    line: style.getPropertyValue("--diagram-line").trim() || "#64748b",
     palette: [
       style.getPropertyValue("--diagram-1").trim() || "#006fee",
       style.getPropertyValue("--diagram-2").trim() || "#7828c8",
@@ -78,6 +76,7 @@ function applyThemeToConfig(rawConfig: any) {
     } else {
       for (const key of Object.keys(scales)) {
         const scale = scales[key];
+        if (!scale || typeof scale !== "object") continue;
         if (!scale.grid) scale.grid = {};
         if (!scale.grid.color) scale.grid.color = theme.border;
         if (!scale.ticks) scale.ticks = {};
@@ -129,8 +128,12 @@ export default function createChartExtension(): ExtensionRuntime {
         canvas.height = 428;
         const themedConfig = applyThemeToConfig(config);
         const chart = new Chart(canvas, themedConfig);
-        const dataUrl = canvas.toDataURL("image/png");
-        chart.destroy();
+        let dataUrl: string;
+        try {
+          dataUrl = canvas.toDataURL("image/png");
+        } finally {
+          chart.destroy();
+        }
 
         const container = document.createElement("div");
         // Match Mermaid/KaTeX block layout: centered, capped width.
@@ -140,6 +143,7 @@ export default function createChartExtension(): ExtensionRuntime {
 
         const img = document.createElement("img");
         img.src = dataUrl;
+        img.alt = "Chart preview";
         img.style.display = "block";
         img.style.width = "100%";
         img.style.height = "auto";

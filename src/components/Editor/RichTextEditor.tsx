@@ -138,7 +138,7 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
         if (markdown !== prevMarkdown) onChangeRef.current(markdown);
       });
     });
-    crepe.create();
+    crepe.create().catch((err) => console.error("The rich text editor failed to start:", err));
     liveCrepe = crepe;
     // Milkdown only asks for a preview when a block's text or language changes, so
     // blocks already on screen would keep their old preview until edited. A fresh

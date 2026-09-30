@@ -16,7 +16,13 @@ export function UpdateButton() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   async function run() {
-    if (status.kind === "ready") return relaunch();
+    if (status.kind === "ready") {
+      try {
+        return await relaunch();
+      } catch (e) {
+        return setStatus({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    }
     setStatus({ kind: "checking" });
     try {
       const update = await check();

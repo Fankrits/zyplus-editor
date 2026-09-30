@@ -1,3 +1,5 @@
+import { safeStorage } from "./safeStorage";
+
 export const SESSION_STORAGE_KEY = "zyplus:workspace-session";
 export const CURRENT_SESSION_VERSION = 2;
 
@@ -17,12 +19,15 @@ export interface PersistedWorkspaceSession {
   isSidebarCollapsed: boolean;
   /** Write dirty tabs to disk shortly after typing stops. */
   isAutosaveEnabled: boolean;
+  /** Folders open in the sidebar, roots included. Absent in sessions saved before this was kept. */
+  openFolders?: string[];
 }
 
 export function loadSession(): PersistedWorkspaceSession | null {
-  if (typeof window === "undefined" || !window.localStorage) return null;
+  const storage = safeStorage();
+  if (!storage) return null;
   try {
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    const raw = storage.getItem(SESSION_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed) return null;
@@ -59,6 +64,9 @@ export function loadSession(): PersistedWorkspaceSession | null {
       activeFilePath: typeof parsed.activeFilePath === "string" ? parsed.activeFilePath : null,
       isSidebarCollapsed: Boolean(parsed.isSidebarCollapsed),
       isAutosaveEnabled: Boolean(parsed.isAutosaveEnabled),
+      ...(Array.isArray(parsed.openFolders) && parsed.openFolders.every((f: unknown) => typeof f === "string")
+        ? { openFolders: parsed.openFolders as string[] }
+        : {}),
     };
   } catch {
     return null;
@@ -66,18 +74,20 @@ export function loadSession(): PersistedWorkspaceSession | null {
 }
 
 export function saveSession(session: PersistedWorkspaceSession): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  const storage = safeStorage();
+  if (!storage) return;
   try {
-    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
   } catch (err) {
     console.warn("Failed to persist workspace session to localStorage:", err);
   }
 }
 
 export function clearSession(): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  const storage = safeStorage();
+  if (!storage) return;
   try {
-    localStorage.removeItem(SESSION_STORAGE_KEY);
+    storage.removeItem(SESSION_STORAGE_KEY);
   } catch {
     // Ignore clear error
   }

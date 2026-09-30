@@ -33,12 +33,18 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$dir/cfg" \
 openssl pkcs12 -export -legacy -inkey "$dir/key.pem" -in "$dir/cert.pem" \
   -out "$dir/cert.p12" -passout "pass:$pass"
 
-base64 <"$dir/cert.p12" | tr -d '\n' | gh secret set MACOS_SIGNING_CERT
-printf %s "$pass" | gh secret set MACOS_SIGNING_CERT_PASSWORD
+# Local copies first. The secrets below are the only other copy of this identity,
+# and the trap deletes $dir on exit, so a failed backup after `gh secret set`
+# would leave the repo pointing at a certificate nobody holds.
 # Backup outside the repo; its password goes to the login keychain, not the terminal.
 backup="$HOME/.zyplus/zyplus-signing.p12"
 mkdir -p "$(dirname "$backup")"
+chmod 700 "$(dirname "$backup")"
 install -m 600 "$dir/cert.p12" "$backup"
 security add-generic-password -U -a zyplus -s zyplus-signing-p12 -w "$pass"
+cmp -s "$dir/cert.p12" "$backup" || { echo "Backup did not verify: $backup" >&2; exit 1; }
+
+base64 <"$dir/cert.p12" | tr -d '\n' | gh secret set MACOS_SIGNING_CERT
+printf %s "$pass" | gh secret set MACOS_SIGNING_CERT_PASSWORD
 echo "Secrets set. Backup: $backup"
 echo "Password: security find-generic-password -a zyplus -s zyplus-signing-p12 -w"

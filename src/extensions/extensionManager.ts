@@ -140,10 +140,13 @@ class ExtensionManager {
     let css: string | undefined;
     if (manifest.cssUrl) {
       const cssRes = await fetch(manifest.cssUrl);
-      if (cssRes.ok) {
-        css = await cssRes.text();
-        await assertIntact(`${manifest.name} styles`, css, manifest.cssSha256);
+      // A bundle saved without its styles would be marked current and render
+      // unstyled until the next release, so a missing stylesheet fails the install.
+      if (!cssRes.ok) {
+        throw new Error(`Failed to download ${manifest.name} styles: HTTP ${cssRes.status} ${cssRes.statusText}`);
       }
+      css = await cssRes.text();
+      await assertIntact(`${manifest.name} styles`, css, manifest.cssSha256);
     }
     progress?.(90);
     return { js, css };
@@ -160,7 +163,6 @@ class ExtensionManager {
     if (this.getInstalledVersions()[manifest.id] === versionOf(manifest)) return;
     try {
       const { js, css } = await this.fetchBundle(manifest);
-      if (manifest.cssUrl && css === undefined) throw new Error(`${manifest.name} styles could not be downloaded`);
       // Uninstalled while this was downloading: writing now would bring it back.
       if (!stillWanted()) return;
       await saveExtensionFiles(manifest.id, js, css);
@@ -178,14 +180,26 @@ class ExtensionManager {
     pending = this.ensureCurrent(manifest, () => this.loading.get(id) === pending)
       .then(() => loadExtensionModule(manifest))
       .then(
-      (runtime) => {
-        // Uninstalled while it was loading.
-        if (this.loading.get(id) === pending) this.activeRuntimes.set(id, runtime);
+      async (runtime) => {
+        if (this.loading.get(id) === pending) {
+          this.activeRuntimes.set(id, runtime);
+        } else {
+          // Superseded while it was loading: undo what evaluating it set up, unless
+          // a newer load of the same extension has taken the stylesheet over.
+          if (!this.loading.has(id) && !this.activeRuntimes.has(id)) removeExtensionCss(id);
+          try {
+            await runtime.deactivate?.();
+          } catch {
+            // Nothing is listening for this failure any more.
+          }
+        }
         return runtime;
       },
       (err) => {
         if (this.loading.get(id) === pending) {
           this.loading.delete(id);
+          this.activeRuntimes.delete(id);
+          removeExtensionCss(id);
           console.error(`Failed to activate extension ${id}:`, err);
           this.states.set(id, {
             manifest,
@@ -201,7 +215,18 @@ class ExtensionManager {
     return pending;
   }
 
-  public async downloadAndInstall(id: string): Promise<void> {
+  /** Installs in flight, so the Settings switch and the "Enable" toast cannot race each other. */
+  private installing: Map<string, Promise<void>> = new Map();
+
+  public downloadAndInstall(id: string): Promise<void> {
+    const running = this.installing.get(id);
+    if (running) return running;
+    const run = this.runInstall(id).finally(() => this.installing.delete(id));
+    this.installing.set(id, run);
+    return run;
+  }
+
+  private async runInstall(id: string): Promise<void> {
     const manifest = getManifestById(id);
     if (!manifest) throw new Error(`Unknown extension: ${id}`);
 
@@ -240,6 +265,9 @@ class ExtensionManager {
     } catch (err) {
       console.error(`Failed to install extension ${id}:`, err);
       // Clean up any partially written files
+      this.loading.delete(id);
+      this.activeRuntimes.delete(id);
+      removeExtensionCss(id);
       await deleteExtensionFiles(id);
       this.setInstalledVersion(id, null);
       this.states.set(id, {

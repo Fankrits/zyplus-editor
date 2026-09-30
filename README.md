@@ -120,6 +120,8 @@ bun run tauri dev     # desktop app (Vite on :1420)
 bun run dev           # browser only — no filesystem, for UI work
 bun test              # test suite (bun:test + happy-dom)
 bun run build         # typecheck + build the frontend
+bun run analyze       # build + bundle-report.html: what each chunk holds, brotli sizes
+bun run perf          # Chromium runtime cost: keystroke latency, heap, idle CPU (docs/performance.md)
 bun run tauri build   # installers into src-tauri/target/release/bundle
 bun run check         # everything CI runs: tests, tsc, fmt, clippy, cargo test
 ```

@@ -35,6 +35,7 @@ function done<T>(req: IDBRequest<T>): Promise<T> {
 
 /** Opens the store and returns everything in it. */
 export async function openWebStore(): Promise<[string, string | null][]> {
+  if (typeof indexedDB === "undefined") throw new Error("This browser has no IndexedDB");
   const open = indexedDB.open(DB_NAME, 1);
   open.onupgradeneeded = () => open.result.createObjectStore(STORE);
   db = await done(open);
@@ -46,7 +47,11 @@ export async function openWebStore(): Promise<[string, string | null][]> {
   return keys.map((key, i) => [String(key), values[i] as string | null]);
 }
 
-/** Applies every op in one transaction. A no-op until `openWebStore` has run (tests). */
+/**
+ * Applies every op in one transaction. A no-op until `openWebStore` has run —
+ * which is what keeps the tests, and a browser that refuses IndexedDB (see
+ * `initWebFs`, which tells the user), working from memory alone.
+ */
 export function persistWeb(ops: WebOp[]): Promise<void> {
   if (!db || ops.length === 0) return Promise.resolve();
   const tx = db.transaction(STORE, "readwrite");

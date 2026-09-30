@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
+import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from "react-arborist";
 import { Button, Input, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -24,6 +24,7 @@ import {
   useWorkspaceTree,
   type TreeNode,
 } from "../../state/workspaceStore";
+import { findTreeNode } from "../../state/workspaceReducer";
 import * as fs from "../../lib/fs";
 import { extensionManager } from "../../extensions/extensionManager";
 import {
@@ -34,6 +35,7 @@ import {
   type ContextMenuOrigin,
 } from "../ContextMenu";
 import { isNativeApp, REVEAL_LABEL } from "../../lib/platform";
+import { copyText } from "../../lib/clipboard";
 
 interface FileTreeProps {
   onOpenFile: (path: string, name: string) => void;
@@ -44,10 +46,11 @@ interface FileTreeProps {
 
 export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
   const state = useWorkspaceTree();
-  const { dispatch, refreshTree } = useWorkspaceActions();
+  const { dispatch, refreshTree, loadFolder, setFolderOpen, getOpenFolders, getState } = useWorkspaceActions();
   const isRoot = useCallback((id: string) => state.roots.includes(id), [state.roots]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const treeRef = useRef<TreeApi<TreeNode>>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [pendingDelete, setPendingDelete] = useState<NodeApi<TreeNode>[] | null>(null);
   const contextMenu = useContextMenu();
@@ -61,6 +64,30 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  // The sidebar comes back as it was left: what was open is open, and its contents were
+  // read with the session. The tree keeps its own open state, so this seeds it once; a
+  // project added later is opened by the effect below.
+  const initialOpen = useRef(Object.fromEntries(getOpenFolders().map((id) => [id, true])));
+  const seenRoots = useRef(new Set(state.roots));
+  useEffect(() => {
+    for (const id of seenRoots.current) if (!state.roots.includes(id)) seenRoots.current.delete(id);
+    for (const root of state.roots) {
+      if (seenRoots.current.has(root)) continue;
+      seenRoots.current.add(root);
+      if (getOpenFolders().includes(root)) treeRef.current?.open(root);
+    }
+  }, [state.roots, getOpenFolders]);
+
+  // Fires for every way a folder opens or closes. Its contents are read the first time.
+  const handleToggle = useCallback(
+    (id: string) => {
+      const open = treeRef.current?.isOpen(id) ?? false;
+      setFolderOpen(id, open);
+      if (open && findTreeNode(getState().tree, id)?.unloaded) void loadFolder(id);
+    },
+    [getState, loadFolder, setFolderOpen],
+  );
 
   const handleActivate = useCallback(
     (node: NodeApi<TreeNode>) => {
@@ -179,7 +206,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
           key: "copy-path",
           label: "Copy Path",
           icon: ClipboardIcon,
-          onSelect: () => navigator.clipboard.writeText(node.data.id),
+          onSelect: () => copyText(node.data.id),
         },
         root
           ? {
@@ -254,7 +281,11 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   return (
     <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
       <Tree<TreeNode>
+        ref={treeRef}
         data={state.tree}
+        openByDefault={false}
+        initialOpenState={initialOpen.current}
+        onToggle={handleToggle}
         width={size.width}
         height={size.height}
         rowHeight={40}

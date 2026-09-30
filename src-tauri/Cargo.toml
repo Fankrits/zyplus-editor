@@ -1,8 +1,8 @@
 [package]
 name = "zyplus-editor"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.2.3"
+description = "Zyplus, a markdown editor that gets out of the way"
+authors = ["Fankrits"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,10 +24,18 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 # Required by `tauri::generate_context!`, which expands to `::serde_json` paths.
 serde_json = "1"
-tauri-plugin-updater = "2.11.0"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-single-instance = "2"
 
+
+# The updater brings its own TLS (rustls + ring, about half a megabyte). Linux keeps it:
+# the system one there is OpenSSL, a dynamic library the AppImage would have to carry.
+# macOS and Windows ship a TLS stack of their own, so use that and drop the bundled one.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri-plugin-updater = "2.11.0"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-updater = { version = "2.11.0", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
@@ -37,7 +45,8 @@ objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"
 objc2-web-kit = { version = "0.3", features = ["WKWebView"] }
 
 [profile.release]
-opt-level = "s"
+# Size over speed: this side is file and window glue, the editing happens in the webview.
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"

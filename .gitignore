@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 !extensions/dist
+bundle-report.html
 *.local
 *.tsbuildinfo
 

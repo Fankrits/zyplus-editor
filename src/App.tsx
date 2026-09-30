@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Button, Drawer, Input, Label, Modal, TextField, ToastProvider } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -27,7 +26,8 @@ import { suggestExtensionFor } from "./extensions/suggestExtension";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { matchShortcut, type CommandId } from "./lib/shortcuts";
-import { isMac } from "./lib/platform";
+import { isMac, isNativeApp } from "./lib/platform";
+import { copyText } from "./lib/clipboard";
 
 type CreateKind = "file" | "folder" | null;
 
@@ -41,6 +41,7 @@ function AppShell() {
     openFile,
     addFolder,
     openFilePicker,
+    setFolderOpen,
   } = useWorkspaceActions();
   // The shell deliberately does not subscribe to tab content: it would re-render
   // the sidebar, tab bar and editor on every keystroke. Commands read the live
@@ -93,7 +94,7 @@ function AppShell() {
     };
 
     let unlisten: Promise<() => void> | null = null;
-    if (isTauri()) {
+    if (isNativeApp) {
       unlisten = listen("open-files", () => {
         if (!cancelled) drain();
       });
@@ -140,7 +141,7 @@ function AppShell() {
           });
           return;
         case "export-md":
-          if (tab) fs.saveFileAs(tab.title.replace(/\.[^.]+$/, "") + ".md", tab.content);
+          if (tab) fs.saveFileAs(fs.withExtension(tab.title, ".md"), tab.content);
           return;
         case "export-pdf":
           // `marked` only matters when exporting, so it stays out of the startup bundle.
@@ -193,10 +194,10 @@ function AppShell() {
           if (tab) emit(FIND_EVENT, { replace: true });
           return;
         case "copy-markdown":
-          if (tab) navigator.clipboard.writeText(tab.content);
+          if (tab) copyText(tab.content);
           return;
         case "copy-path":
-          if (tab) navigator.clipboard.writeText(tab.filePath);
+          if (tab) copyText(tab.filePath);
           return;
       }
     },
@@ -244,11 +245,19 @@ function AppShell() {
 
   const handleFirstFolder = useCallback(
     async (folder: string) => {
+      // Read before committing to the folder: a folder that cannot be read must
+      // leave the welcome screen up, not an empty workspace that looks broken.
+      // Welcome does not await this, so a rejection here would be invisible.
+      let node: Awaited<ReturnType<typeof fs.readProjectNode>> | null = null;
+      const read = await fs.tryFs("Could not open the notes folder", folder, async () => {
+        node = await fs.readProjectNode(folder);
+      });
+      if (!read || !node) return;
       setDefaultFolder(folder);
-      const node = await fs.readProjectNode(folder);
       dispatch({ type: "ADD_ROOT", rootPath: folder, node });
+      setFolderOpen(folder, true);
     },
-    [dispatch, setDefaultFolder],
+    [dispatch, setDefaultFolder, setFolderOpen],
   );
 
   // Derived, not state: the reason updates as the user types, and an empty box
@@ -283,7 +292,8 @@ function AppShell() {
 
   if (!isHydrated) return <div className="h-app w-full bg-background" />;
 
-  if (!defaultFolder && roots.length === 0 && !hasTabs) {
+  // "" is the user having chosen Skip; only a folder never chosen shows this.
+  if (defaultFolder === null && roots.length === 0 && !hasTabs) {
     return (
       <Welcome
         onReady={handleFirstFolder}

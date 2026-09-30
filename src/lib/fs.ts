@@ -9,9 +9,9 @@ import {
   exists,
 } from "@tauri-apps/plugin-fs";
 import { join as tauriJoin, dirname as tauriDirname, appDataDir } from "@tauri-apps/api/path";
-import { isTauri, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { isMac, isWindows } from "./platform";
+import { isMac, isNativeApp, isWindows } from "./platform";
 import { onOtherTabWrite, openWebStore, persistWeb, type WebOp } from "./webStore";
 import type { TreeNode } from "../state/workspaceReducer";
 
@@ -48,7 +48,7 @@ export const WEB_ROOT = "/Zyplus";
 
 /** Loads the web build's stored files. Call once before rendering; a no-op on desktop. */
 export async function initWebFs(): Promise<void> {
-  if (isTauri()) return;
+  if (isNativeApp) return;
   webFiles.clear();
   webDirs.clear();
   try {
@@ -58,8 +58,17 @@ export async function initWebFs(): Promise<void> {
     }
   } catch (err) {
     // Private windows in some browsers refuse IndexedDB. The app still works,
-    // it just forgets everything on reload.
+    // it just forgets everything on reload — so say so once, while there is
+    // still time to export what was typed.
     console.error("Browser storage is unavailable; notes will not be kept:", err);
+    try {
+      window.alert(
+        "This browser is blocking storage, so Zyplus cannot keep your notes and extensions between visits.\n\n" +
+          "Use \u201cExport as .md\u201d to save anything you want to keep, or open Zyplus in a normal (non-private) window.",
+      );
+    } catch {
+      // No window to alert in (tests); the console line above is the record.
+    }
   }
 
   // Another tab of the same app writing to the store it shares with this one.
@@ -138,11 +147,11 @@ function mockDirname(p: string): string {
  * every time one reached for it directly.
  */
 export async function joinPath(...parts: string[]): Promise<string> {
-  return isTauri() ? tauriJoin(...parts) : mockJoin(...parts);
+  return isNativeApp ? tauriJoin(...parts) : mockJoin(...parts);
 }
 
 export async function dirnameOf(path: string): Promise<string> {
-  return isTauri() ? tauriDirname(path) : mockDirname(path);
+  return isNativeApp ? tauriDirname(path) : mockDirname(path);
 }
 
 /** Last segment of a path, either separator. The one copy in the app. */
@@ -186,7 +195,7 @@ async function reportingPicker(title: string, fn: () => Promise<string | null>):
 /** On the web there are no folders to pick, so this is always the notes folder. */
 export function openFolderDialog(): Promise<string | null> {
   return reportingPicker("Could not choose a folder", async () => {
-    if (!isTauri()) {
+    if (!isNativeApp) {
       await ensureFolder(WEB_ROOT);
       return WEB_ROOT;
     }
@@ -200,7 +209,7 @@ export function openFileDialog(): Promise<string | null> {
 }
 
 async function pickFile(): Promise<string | null> {
-  if (!isTauri()) return importFromDevice();
+  if (!isNativeApp) return importFromDevice();
   const result = await openDialog({
     directory: false,
     multiple: false,
@@ -245,24 +254,22 @@ async function freePath(dir: string, name: string, label = ""): Promise<string> 
   return path;
 }
 
-/** Reads a directory tree top to bottom, skipping dotfiles/dot-directories. */
-export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
-  const entries = isTauri() ? await readDir(dirPath) : webReadDir(dirPath);
-  // Subfolders are read together rather than one after another: a tree three
-  // levels deep used to cost the sum of every folder in it, in series, and this
-  // runs at startup and again whenever another tab changes the notes.
-  // ponytail: no concurrency cap — a notebook's worth of folders is fine; a disk
-  // with thousands would want one.
-  const nodes = await Promise.all(
-    entries
-      .filter((entry) => !entry.name.startsWith("."))
-      .map(async (entry): Promise<TreeNode> => {
-        const path = displayJoin(dirPath, entry.name);
-        return entry.isDirectory
-          ? { id: path, name: entry.name, isFolder: true, children: await readDirRecursive(path) }
-          : { id: path, name: entry.name, isFolder: false };
-      }),
-  );
+/**
+ * Lists one folder, skipping dotfiles/dot-directories, folders first. Subfolders come
+ * back unread (`unloaded`) and are read when the user opens them: reading a whole
+ * project up front cost one round trip per folder, and a `node_modules` or a build
+ * output made that tens of thousands.
+ */
+export async function readChildren(dirPath: string): Promise<TreeNode[]> {
+  const entries = isNativeApp ? await readDir(dirPath) : webReadDir(dirPath);
+  const nodes = entries
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry): TreeNode => {
+      const id = displayJoin(dirPath, entry.name);
+      return entry.isDirectory
+        ? { id, name: entry.name, isFolder: true, children: [], unloaded: true }
+        : { id, name: entry.name, isFolder: false };
+    });
   nodes.sort((a, b) => {
     if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
     return a.name.localeCompare(b.name);
@@ -270,10 +277,27 @@ export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
   return nodes;
 }
 
-/** Reads a folder as a project: one collapsible top-level node holding the tree. */
-export async function readProjectNode(dirPath: string): Promise<TreeNode> {
-  const children = await readDirRecursive(dirPath);
-  return { id: dirPath, name: basenameOf(dirPath), isFolder: true, children };
+/**
+ * Reads a folder as a project: one collapsible top-level node holding its first level.
+ * `loaded` is the folders the user had already opened; a refresh passes them so they
+ * are read again and keep showing their contents, while everything else stays unread.
+ */
+export async function readProjectNode(dirPath: string, loaded: ReadonlySet<string> = new Set()): Promise<TreeNode> {
+  return { id: dirPath, name: basenameOf(dirPath), isFolder: true, children: await readLevel(dirPath, loaded) };
+}
+
+async function readLevel(dirPath: string, loaded: ReadonlySet<string>): Promise<TreeNode[]> {
+  const nodes = await readChildren(dirPath);
+  return Promise.all(
+    nodes.map(async (node) => {
+      if (!loaded.has(node.id)) return node;
+      // Gone or unreadable since it was listed: leave it to be read (and reported) if opened again.
+      return readLevel(node.id, loaded).then(
+        (children): TreeNode => ({ id: node.id, name: node.name, isFolder: true, children }),
+        () => node,
+      );
+    }),
+  );
 }
 
 export const DEFAULT_FOLDER_NAME = "Zyplus";
@@ -299,7 +323,7 @@ export function displayJoin(parent: string, name: string): string {
  * guards with a Files & Folders prompt.
  */
 export async function defaultFolderPath(): Promise<string> {
-  if (!isTauri()) return WEB_ROOT;
+  if (!isNativeApp) return WEB_ROOT;
   return joinPath(await appDataDir(), DEFAULT_FOLDER_NAME);
 }
 
@@ -312,13 +336,13 @@ export async function createDefaultFolder(): Promise<string> {
 
 /** Whether a path exists. */
 export async function pathExists(path: string): Promise<boolean> {
-  if (!isTauri()) return webEntriesUnder(path).length > 0;
+  if (!isNativeApp) return webEntriesUnder(path).length > 0;
   return exists(path);
 }
 
 /** Creates a folder and any missing parents. Unlike `createFolder`, existing is fine. */
 export async function ensureFolder(path: string): Promise<void> {
-  if (isTauri()) {
+  if (isNativeApp) {
     await mkdir(path, { recursive: true });
     return;
   }
@@ -328,7 +352,7 @@ export async function ensureFolder(path: string): Promise<void> {
 }
 
 export async function readTextFile(path: string): Promise<string> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     const content = webFiles.get(path);
     if (content === undefined) throw new Error(`File not found: ${path}`);
     return content;
@@ -337,7 +361,7 @@ export async function readTextFile(path: string): Promise<string> {
 }
 
 export async function writeTextFile(path: string, content: string): Promise<void> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     await applyWeb([[path, content]]);
   } else {
     await writeTextFileRaw(path, content);
@@ -403,7 +427,7 @@ export async function tryFs(
   } catch (err) {
     console.error(`${title} — "${path}":`, err);
     try {
-      if (isTauri()) await message(explainFsError(err, path), { title, kind: "error" });
+      if (isNativeApp) await message(explainFsError(err, path), { title, kind: "error" });
       else window.alert(`${title}\n\n${explainFsError(err, path)}`);
     } catch {
       // Reporting the failure failing is not worth a second failure path.
@@ -457,11 +481,16 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
     throw new Error(`Cannot move "${basenameOf(oldPath)}" into itself`);
   }
   // rename(2) replaces an existing file, and the web store would too. A
-  // case-only rename finds itself on a case-insensitive disk, which is fine.
-  if (newPath.toLowerCase() !== oldPath.toLowerCase() && (await pathExists(newPath))) {
+  // case-only rename finds itself on a case-insensitive disk (macOS, Windows),
+  // which is fine — but on Linux and in the web store "File.md" and "file.md"
+  // are two files, and skipping the check would overwrite the other one.
+  const findsItself =
+    newPath === oldPath ||
+    (newPath.toLowerCase() === oldPath.toLowerCase() && isNativeApp && (isMac || isWindows));
+  if (!findsItself && (await pathExists(newPath))) {
     throw new Error(`"${basenameOf(newPath)}" already exists there`);
   }
-  if (!isTauri()) {
+  if (!isNativeApp) {
     const moved = webEntriesUnder(oldPath);
     await applyWeb([
       ...moved.map(([p]): WebOp => [p, undefined]),
@@ -473,7 +502,7 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
 }
 
 export async function deletePath(path: string, isFolder: boolean): Promise<void> {
-  if (!isTauri()) {
+  if (!isNativeApp) {
     await applyWeb(webEntriesUnder(path).map(([p]): WebOp => [p, undefined]));
   } else {
     await remove(path, { recursive: isFolder });
@@ -488,17 +517,47 @@ export async function duplicateFile(path: string): Promise<string> {
   return newPath;
 }
 
-/** Writes `content` to a path the user picks. Outside Tauri, falls back to a browser download. */
+/**
+ * Hands a blob to the browser as a file download.
+ *
+ * The anchor is attached before it is clicked (Firefox ignores a detached one),
+ * and the object URL outlives the click: Firefox and Safari start the download
+ * asynchronously, so revoking it on the next line cancelled it or saved an empty
+ * file.
+ */
+export function downloadBlob(name: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement("a"), { href: url, download: name, rel: "noopener" });
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+/**
+ * `title` with its extension swapped for `ext` (".md", ".pdf"). A leading dot is
+ * part of the name, not an extension: ".gitignore" becomes ".gitignore.md".
+ */
+export function withExtension(title: string, ext: string): string {
+  const dot = title.lastIndexOf(".");
+  return (dot > 0 ? title.slice(0, dot) : title) + ext;
+}
+
+/**
+ * Writes `content` to a path the user picks. Outside Tauri, falls back to a
+ * browser download. Failures are reported to the user, never thrown: every
+ * caller is a fire-and-forget menu item.
+ */
 export async function saveFileAs(defaultName: string, content: string): Promise<void> {
-  if (!isTauri()) {
-    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
-    const link = Object.assign(document.createElement("a"), { href: url, download: defaultName });
-    link.click();
-    URL.revokeObjectURL(url);
-    return;
-  }
-  const path = await saveDialog({ defaultPath: defaultName });
-  if (path) await writeTextFileRaw(path, content);
+  await tryFs("Could not export", defaultName, async () => {
+    if (!isNativeApp) {
+      downloadBlob(defaultName, new Blob([content], { type: "text/markdown;charset=utf-8" }));
+      return;
+    }
+    const path = await saveDialog({ defaultPath: defaultName });
+    if (path) await writeTextFileRaw(path, content);
+  });
 }
 
 /**
@@ -507,7 +566,7 @@ export async function saveFileAs(defaultName: string, content: string): Promise<
  * every caller is a fire-and-forget menu item.
  */
 export async function revealPath(path: string): Promise<void> {
-  if (!isTauri()) return;
+  if (!isNativeApp) return;
   try {
     await revealItemInDir(path);
   } catch (err) {
@@ -517,7 +576,7 @@ export async function revealPath(path: string): Promise<void> {
 
 /** Files the OS handed us (double-click / "Open With"). Drains the native queue. */
 export async function takePendingFiles(): Promise<string[]> {
-  if (!isTauri()) return [];
+  if (!isNativeApp) return [];
   return invoke<string[]>("take_pending_files");
 }
 
@@ -530,12 +589,12 @@ export const DEFAULT_APP_UTI = {
 
 /** Registers Zyplus as the system handler for a UTI (see `DEFAULT_APP_UTI`). macOS only. */
 export async function setDefaultAppFor(uti: string): Promise<void> {
-  if (!isTauri()) throw new Error("Only available in the desktop app.");
+  if (!isNativeApp) throw new Error("Only available in the desktop app.");
   await invoke("set_default_app_for", { uti });
 }
 
 /** Whether the given UTI already opens in Zyplus. */
 export async function isDefaultAppFor(uti: string): Promise<boolean> {
-  if (!isTauri()) return false;
+  if (!isNativeApp) return false;
   return invoke<boolean>("is_default_app_for", { uti });
 }

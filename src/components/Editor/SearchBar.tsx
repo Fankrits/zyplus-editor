@@ -12,7 +12,8 @@ const HIGHLIGHT_ACTIVE = "zy-search-active";
 
 // CSS Custom Highlight API — recent TS DOM libs still miss the registry.
 const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
-const HighlightCtor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+const HighlightCtor = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => { add(range: Range): void } })
+  .Highlight;
 
 function clearRichHighlights() {
   highlights?.delete(HIGHLIGHT_ALL);
@@ -124,7 +125,11 @@ export function SearchBar({ mode, containerRef, initialShowReplace = false, onCl
     if (!current) return;
 
     if (highlights && HighlightCtor) {
-      highlights.set(HIGHLIGHT_ALL, new HighlightCtor(...ranges));
+      // Added one by one: spreading every match into the constructor overflows the
+      // engine's argument limit on a big document with a common query.
+      const all = new HighlightCtor();
+      for (const range of ranges) all.add(range);
+      highlights.set(HIGHLIGHT_ALL, all);
       highlights.set(HIGHLIGHT_ACTIVE, new HighlightCtor(current));
     } else {
       selectRange(current);
@@ -133,7 +138,7 @@ export function SearchBar({ mode, containerRef, initialShowReplace = false, onCl
     // reached at all, and skipping it left older webviews with a match count
     // pointing at something off screen.
     current.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [index, total, mode, revision]);
+  }, [index, total, mode, revision, query]);
 
   // Leave no highlight or lingering query behind when the bar closes.
   useEffect(

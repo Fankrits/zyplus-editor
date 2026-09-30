@@ -2,29 +2,14 @@ import { useEffect, useState } from "react";
 import { extensionManager } from "./extensionManager";
 import type { ExtensionState } from "./types";
 
-export function useExtensions(): {
-  states: ExtensionState[];
-  downloadAndInstall: (id: string) => Promise<void>;
-  uninstallAndRemove: (id: string) => Promise<void>;
-} {
-  const [states, setStates] = useState<ExtensionState[]>(() =>
-    extensionManager.getStates(),
-  );
-
+export function useExtensions(): ExtensionState[] {
+  const [states, setStates] = useState(() => extensionManager.getStates());
+  // Re-sync on mount too: a change may land between first render and subscribe.
   useEffect(() => {
-    // Initial sync
     setStates(extensionManager.getStates());
-    // Subscribe to changes
-    return extensionManager.subscribe(() => {
-      setStates(extensionManager.getStates());
-    });
+    return extensionManager.subscribe(() => setStates(extensionManager.getStates()));
   }, []);
-
-  return {
-    states,
-    downloadAndInstall: (id: string) => extensionManager.downloadAndInstall(id),
-    uninstallAndRemove: (id: string) => extensionManager.uninstallAndRemove(id),
-  };
+  return states;
 }
 
 /** The extension editing this file, or null. Re-renders when an extension is installed or removed. */

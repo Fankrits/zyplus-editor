@@ -9,9 +9,11 @@ describe("web filesystem", () => {
     await fs.writeTextFile("/w/docs/a.md", "a");
     await fs.writeTextFile("/w/docsy.md", "not inside /w/docs");
 
-    const tree = await fs.readDirRecursive("/w");
+    // One level at a time: subfolders come back unread, and are read when opened.
+    const tree = await fs.readChildren("/w");
     expect(tree.map((n) => n.name)).toEqual(["docs", "empty", "docsy.md"]);
-    expect(tree[0].children?.map((n) => n.name)).toEqual(["a.md"]);
+    expect(tree[0]).toMatchObject({ isFolder: true, unloaded: true, children: [] });
+    expect((await fs.readChildren("/w/docs")).map((n) => n.name)).toEqual(["a.md"]);
 
     await fs.renamePath("/w/docs", "/w/notes");
     expect(await fs.readTextFile("/w/notes/a.md")).toBe("a");
@@ -39,5 +41,15 @@ describe("web filesystem", () => {
     // Case-only renames are still allowed.
     await fs.renamePath("/v/a.md", "/v/A.md");
     expect(await fs.readTextFile("/v/A.md")).toBe("keep me");
+  });
+
+  // The store is case-sensitive, so "File.md" and "file.md" are two notes.
+  it("refuses a case-only rename onto a different existing file", async () => {
+    await fs.writeTextFile("/case/file.md", "lower");
+    await fs.writeTextFile("/case/File.md", "upper");
+    await expect(fs.renamePath("/case/file.md", "/case/File.md")).rejects.toThrow(/already exists/);
+    expect(await fs.readTextFile("/case/File.md")).toBe("upper");
+    expect(await fs.readTextFile("/case/file.md")).toBe("lower");
+    await fs.renamePath("/case/file.md", "/case/file.md"); // renaming to itself stays a no-op
   });
 });

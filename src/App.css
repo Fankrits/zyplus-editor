@@ -86,13 +86,13 @@ body,
   --diagram-2: #7828c8;
   --diagram-2-text: #7828c8;
   --diagram-3: #17c964;
-  --diagram-3-text: #16a34a;
+  --diagram-3-text: #15803d;
   --diagram-4: #f5a524;
-  --diagram-4-text: #d97706;
+  --diagram-4-text: #b45309;
   --diagram-5: #f31260;
   --diagram-5-text: #e11d48;
   --diagram-6: #06b6d4;
-  --diagram-6-text: #0891b2;
+  --diagram-6-text: #0e7490;
 }
 
 [data-theme="dark"] {
@@ -271,5 +271,6 @@ body,
 }
 ::highlight(zy-search-active) {
   background-color: var(--warning, #f5a524);
-  color: var(--background, #fff);
+  /* Not the page background: white on the warning amber is ~2:1 in light themes. */
+  color: var(--warning-foreground, #000);
 }

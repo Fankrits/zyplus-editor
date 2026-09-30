@@ -46,8 +46,8 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "open-file", combos: ["mod+shift+o"], label: "Open file", group: "File" },
 
   { id: "close-tab", combos: ["mod+w"], label: "Close tab", group: "Tabs" },
-  { id: "next-tab", combos: ["mod+alt+arrowright", "mod+shift+bracketright"], label: "Next tab", group: "Tabs" },
-  { id: "prev-tab", combos: ["mod+alt+arrowleft", "mod+shift+bracketleft"], label: "Previous tab", group: "Tabs" },
+  { id: "next-tab", combos: ["mod+alt+arrowright", "mod+shift+]"], label: "Next tab", group: "Tabs" },
+  { id: "prev-tab", combos: ["mod+alt+arrowleft", "mod+shift+["], label: "Previous tab", group: "Tabs" },
 
   { id: "toggle-sidebar", combos: ["mod+b"], label: "Toggle sidebar", group: "View" },
   { id: "toggle-mode", combos: ["mod+e"], label: "Toggle rich / plain text", group: "View" },

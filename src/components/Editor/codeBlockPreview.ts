@@ -1,7 +1,7 @@
 import { LanguageDescription } from "@codemirror/language";
-import { languages as defaultLanguages } from "@codemirror/language-data";
 import { markdown } from "@codemirror/lang-markdown";
 import { extensionManager } from "../../extensions/extensionManager";
+import { codeLanguages } from "./codeLanguages";
 
 export const mermaidLanguage = LanguageDescription.of({
   name: "Mermaid",
@@ -11,7 +11,7 @@ export const mermaidLanguage = LanguageDescription.of({
 
 export const supportedLanguages: LanguageDescription[] = [
   mermaidLanguage,
-  ...defaultLanguages,
+  ...codeLanguages,
 ];
 
 export function renderCodeBlockPreview(

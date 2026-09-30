@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { ASSET_REF, EXTENSION_CATALOG, formatBytes, getManifestById } from "../src/extensions/catalog";
+import { ASSET_REF, EXTENSION_CATALOG, assetUrl, formatBytes, getManifestById } from "../src/extensions/catalog";
 import { extensionManager, hashOf } from "../src/extensions/extensionManager";
 import { isExtensionInstalledLocally, saveExtensionFiles } from "../src/extensions/loader";
 
@@ -44,6 +44,37 @@ describe("Extension System", () => {
       expect(url).toStartWith(
         `https://raw.githubusercontent.com/Fankrits/zyplus-editor/${ASSET_REF}/extensions/dist/`,
       );
+    }
+  });
+
+  // The web build's package.json version is never bumped outside a release run,
+  // so the tag it named had no bundles and every browser install was a 404. The
+  // browser installs from its own deploy; only the desktop app uses the tag.
+  it("serves bundles from the deploy on the web and from the release tag on desktop", () => {
+    expect(assetUrl("json.js", false, false)).toBe("/extensions-dist/json.js");
+    expect(assetUrl("json.js", true, true)).toBe("/extensions-dist/json.js");
+    expect(assetUrl("json.js", true, false)).toBe(
+      `https://raw.githubusercontent.com/Fankrits/zyplus-editor/${ASSET_REF}/extensions/dist/json.js`,
+    );
+  });
+
+  it("does not save a bundle whose stylesheet failed to download", async () => {
+    const manifest = getManifestById("json")!;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request) => {
+      const isCss = String(url).endsWith(".css");
+      return new Response(isCss ? "not found" : "export default {}", { status: isCss ? 404 : 200 });
+    }) as unknown as typeof fetch;
+    const realHash = manifest.sha256;
+    manifest.sha256 = await hashOf("export default {}");
+    try {
+      await expect(extensionManager.downloadAndInstall("json")).rejects.toThrow(/styles/);
+      expect(extensionManager.getState("json")?.status).toBe("error");
+      expect(await isExtensionInstalledLocally("json")).toBe(false);
+      expect(extensionManager.getEnabledIds()).not.toContain("json");
+    } finally {
+      globalThis.fetch = originalFetch;
+      manifest.sha256 = realHash;
     }
   });
 
@@ -123,6 +154,14 @@ describe("Extension System", () => {
       globalThis.fetch = originalFetch;
       manifest.sha256 = realHash;
     }
+  });
+
+  it("routes a bare Dockerfile to the code editor, which has no extension to match", () => {
+    localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["codefiles"]));
+    expect(extensionManager.getFileEditorId("/app/Dockerfile")).toBe("codefiles");
+    expect(extensionManager.getFileEditorId("C:\\app\\dockerfile")).toBe("codefiles");
+    expect(extensionManager.getFileEditorId("/app/build.dockerfile")).toBe("codefiles");
+    expect(extensionManager.getFileEditorId("/app/README.md")).toBeNull();
   });
 
   it("hands .json files to the JSON editor only once it is enabled", () => {

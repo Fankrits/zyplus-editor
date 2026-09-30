@@ -1,5 +1,6 @@
 import type { ExtensionManifest } from "./types";
 import checksums from "./checksums.json";
+import { isNativeApp } from "../lib/platform";
 
 const isDev = Boolean(typeof import.meta !== "undefined" && import.meta.env?.DEV);
 
@@ -13,11 +14,25 @@ const isDev = Boolean(typeof import.meta !== "undefined" && import.meta.env?.DEV
 export const ASSET_REF =
   typeof __APP_VERSION__ !== "undefined" ? `v${__APP_VERSION__}` : "main";
 
-function getAssetUrl(filename: string): string {
-  if (isDev) {
-    return `/extensions-dist/${filename}`;
-  }
+/**
+ * Where a bundle file is fetched from.
+ *
+ * The web build serves the bundles itself, from `/extensions-dist/` (emitted by
+ * the `bundle-extensions` plugin in `vite.config.ts`). It cannot use the tag URL
+ * below: its `package.json` version is never bumped outside a release run, so
+ * the tag it named had no `extensions/dist` and every install was a 404. Serving
+ * them from the same deploy also means the files always match `checksums.json`.
+ *
+ * The desktop build fetches from the tag it was released from instead, so the
+ * installer does not carry them.
+ */
+export function assetUrl(filename: string, native: boolean, dev = isDev): string {
+  if (dev || !native) return `/extensions-dist/${filename}`;
   return `https://raw.githubusercontent.com/Fankrits/zyplus-editor/${ASSET_REF}/extensions/dist/${filename}`;
+}
+
+function getAssetUrl(filename: string): string {
+  return assetUrl(filename, isNativeApp);
 }
 
 export const EXTENSION_CATALOG: ExtensionManifest[] = [
@@ -108,7 +123,7 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     fileExtensions: [
       ".yaml", ".yml", ".toml", ".xml", ".sh", ".bash", ".zsh", ".ini", ".env",
       ".css", ".html", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".go", ".sql",
-      ".rb", ".php", ".c", ".cpp", ".h", ".java", ".kt", ".swift", ".dockerfile", ".gitignore",
+      ".rb", ".php", ".c", ".cpp", ".h", ".java", ".kt", ".swift", ".dockerfile", "dockerfile", ".gitignore",
     ],
     downloadUrl: getAssetUrl("codefiles.js"),
     sha256: checksums["codefiles.js"],

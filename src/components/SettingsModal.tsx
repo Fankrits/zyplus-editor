@@ -21,6 +21,7 @@ import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
 import { Field } from "./Field";
 import { useExtensions } from "../extensions/useExtensions";
+import { extensionManager } from "../extensions/extensionManager";
 import { formatBytes } from "../extensions/catalog";
 
 const SECTIONS = [
@@ -145,7 +146,7 @@ export function SettingsModal({
   const section = controlledSection ?? localSection;
   const setSection = onSectionChange ?? setLocalSection;
   const [theme, setThemeState] = useState<Theme>(getTheme);
-  const { states: extensionStates, downloadAndInstall, uninstallAndRemove } = useExtensions();
+  const extensionStates = useExtensions();
 
   const pickTheme = (next: Theme) => {
     setTheme(next);
@@ -291,7 +292,7 @@ export function SettingsModal({
                   {section === "extensions" && (
                     <div className="flex flex-col gap-4">
                       <div className="text-xs text-muted leading-relaxed">
-                        Extensions add rich capabilities to Zyplus on demand. When enabled, the extension bundle is fetched from GitHub. When disabled, it is completely removed from your device to keep disk usage zero.
+                        Extensions add rich capabilities to Zyplus on demand. When enabled, the extension bundle is downloaded and kept on this device. When disabled, it is completely removed from your device to keep disk usage zero.
                       </div>
 
                       <div className="flex flex-col gap-3">
@@ -330,8 +331,8 @@ export function SettingsModal({
                                       // Failures land in the extension's own state, which
                                       // this list renders; the rejection is only a duplicate.
                                       const done = checked
-                                        ? downloadAndInstall(manifest.id)
-                                        : uninstallAndRemove(manifest.id);
+                                        ? extensionManager.downloadAndInstall(manifest.id)
+                                        : extensionManager.uninstallAndRemove(manifest.id);
                                       done.catch(() => {});
                                     }}
                                   >
@@ -356,7 +357,7 @@ export function SettingsModal({
                                   {isDownloading && (
                                     <span className="text-accent flex items-center gap-1.5">
                                       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                                      <span>Downloading from GitHub... {downloadProgress ? `${downloadProgress}%` : ""}</span>
+                                      <span>Downloading... {downloadProgress ? `${downloadProgress}%` : ""}</span>
                                     </span>
                                   )}
                                   {status === "uninstalled" && (
@@ -371,21 +372,22 @@ export function SettingsModal({
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                  {status === "uninstalled" && (
+                                  {(status === "uninstalled" || status === "error") && (
                                     <Button
                                       size="sm"
                                       variant="secondary"
                                       isDisabled={isDownloading}
-                                      onPress={() => downloadAndInstall(manifest.id)}
+                                      // Failures land in the extension's own state, rendered above.
+                                      onPress={() => void extensionManager.downloadAndInstall(manifest.id).catch(() => {})}
                                       className="h-6 px-2.5 text-[11px]"
                                     >
-                                      Install
+                                      {status === "error" ? "Retry" : "Install"}
                                     </Button>
                                   )}
                                   {isInstalled && (
                                     <button
                                       type="button"
-                                      onClick={() => uninstallAndRemove(manifest.id)}
+                                      onClick={() => void extensionManager.uninstallAndRemove(manifest.id).catch(() => {})}
                                       className="flex items-center gap-1 text-muted hover:text-danger text-[11px] transition-colors cursor-pointer"
                                       title="Delete from device"
                                     >
