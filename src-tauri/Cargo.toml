@@ -37,7 +37,8 @@ objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"
 objc2-web-kit = { version = "0.3", features = ["WKWebView"] }
 
 [profile.release]
-opt-level = "s"
+# Size over speed: this side is file and window glue, the editing happens in the webview.
+opt-level = "z"
 lto = true
 codegen-units = 1
 panic = "abort"

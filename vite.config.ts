@@ -69,18 +69,112 @@ const bundleExtensionsPlugin: Plugin = {
   },
 };
 
+// Tauri embeds every file Vite writes to dist/ in the binary, and the startup path is
+// what every launch parses. Two rules keep both small, and fail the build rather than
+// let either grow quietly:
+//  - The extension libraries are built by `build:extensions` and downloaded on demand,
+//    so the app itself must never bundle them. (The finished bundles the web build ships
+//    above are plain assets, not chunks, so they don't count.)
+//  - The editors are lazy chunks. A helper shared with the eager UI that a vendor chunk
+//    happens to capture is enough to pull one onto the startup path.
+const EXTENSION_ONLY_LIBS =
+  /[\\/]node_modules[\\/](?:mermaid|katex|chart\.js|tabulator-tables|papaparse|vanilla-jsoneditor|lossless-json)[\\/]/;
+const EDITOR_ONLY_LIBS =
+  /[\\/]node_modules[\\/](?:@milkdown|prosemirror-[^\\/]+|@codemirror[\\/](?:view|state))[\\/]/;
+
+const guardBundle: Plugin = {
+  name: "guard-bundle",
+  generateBundle(_, bundle) {
+    const chunks = new Map(
+      Object.values(bundle).flatMap((file) => (file.type === "chunk" ? [[file.fileName, file] as const] : [])),
+    );
+
+    for (const chunk of chunks.values()) {
+      const leaked = chunk.moduleIds.find((id) => EXTENSION_ONLY_LIBS.test(id));
+      if (leaked) {
+        this.error(
+          `${leaked} is bundled into ${chunk.fileName}. Extension libraries load on demand ` +
+            `from src/extensions/bundles; the app must not import them.`,
+        );
+      }
+    }
+
+    const startup = new Set<string>();
+    const visit = (name: string) => {
+      if (startup.has(name)) return;
+      startup.add(name);
+      chunks.get(name)?.imports.forEach(visit);
+    };
+    for (const chunk of chunks.values()) if (chunk.isEntry) visit(chunk.fileName);
+    for (const name of startup) {
+      const eager = chunks.get(name)?.moduleIds.find((id) => EDITOR_ONLY_LIBS.test(id));
+      if (eager) {
+        this.error(
+          `${eager} is in ${name}, which loads at startup. The editors are lazy chunks; ` +
+            `check what the entry imports from it (or from a vendor group in vite.config.ts).`,
+        );
+      }
+    }
+  },
+};
+
 // https://vite.dev/config/
-export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss(), localExtensionsPlugin, bundleExtensionsPlugin],
+export default defineConfig(async ({ mode }) => ({
+  plugins: [
+    react(),
+    tailwindcss(),
+    localExtensionsPlugin,
+    bundleExtensionsPlugin,
+    guardBundle,
+    // `bun run analyze`. Written next to the project, not into dist/, which the binary embeds.
+    // Brotli is the size that counts: Tauri embeds its assets brotli-compressed.
+    mode === "analyze" &&
+      (await import("rollup-plugin-visualizer")).visualizer({
+        filename: "bundle-report.html",
+        gzipSize: true,
+        brotliSize: true,
+      }),
+  ],
 
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
 
-  // The Tauri webview is modern (WebKit / WebView2), so skip the downleveling
-  // Vite's default target does — notably async/await into generator machines.
   build: {
+    // The Tauri webview is modern (WebKit / WebView2), so skip the downleveling
+    // Vite's default target does — notably async/await into generator machines.
     target: "esnext",
+    // Whatever lands in dist/ is embedded in the binary, maps included.
+    sourcemap: false,
+    rolldownOptions: {
+      // Vendor debug logging (Lezer's parser trace, HeroUI's logger) is dead weight in a
+      // release. Only log and debug are droppable: the app reports its own failures through
+      // warn and error, which a release build's devtools would otherwise never show.
+      // `debugger` statements already go with minification, and `build.minify` stays
+      // Vite's to decide, so `vite build --minify false` still gives a readable bundle.
+      treeshake: { manualPureFunctions: ["console.log", "console.debug"] },
+      output: {
+        // Named vendor chunks. The editors are lazy, so each group has to hold code that
+        // loads together: CodeMirror inside the Milkdown group would make the plain-text
+        // editor fetch all of Milkdown, and either inside the React group would put them
+        // on the startup path. clsx is here because the eager UI uses it too. The
+        // per-language CodeMirror packages stay out on purpose: one lazy chunk each.
+        codeSplitting: {
+          groups: [
+            { name: "react-vendor", test: /[\\/]node_modules[\\/](?:react|react-dom|scheduler|clsx)[\\/]/ },
+            {
+              name: "codemirror",
+              test: /[\\/]node_modules[\\/](?:@codemirror[\\/](?:state|view|language|commands|search|autocomplete|lint|theme-one-dark)|@lezer[\\/](?:common|lr|highlight)|style-mod|w3c-keyname|crelt|@marijn)[\\/]/,
+              priority: 1,
+            },
+            {
+              name: "editor-core",
+              test: /[\\/]node_modules[\\/](?:@milkdown|@vue|prosemirror-[^\\/]+|orderedmap|rope-sequence|remark-[^\\/]+|micromark[^\\/]*|mdast-[^\\/]+|unified|unist-[^\\/]+|vfile[^\\/]*)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

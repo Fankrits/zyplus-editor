@@ -1,13 +1,18 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window. opener:default stays whole: the plugin's injected script opens clicked http(s), mailto and tel links through open-url.",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default",
-    "updater:default",
+    "core:path:allow-join",
+    "core:path:allow-dirname",
+    "core:path:allow-resolve-directory",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
     "process:allow-restart",
     "opener:default",
     "dialog:default",
