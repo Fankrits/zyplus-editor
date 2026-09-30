@@ -48,7 +48,9 @@ jobs:
           # near a script until it is known to be a version.
           [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Not a version tag: $GITHUB_REF_NAME" >&2; exit 1; }
           V="$V" node -e "for (const f of ['package.json','src-tauri/tauri.conf.json']) { const j=JSON.parse(require('fs').readFileSync(f)); j.version=process.env.V; require('fs').writeFileSync(f, JSON.stringify(j,null,2)+'\n'); }"
-          sed -i.bak -e "0,/^version = .*/s//version = \"$V\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak
+          # perl, not sed: the `0,/re/` first-match address is GNU-only and BSD sed
+          # on the macOS runner rejects it, which failed that leg's version stamp.
+          V="$V" perl -0pi -e 's/^version = .*/version = "$ENV{V}"/m' src-tauri/Cargo.toml
 
       - run: bun install
 
@@ -99,10 +101,22 @@ jobs:
 
       - name: Bump Homebrew cask
         run: |
+          # Without pipefail a failed download leaves shasum hashing empty input,
+          # and the hash of nothing would be committed as the release's.
+          set -euo pipefail
           V="${GITHUB_REF_NAME#v}"
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Zyplus_${V}_universal.dmg"
           SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
           sed -i -e "s/^  version .*/  version \"$V\"/" -e "s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/zyplus.rb
+          # A re-run of the same tag changes nothing; that is success, not a failed commit.
+          if git diff --quiet -- Casks/zyplus.rb; then
+            echo "Cask already at $V"
+            exit 0
+          fi
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git commit -am "chore(cask): zyplus $V" && git push
+          git add Casks/zyplus.rb
+          git commit -m "chore(cask): zyplus $V"
+          # main may have moved since this job checked it out.
+          git pull --rebase origin main
+          git push origin HEAD:main

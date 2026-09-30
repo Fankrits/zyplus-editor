@@ -12,10 +12,15 @@ struct PendingFiles(Mutex<Vec<String>>);
 #[derive(Default)]
 struct PrintDoc {
     html: Mutex<String>,
-    ready: Mutex<Option<tauri::async_runtime::Sender<()>>>,
+    ready: Mutex<Option<std::sync::mpsc::SyncSender<()>>>,
 }
 
 const PRINT_WINDOW: &str = "print";
+
+/// How long the print window gets to load and lay out before the export gives up.
+/// Without a limit, a page that never signalled left `export_pdf` waiting forever
+/// and, with the frontend's one-export-at-a-time guard, every later export too.
+const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Queues files the OS handed us, then raises the main window.
 ///
@@ -120,19 +125,26 @@ const MARGIN: f64 = 48.0;
 /// is done once the size has stopped changing.
 fn wait_for_pdf(path: &std::path::Path) -> Result<(), String> {
     use std::time::Duration;
+    wait_for_pdf_within(path, Duration::from_millis(100), Duration::from_secs(120))
+}
 
-    const POLL: Duration = Duration::from_millis(100);
+fn wait_for_pdf_within(
+    path: &std::path::Path,
+    poll: std::time::Duration,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
     const SETTLED_FOR: u32 = 3; // consecutive unchanged polls
-    const TIMEOUT: Duration = Duration::from_secs(120);
 
-    let deadline = std::time::Instant::now() + TIMEOUT;
+    let deadline = std::time::Instant::now() + timeout;
     let mut last = None;
     let mut stable = 0;
 
     while std::time::Instant::now() < deadline {
-        std::thread::sleep(POLL);
+        std::thread::sleep(poll);
         let size = std::fs::metadata(path).ok().map(|m| m.len());
-        if size.is_some() && size == last {
+        // An empty file is the job having created its output and not yet written
+        // to it (or a stale leftover), never a finished PDF.
+        if size.is_some_and(|s| s > 0) && size == last {
             stable += 1;
             if stable >= SETTLED_FOR {
                 return Ok(());
@@ -164,7 +176,7 @@ async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Result
 
     // The page signals it has laid out by fetching /ready off the same protocol
     // that served it; `on_page_load` fires too early to print against.
-    let (ready_tx, mut ready_rx) = tauri::async_runtime::channel::<()>(1);
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<()>(1);
     *state.ready.lock().unwrap() = Some(ready_tx);
 
     let url = "zyprint://localhost/document.html"
@@ -184,13 +196,19 @@ async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Result
     .map_err(|e| e.to_string())?;
 
     let printed = async {
-        ready_rx
-            .recv()
+        tauri::async_runtime::spawn_blocking(move || ready_rx.recv_timeout(READY_TIMEOUT))
             .await
-            .ok_or("the document never finished loading")?;
+            .map_err(|e| e.to_string())?
+            .map_err(|_| "the document never finished loading".to_string())?;
 
         let out = std::path::PathBuf::from(&path);
-        let _ = std::fs::remove_file(&out);
+        // A leftover file at the target would look like a finished export, so a
+        // removal that fails for any reason but "nothing there" fails the export.
+        match std::fs::remove_file(&out) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("could not replace {}: {e}", out.display())),
+        }
 
         let (tx, mut rx) = tauri::async_runtime::channel::<Result<(), String>>(1);
         window
@@ -215,7 +233,9 @@ async fn export_pdf(app: tauri::AppHandle, html: String, path: String) -> Result
     }
     .await;
 
-    let _ = window.close();
+    if let Err(e) = window.close() {
+        eprintln!("could not close the print window: {e}");
+    }
     printed
 }
 
@@ -414,7 +434,7 @@ pub fn run() {
             let state = ctx.app_handle().state::<PrintDoc>();
             if request.uri().path() == "/ready" {
                 if let Some(tx) = state.ready.lock().unwrap().take() {
-                    let _ = tx.blocking_send(());
+                    let _ = tx.try_send(());
                 }
                 return tauri::http::Response::builder()
                     .status(204)
@@ -519,5 +539,41 @@ mod tests {
             is_default(bundle_id, uti),
             "is_default returned false after successful claim"
         );
+    }
+}
+
+#[cfg(test)]
+mod pdf_wait_tests {
+    use super::wait_for_pdf_within;
+    use std::time::Duration;
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("zyplus-pdf-wait-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    #[test]
+    fn an_empty_file_is_never_a_finished_pdf() {
+        let path = temp("empty.pdf");
+        std::fs::write(&path, b"").unwrap();
+        let r = wait_for_pdf_within(&path, Duration::from_millis(5), Duration::from_millis(100));
+        assert!(r.is_err(), "a 0-byte file must not count as written");
+    }
+
+    #[test]
+    fn a_settled_file_is_done() {
+        let path = temp("done.pdf");
+        std::fs::write(&path, b"%PDF-1.4").unwrap();
+        let r = wait_for_pdf_within(&path, Duration::from_millis(5), Duration::from_secs(5));
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn a_missing_file_times_out() {
+        let path = temp("never.pdf");
+        let _ = std::fs::remove_file(&path);
+        let r = wait_for_pdf_within(&path, Duration::from_millis(5), Duration::from_millis(60));
+        assert!(r.is_err());
     }
 }
