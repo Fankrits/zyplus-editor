@@ -36,6 +36,25 @@ Linux x86_64, commit `7c26e42`.
 | Chromium: keystroke p50 / p95, that note | 14-15 / 20 ms (1-2 long tasks, ~100 ms) |
 | Chromium: idle main thread busy, editor focused / not | 1-2% / 0% |
 
+## After
+
+Same machine and method, same debug binary for the desktop rows so only the frontend differs.
+
+| | before | after |
+|---|---|---|
+| Desktop, 13,000-file project restored: peak RSS | 503 MB | 377 MB (-25%) |
+| Desktop, 13,000-file project restored: boot CPU | 2.4 s | 0.9 s (-63%) |
+| Desktop, tiny project / first run with Welcome note: peak RSS | 376 / 425 MB | 375 / 419 MB (webview-bound, unchanged) |
+| Embedded frontend (brotli) | 926 KB in 145 files | 737 KB in 50 files (-20%) |
+| Startup JS (brotli) | 183 KB | 184 KB |
+| Release binary, Linux | 7,288,304 B | 7,057,776 B (-3.2%; -10.0% since 7,845,104) |
+| Chromium typing, idle | | unchanged |
+
+What did it: the file tree is read one level at a time (folders start collapsed; a project root
+opens to its first level), and code fences highlight 28 common languages instead of ~110.
+macOS and Windows also drop the updater's bundled TLS for the OS's; that is not measurable from
+Linux, where nothing changes.
+
 ## Findings that led to no change
 
 Measured, then left alone, so they are not re-investigated:
@@ -51,4 +70,6 @@ Measured, then left alone, so they are not re-investigated:
 
 ## Budgets
 
+- Startup JS is capped at `STARTUP_BUDGET_KB` (200, brotli) in `vite.config.ts`; the build fails
+  above it. `bun run analyze` shows what joined the startup path.
 - Editors, and the libraries only extensions use, never reach the startup path (same plugin).

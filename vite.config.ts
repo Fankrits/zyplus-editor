@@ -5,6 +5,7 @@ import pkg from "./package.json";
 
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 
 import type { Plugin } from "vite";
 
@@ -79,6 +80,10 @@ const bundleExtensionsPlugin: Plugin = {
 //    happens to capture is enough to pull one onto the startup path.
 const EXTENSION_ONLY_LIBS =
   /[\\/]node_modules[\\/](?:mermaid|katex|chart\.js|tabulator-tables|papaparse|vanilla-jsoneditor|lossless-json)[\\/]/;
+// Brotli KB of JavaScript the app loads before it can draw anything (desktop measured 184;
+// see docs/performance.md). Raise it on purpose, not by accident: `bun run analyze` shows
+// what joined the startup path.
+const STARTUP_BUDGET_KB = 200;
 const EDITOR_ONLY_LIBS =
   /[\\/]node_modules[\\/](?:@milkdown|prosemirror-[^\\/]+|@codemirror[\\/](?:view|state))[\\/]/;
 
@@ -106,6 +111,21 @@ const guardBundle: Plugin = {
       chunks.get(name)?.imports.forEach(visit);
     };
     for (const chunk of chunks.values()) if (chunk.isEntry) visit(chunk.fileName);
+    const startupKB =
+      [...startup].reduce(
+        (bytes, name) =>
+          bytes +
+          zlib.brotliCompressSync(chunks.get(name)!.code, {
+            params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 },
+          }).length,
+        0,
+      ) / 1024;
+    if (startupKB > STARTUP_BUDGET_KB) {
+      this.error(
+        `The startup path is ${startupKB.toFixed(0)} KB of brotli JS, over its ${STARTUP_BUDGET_KB} KB budget ` +
+          `(STARTUP_BUDGET_KB in vite.config.ts). Run \`bun run analyze\` to see what joined it.`,
+      );
+    }
     for (const name of startup) {
       const eager = chunks.get(name)?.moduleIds.find((id) => EDITOR_ONLY_LIBS.test(id));
       if (eager) {
