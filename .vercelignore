@@ -1,8 +1,7 @@
-# The web build needs the frontend and nothing else: the desktop shell and the
-# extension bundles deploy elsewhere.
-# Leading slashes matter — a bare "extensions" would also drop src/extensions.
+# The web build needs the frontend and the extension bundles (extensions/dist,
+# which it serves at /extensions-dist/); the desktop shell deploys elsewhere.
+# Leading slashes matter — a bare "scripts" or "tests" would also drop nested folders.
 /src-tauri
-/extensions
 /scripts
 /tests
 /docs

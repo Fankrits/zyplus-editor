@@ -16,7 +16,11 @@ export function suggestExtensionFor(path: string): void {
     actionProps: {
       children: "Enable",
       onPress: () => {
-        extensionManager.downloadAndInstall(manifest.id).catch(() => {});
+        extensionManager.downloadAndInstall(manifest.id).catch((err) => {
+          toast.danger(`Could not install ${manifest.name}`, {
+            description: err instanceof Error ? err.message : String(err),
+          });
+        });
       },
     },
   });

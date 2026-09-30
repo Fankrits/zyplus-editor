@@ -2,6 +2,7 @@ import { marked } from "marked";
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { save as saveDialog, message } from "@tauri-apps/plugin-dialog";
 import { isMac } from "./platform";
+import { withExtension } from "./fs";
 
 /**
  * "Export as PDF" builds a standalone HTML document and prints *that* straight
@@ -57,30 +58,39 @@ const DOCUMENT_CSS = `
   pre, blockquote, table, img { break-inside: avoid; }
 `;
 
-/** Wraps rendered markdown in a self-contained, print-ready HTML document. */
-export function renderPrintDocument(title: string, markdown: string): string {
+/**
+ * Wraps rendered markdown in a self-contained, print-ready HTML document.
+ *
+ * `signalReady` adds the script the native exporter waits on. The browser
+ * fallback prints from the page that owns the document, needs no signal, and
+ * gets a policy that allows no script at all.
+ */
+export function renderPrintDocument(title: string, markdown: string, signalReady = true): string {
   const body = marked.parse(markdown, { async: false, gfm: true, breaks: false });
   // `marked` passes raw HTML in a note straight through, and a note can come
   // from anyone. The policy lets the readiness ping below run and nothing else:
   // no <script> in the note, no onerror=, nothing fetched but images.
   const nonce = crypto.randomUUID();
   const csp =
-    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; ` +
-    `img-src data: blob: https: http:; connect-src 'self'; base-uri 'none'; form-action 'none'`;
-  return `<!doctype html>
-<html><head><meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="${csp}" />
-<title>${escapeHtml(title)}</title>
-<style>${DOCUMENT_CSS}</style>
-</head><body>${body}
+    `default-src 'none'; script-src ${signalReady ? `'nonce-${nonce}'` : "'none'"}; style-src 'unsafe-inline'; ` +
+    `img-src data: blob: https: http:; connect-src ${signalReady ? "'self'" : "'none'"}; base-uri 'none'; form-action 'none'`;
+  const readyScript = signalReady
+    ? `
 <script nonce="${nonce}">
   // Tells the native exporter the document has laid out and can be printed.
   // An offscreen webview has no IPC, so the channel back is a request on the
   // same custom protocol that served this page.
   addEventListener("load", function () {
-    fetch("/ready");
+    fetch("/ready").catch(function () {});
   });
-</script>
+</script>`
+    : "";
+  return `<!doctype html>
+<html><head><meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="${csp}" />
+<title>${escapeHtml(title)}</title>
+<style>${DOCUMENT_CSS}</style>
+</head><body>${body}${readyScript}
 </body></html>`;
 }
 
@@ -115,26 +125,14 @@ export async function exportPdf(title: string, markdown: string): Promise<void> 
 let exporting = false;
 
 async function runExport(title: string, markdown: string): Promise<void> {
-  const html = renderPrintDocument(title, markdown);
-  const defaultName = title.replace(/\.[^.]+$/, "") + ".pdf";
+  const defaultName = withExtension(title, ".pdf");
 
   if (!isTauri()) {
-    // Browser dev: no native print job to run, so fall back to the print dialog.
-    // A blob URL rather than document.write into about:blank, which shares the
-    // app's origin; the load listener is attached before anything can load.
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-    const w = window.open(url, "_blank");
-    if (!w) {
-      URL.revokeObjectURL(url);
-      throw new Error("The print window was blocked. Allow pop-ups for this site and try again.");
-    }
-    w.addEventListener("load", () => {
-      URL.revokeObjectURL(url);
-      w.print();
-    });
+    await printInBrowser(title, renderPrintDocument(title, markdown, false));
     return;
   }
 
+  const html = renderPrintDocument(title, markdown);
   if (!isPdfExportSupported()) {
     await message(
       "Exporting to PDF is only available on macOS right now. " +
@@ -152,10 +150,59 @@ async function runExport(title: string, markdown: string): Promise<void> {
   await invoke("export_pdf", { html, path });
 }
 
+/**
+ * Browser fallback: no native print job to run, so the document is printed
+ * through the browser's own dialog ("Save as PDF" is one of its destinations).
+ *
+ * It prints from a hidden iframe rather than a popup. A popup opened after the
+ * exporter's chunk had loaded asynchronously no longer counted as a response to
+ * the click, so browsers blocked it, and the user saw nothing.
+ */
+async function printInBrowser(title: string, html: string): Promise<void> {
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  // Not display:none — some browsers print a hidden frame as a blank page.
+  const frame = Object.assign(document.createElement("iframe"), { src: url, title: "Print preview" });
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  // The browser suggests the top-level page's title as the PDF's file name.
+  const pageTitle = document.title;
+
+  await new Promise<void>((resolve, reject) => {
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const finish = (err?: unknown) => {
+      clearTimeout(fallback);
+      document.title = pageTitle;
+      frame.remove();
+      URL.revokeObjectURL(url);
+      if (err) reject(err);
+      else resolve();
+    };
+    frame.onload = () => {
+      try {
+        const win = frame.contentWindow;
+        if (!win) throw new Error("The print preview could not be opened.");
+        document.title = withExtension(title, "");
+        win.addEventListener("afterprint", () => finish(), { once: true });
+        // Not every browser fires afterprint, and the frame must not leak.
+        fallback = setTimeout(() => finish(), 60_000);
+        win.focus();
+        win.print();
+      } catch (err) {
+        finish(err);
+      }
+    };
+    frame.onerror = () => finish(new Error("The print preview could not be loaded."));
+    document.body.append(frame);
+  });
+}
+
 async function reportFailure(err: unknown): Promise<void> {
   const detail = err instanceof Error ? err.message : String(err);
   console.error("Export as PDF failed:", err);
-  if (!isTauri()) return;
+  if (!isTauri()) {
+    window.alert(`Export as PDF\n\nThe PDF could not be created.\n\n${detail}`);
+    return;
+  }
   try {
     await message(`The PDF could not be written.\n\n${detail}`, {
       title: "Export as PDF",

@@ -27,7 +27,7 @@ import {
   useWorkspaceTree,
   type TabState,
 } from "../../state/workspaceStore";
-import { saveDocument, saveFileAs, revealPath } from "../../lib/fs";
+import { saveDocument, saveFileAs, revealPath, withExtension } from "../../lib/fs";
 import { isNativeApp, REVEAL_LABEL } from "../../lib/platform";
 import {
   ContextMenu,
@@ -295,7 +295,7 @@ export function TabBar({
           key: "export-md",
           label: "Export as .md",
           icon: FileExportIcon,
-          onSelect: () => saveFileAs(activeTab.title.replace(/\.[^.]+$/, "") + ".md", activeTab.content),
+          onSelect: () => saveFileAs(withExtension(activeTab.title, ".md"), activeTab.content),
         },
         {
           // Asks where to save, then writes the PDF there — no print dialog.

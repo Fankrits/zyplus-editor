@@ -58,8 +58,17 @@ export async function initWebFs(): Promise<void> {
     }
   } catch (err) {
     // Private windows in some browsers refuse IndexedDB. The app still works,
-    // it just forgets everything on reload.
+    // it just forgets everything on reload — so say so once, while there is
+    // still time to export what was typed.
     console.error("Browser storage is unavailable; notes will not be kept:", err);
+    try {
+      window.alert(
+        "This browser is blocking storage, so Zyplus cannot keep your notes and extensions between visits.\n\n" +
+          "Use \u201cExport as .md\u201d to save anything you want to keep, or open Zyplus in a normal (non-private) window.",
+      );
+    } catch {
+      // No window to alert in (tests); the console line above is the record.
+    }
   }
 
   // Another tab of the same app writing to the store it shares with this one.
@@ -488,17 +497,47 @@ export async function duplicateFile(path: string): Promise<string> {
   return newPath;
 }
 
-/** Writes `content` to a path the user picks. Outside Tauri, falls back to a browser download. */
+/**
+ * Hands a blob to the browser as a file download.
+ *
+ * The anchor is attached before it is clicked (Firefox ignores a detached one),
+ * and the object URL outlives the click: Firefox and Safari start the download
+ * asynchronously, so revoking it on the next line cancelled it or saved an empty
+ * file.
+ */
+export function downloadBlob(name: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement("a"), { href: url, download: name, rel: "noopener" });
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+/**
+ * `title` with its extension swapped for `ext` (".md", ".pdf"). A leading dot is
+ * part of the name, not an extension: ".gitignore" becomes ".gitignore.md".
+ */
+export function withExtension(title: string, ext: string): string {
+  const dot = title.lastIndexOf(".");
+  return (dot > 0 ? title.slice(0, dot) : title) + ext;
+}
+
+/**
+ * Writes `content` to a path the user picks. Outside Tauri, falls back to a
+ * browser download. Failures are reported to the user, never thrown: every
+ * caller is a fire-and-forget menu item.
+ */
 export async function saveFileAs(defaultName: string, content: string): Promise<void> {
-  if (!isNativeApp) {
-    const url = URL.createObjectURL(new Blob([content], { type: "text/markdown" }));
-    const link = Object.assign(document.createElement("a"), { href: url, download: defaultName });
-    link.click();
-    URL.revokeObjectURL(url);
-    return;
-  }
-  const path = await saveDialog({ defaultPath: defaultName });
-  if (path) await writeTextFileRaw(path, content);
+  await tryFs("Could not export", defaultName, async () => {
+    if (!isNativeApp) {
+      downloadBlob(defaultName, new Blob([content], { type: "text/markdown;charset=utf-8" }));
+      return;
+    }
+    const path = await saveDialog({ defaultPath: defaultName });
+    if (path) await writeTextFileRaw(path, content);
+  });
 }
 
 /**

@@ -139,7 +139,7 @@ function AppShell() {
           });
           return;
         case "export-md":
-          if (tab) fs.saveFileAs(tab.title.replace(/\.[^.]+$/, "") + ".md", tab.content);
+          if (tab) fs.saveFileAs(fs.withExtension(tab.title, ".md"), tab.content);
           return;
         case "export-pdf":
           // `marked` only matters when exporting, so it stays out of the startup bundle.

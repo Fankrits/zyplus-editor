@@ -16,6 +16,16 @@ describe("renderPrintDocument", () => {
     expect(html).toContain('fetch("/ready")');
   });
 
+  // The browser prints from the page that owns the document: nothing to signal,
+  // and nothing in the note may run.
+  it("carries no script at all for the browser fallback", () => {
+    const html = renderPrintDocument("t", "<script>alert(1)</script>\n\nhi", false);
+    expect(html).not.toContain("/ready");
+    expect(html).toContain("script-src 'none'");
+    expect(html).toContain("connect-src 'none'");
+    expect(html).not.toContain("<script nonce=");
+  });
+
   it("renders GFM tables and task lists", () => {
     const html = renderPrintDocument("t", "| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n");
     expect(html).toContain("<table>");
