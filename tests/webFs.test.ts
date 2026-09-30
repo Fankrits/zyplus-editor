@@ -9,9 +9,11 @@ describe("web filesystem", () => {
     await fs.writeTextFile("/w/docs/a.md", "a");
     await fs.writeTextFile("/w/docsy.md", "not inside /w/docs");
 
-    const tree = await fs.readDirRecursive("/w");
+    // One level at a time: subfolders come back unread, and are read when opened.
+    const tree = await fs.readChildren("/w");
     expect(tree.map((n) => n.name)).toEqual(["docs", "empty", "docsy.md"]);
-    expect(tree[0].children?.map((n) => n.name)).toEqual(["a.md"]);
+    expect(tree[0]).toMatchObject({ isFolder: true, unloaded: true, children: [] });
+    expect((await fs.readChildren("/w/docs")).map((n) => n.name)).toEqual(["a.md"]);
 
     await fs.renamePath("/w/docs", "/w/notes");
     expect(await fs.readTextFile("/w/notes/a.md")).toBe("a");

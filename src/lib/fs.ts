@@ -254,24 +254,22 @@ async function freePath(dir: string, name: string, label = ""): Promise<string> 
   return path;
 }
 
-/** Reads a directory tree top to bottom, skipping dotfiles/dot-directories. */
-export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
+/**
+ * Lists one folder, skipping dotfiles/dot-directories, folders first. Subfolders come
+ * back unread (`unloaded`) and are read when the user opens them: reading a whole
+ * project up front cost one round trip per folder, and a `node_modules` or a build
+ * output made that tens of thousands.
+ */
+export async function readChildren(dirPath: string): Promise<TreeNode[]> {
   const entries = isNativeApp ? await readDir(dirPath) : webReadDir(dirPath);
-  // Subfolders are read together rather than one after another: a tree three
-  // levels deep used to cost the sum of every folder in it, in series, and this
-  // runs at startup and again whenever another tab changes the notes.
-  // ponytail: no concurrency cap — a notebook's worth of folders is fine; a disk
-  // with thousands would want one.
-  const nodes = await Promise.all(
-    entries
-      .filter((entry) => !entry.name.startsWith("."))
-      .map(async (entry): Promise<TreeNode> => {
-        const path = displayJoin(dirPath, entry.name);
-        return entry.isDirectory
-          ? { id: path, name: entry.name, isFolder: true, children: await readDirRecursive(path) }
-          : { id: path, name: entry.name, isFolder: false };
-      }),
-  );
+  const nodes = entries
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry): TreeNode => {
+      const id = displayJoin(dirPath, entry.name);
+      return entry.isDirectory
+        ? { id, name: entry.name, isFolder: true, children: [], unloaded: true }
+        : { id, name: entry.name, isFolder: false };
+    });
   nodes.sort((a, b) => {
     if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
     return a.name.localeCompare(b.name);
@@ -279,10 +277,27 @@ export async function readDirRecursive(dirPath: string): Promise<TreeNode[]> {
   return nodes;
 }
 
-/** Reads a folder as a project: one collapsible top-level node holding the tree. */
-export async function readProjectNode(dirPath: string): Promise<TreeNode> {
-  const children = await readDirRecursive(dirPath);
-  return { id: dirPath, name: basenameOf(dirPath), isFolder: true, children };
+/**
+ * Reads a folder as a project: one collapsible top-level node holding its first level.
+ * `loaded` is the folders the user had already opened; a refresh passes them so they
+ * are read again and keep showing their contents, while everything else stays unread.
+ */
+export async function readProjectNode(dirPath: string, loaded: ReadonlySet<string> = new Set()): Promise<TreeNode> {
+  return { id: dirPath, name: basenameOf(dirPath), isFolder: true, children: await readLevel(dirPath, loaded) };
+}
+
+async function readLevel(dirPath: string, loaded: ReadonlySet<string>): Promise<TreeNode[]> {
+  const nodes = await readChildren(dirPath);
+  return Promise.all(
+    nodes.map(async (node) => {
+      if (!loaded.has(node.id)) return node;
+      // Gone or unreadable since it was listed: leave it to be read (and reported) if opened again.
+      return readLevel(node.id, loaded).then(
+        (children): TreeNode => ({ id: node.id, name: node.name, isFolder: true, children }),
+        () => node,
+      );
+    }),
+  );
 }
 
 export const DEFAULT_FOLDER_NAME = "Zyplus";

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
+import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from "react-arborist";
 import { Button, Input, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -24,6 +24,7 @@ import {
   useWorkspaceTree,
   type TreeNode,
 } from "../../state/workspaceStore";
+import { findTreeNode } from "../../state/workspaceReducer";
 import * as fs from "../../lib/fs";
 import { extensionManager } from "../../extensions/extensionManager";
 import {
@@ -45,10 +46,11 @@ interface FileTreeProps {
 
 export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFilePicker }: FileTreeProps) {
   const state = useWorkspaceTree();
-  const { dispatch, refreshTree } = useWorkspaceActions();
+  const { dispatch, refreshTree, loadFolder, getState } = useWorkspaceActions();
   const isRoot = useCallback((id: string) => state.roots.includes(id), [state.roots]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const treeRef = useRef<TreeApi<TreeNode>>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [pendingDelete, setPendingDelete] = useState<NodeApi<TreeNode>[] | null>(null);
   const contextMenu = useContextMenu();
@@ -62,6 +64,25 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  // Folders arrive unread and closed. A project opens to show its first level; everything
+  // below it is read when the user gets there, which is what keeps a big project cheap.
+  const autoOpened = useRef(new Set<string>());
+  useEffect(() => {
+    for (const id of autoOpened.current) if (!state.roots.includes(id)) autoOpened.current.delete(id);
+    for (const root of state.roots) {
+      if (autoOpened.current.has(root)) continue;
+      autoOpened.current.add(root);
+      treeRef.current?.open(root);
+    }
+  }, [state.roots]);
+
+  const handleToggle = useCallback(
+    (id: string) => {
+      if (findTreeNode(getState().tree, id)?.unloaded) void loadFolder(id);
+    },
+    [getState, loadFolder],
+  );
 
   const handleActivate = useCallback(
     (node: NodeApi<TreeNode>) => {
@@ -255,7 +276,10 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
   return (
     <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
       <Tree<TreeNode>
+        ref={treeRef}
         data={state.tree}
+        openByDefault={false}
+        onToggle={handleToggle}
         width={size.width}
         height={size.height}
         rowHeight={40}

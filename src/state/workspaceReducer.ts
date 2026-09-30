@@ -10,6 +10,12 @@ export interface TreeNode {
   name: string;
   isFolder: boolean;
   children?: TreeNode[];
+  /**
+   * A folder whose contents have not been read yet: `children` is empty until it is
+   * opened. It stays an array, not undefined, because that is what makes the tree
+   * treat it as something that can be opened at all.
+   */
+  unloaded?: boolean;
 }
 
 export interface TabState {
@@ -39,6 +45,7 @@ export type Action =
   | { type: "ADD_ROOT"; rootPath: string; node: TreeNode }
   | { type: "CLOSE_ROOT"; rootPath: string }
   | { type: "SET_TREE"; tree: TreeNode[] }
+  | { type: "SET_CHILDREN"; id: string; children: TreeNode[] }
   | { type: "OPEN_TAB"; tab: TabState }
   | { type: "FOCUS_TAB"; id: string }
   | { type: "CLOSE_TAB"; id: string }
@@ -64,6 +71,45 @@ export const initialState: WorkspaceState = {
   tabs: [],
   activeTabId: null,
 };
+
+/** A node by id, looking only where it can be: through the folders on the way to it. */
+export function findTreeNode(nodes: TreeNode[], id: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (node.children?.length && isUnder(id, node.id)) {
+      const found = findTreeNode(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/** Every folder whose contents are on screen (roots included), for a refresh to read again. */
+export function loadedFolderIds(nodes: TreeNode[], into = new Set<string>()): Set<string> {
+  for (const node of nodes) {
+    if (!node.isFolder || node.unloaded) continue;
+    into.add(node.id);
+    if (node.children) loadedFolderIds(node.children, into);
+  }
+  return into;
+}
+
+/** `nodes` with one folder's contents replaced, sharing every subtree it did not touch. */
+function withChildren(nodes: TreeNode[], id: string, children: TreeNode[]): TreeNode[] {
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.id === id) {
+      changed = true;
+      return { id: node.id, name: node.name, isFolder: true, children };
+    }
+    if (!node.children?.length || !isUnder(id, node.id)) return node;
+    const inner = withChildren(node.children, id, children);
+    if (inner === node.children) return node;
+    changed = true;
+    return { ...node, children: inner };
+  });
+  return changed ? next : nodes;
+}
 
 export function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: string | null) {
   if (prevActiveId !== closedId) return prevActiveId;
@@ -102,6 +148,10 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
     }
     case "SET_TREE":
       return { ...state, tree: action.tree };
+    case "SET_CHILDREN": {
+      const tree = withChildren(state.tree, action.id, action.children);
+      return tree === state.tree ? state : { ...state, tree };
+    }
     case "OPEN_TAB":
       // Two opens can race past the caller's already-open check while each awaits its read.
       if (state.tabs.some((t) => t.id === action.tab.id)) return { ...state, activeTabId: action.tab.id };
