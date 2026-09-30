@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "analyze": "vite build --mode analyze",
+    "perf": "node scripts/perf/web.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "bun test",
