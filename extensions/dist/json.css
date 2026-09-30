@@ -273,12 +273,14 @@
   background: var(--overlay);
   color: var(--overlay-foreground);
   box-shadow: var(--overlay-shadow) !important;
-  border: none !important;
+  /* Invisible normally, but forced-colors mode drops box-shadow and paints this, so the panel keeps an edge. */
+  border: 1px solid transparent !important;
 }
 
 .jse-modal {
   border-radius: min(32px, var(--radius-3xl, 1.5rem)) !important;
-  overflow: hidden;
+  /* Visible, as the comment below says: the dialog's select lists must escape it. */
+  overflow: visible;
 }
 
 /* The dialog is `overflow: visible` (its select lists must escape), so its square inner panel would paint over the corners. */
