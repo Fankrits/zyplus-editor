@@ -108,12 +108,18 @@ await page.keyboard.type("Typing at the end of a document with 120 code blocks. 
 d = await drain();
 out.big = { keys: d.latency.length, p50: pct(d.latency, 50), p95: pct(d.latency, 95), max: Math.max(0, ...d.latency), longTasks: d.long.length, longestTaskMs: Math.max(0, ...d.long) };
 
-// 4. idle: how much of the main thread is busy when nothing is happening
-await page.waitForTimeout(1500);
-const a = await metrics();
-await page.waitForTimeout(10_000);
-const b = await metrics();
-out.idleCpuPercent = ((b.TaskDuration - a.TaskDuration) / (b.Timestamp - a.Timestamp)) * 100;
+// 4. idle: how much of the main thread is busy when nothing is happening. With the editor
+// focused the caret's blink animation is all there is; unfocused it should be nothing.
+const idle = async () => {
+  await page.waitForTimeout(1500);
+  const a = await metrics();
+  await page.waitForTimeout(6_000);
+  const b = await metrics();
+  return ((b.TaskDuration - a.TaskDuration) / (b.Timestamp - a.Timestamp)) * 100;
+};
+out.idleFocusedPercent = await idle();
+await page.evaluate(() => document.activeElement?.blur());
+out.idleBlurredPercent = await idle();
 
 await browser.close();
 server.close();
@@ -127,7 +133,7 @@ const rows = [
   ["big note (120 code blocks): mount (ms)", out.bigDocMountMs],
   ["big note: JS heap (MB) / DOM nodes", `${f(out.heapBigDocMB)} / ${out.domNodesBigDoc}`],
   ["big note: keystroke p50 / p95 / max (ms)", `${f(out.big.p50)} / ${f(out.big.p95)} / ${f(out.big.max)}  (${out.big.longTasks} long tasks, longest ${f(out.big.longestTaskMs)} ms)`],
-  ["idle main-thread busy (%)", out.idleCpuPercent],
+  ["idle main thread busy, editor focused / not (%)", `${f(out.idleFocusedPercent)} / ${f(out.idleBlurredPercent)}`],
 ];
 for (const [k, v] of rows) console.log(k.padEnd(46), typeof v === "number" ? f(v) : v);
 if (opt("--json", null)) fs.writeFileSync(opt("--json"), JSON.stringify(out, null, 2));

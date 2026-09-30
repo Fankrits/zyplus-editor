@@ -34,7 +34,20 @@ Linux x86_64, commit `7c26e42`.
 | Chromium: keystroke p50 / p95, small note | 10 / 17 ms (up to 1 long task) |
 | Chromium: 120-code-block note, mount / heap / DOM nodes | 0.4 s / 14 MB / 5,076 |
 | Chromium: keystroke p50 / p95, that note | 14-15 / 20 ms (1-2 long tasks, ~100 ms) |
-| Chromium: idle main thread busy | 1.5% |
+| Chromium: idle main thread busy, editor focused / not | 1-2% / 0% |
+
+## Findings that led to no change
+
+Measured, then left alone, so they are not re-investigated:
+
+- **Editor DOM observer** (`RichTextEditor.tsx` rescans every code block on each DOM change).
+  Rewriting it to look only at touched blocks, once per frame, changed nothing measurable in a
+  120-code-block note (keystroke p50 12-16 ms against 14-15 ms before, p95 unchanged); it only
+  starts to matter with thousands of blocks.
+- **Keystroke path.** p95 is 17-21 ms: one frame. The ~100 ms long task per typing burst is layout
+  of the big note, not the store or the observer.
+- **Idle.** Nothing but the caret's blink animation runs (`prosemirror-virtual-cursor-blink`,
+  `cm-blink`), and only while an editor has focus. Unfocused the main thread is 0.01% busy.
 
 ## Budgets
 
