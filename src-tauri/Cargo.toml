@@ -1,6 +1,6 @@
 [package]
 name = "zyplus-editor"
-version = "0.1.0"
+version = "0.2.3"
 description = "Zyplus, a markdown editor that gets out of the way"
 authors = ["Fankrits"]
 edition = "2021"

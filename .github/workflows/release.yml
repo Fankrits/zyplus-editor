@@ -99,7 +99,7 @@ jobs:
         with:
           ref: main
 
-      - name: Bump Homebrew cask
+      - name: Bump Homebrew cask and the app version
         run: |
           # Without pipefail a failed download leaves shasum hashing empty input,
           # and the hash of nothing would be committed as the release's.
@@ -108,15 +108,23 @@ jobs:
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Zyplus_${V}_universal.dmg"
           SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
           sed -i -e "s/^  version .*/  version \"$V\"/" -e "s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/zyplus.rb
+          # main's version files are otherwise never bumped (the build above only
+          # stamps its own checkout), so the web build deployed from main kept
+          # reporting 0.1.0.
+          # Targeted replaces rather than re-serialising the JSON, so main gets a
+          # one-line diff per file instead of reformatting.
+          V="$V" perl -0pi -e 's/^(\s*"version":\s*)"[^"]*"/$1"$ENV{V}"/m' package.json src-tauri/tauri.conf.json
+          V="$V" perl -0pi -e 's/^version = .*/version = "$ENV{V}"/m' src-tauri/Cargo.toml
+          V="$V" perl -0pi -e 's/(name = "zyplus-editor"\nversion = )"[^"]*"/$1"$ENV{V}"/' src-tauri/Cargo.lock
           # A re-run of the same tag changes nothing; that is success, not a failed commit.
-          if git diff --quiet -- Casks/zyplus.rb; then
-            echo "Cask already at $V"
+          if git diff --quiet; then
+            echo "Cask and version already at $V"
             exit 0
           fi
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add Casks/zyplus.rb
-          git commit -m "chore(cask): zyplus $V"
+          git add Casks/zyplus.rb package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git commit -m "chore(release): zyplus $V"
           # main may have moved since this job checked it out.
           git pull --rebase origin main
           git push origin HEAD:main
