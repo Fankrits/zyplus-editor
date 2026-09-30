@@ -5740,7 +5740,7 @@ dependencies = [
 
 [[package]]
 name = "zyplus-editor"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "core-foundation 0.10.1",
  "objc2",
