@@ -37,7 +37,9 @@ export function decorate(doc: ProseNode) {
   const decos: Decoration[] = [];
   doc.descendants((node, pos) => {
     if (node.type.name !== "blockquote") return;
-    const match = MARKER.exec(node.firstChild?.textContent ?? "");
+    // The offsets below assume the marker sits in a paragraph directly inside the quote.
+    const first = node.firstChild;
+    const match = first?.isTextblock ? MARKER.exec(first.textContent) : null;
     if (!match) return false;
     const kind = match[1].toLowerCase();
     // +2 skips into the blockquote and its first paragraph, where the marker text starts.

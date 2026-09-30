@@ -269,8 +269,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const refreshTree = useCallback(async () => {
     const { roots } = stateRef.current;
     if (roots.length === 0) return;
-    const tree = await Promise.all(roots.map(readProjectNode));
-    dispatch({ type: "SET_TREE", tree });
+    try {
+      const tree = await Promise.all(roots.map(readProjectNode));
+      dispatch({ type: "SET_TREE", tree });
+    } catch (err) {
+      // A folder that vanished or a transient read error: keep the tree that is
+      // showing rather than throwing out of a fire-and-forget refresh.
+      console.warn("Could not refresh the file tree:", err);
+    }
   }, []);
 
   const openFile = useCallback(async (path: string, name?: string): Promise<boolean> => {
@@ -280,7 +286,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "FOCUS_TAB", id: existing.id });
       return true;
     }
-    try {
+    // Reported, not just logged: a file that cannot be read used to do nothing
+    // at all when clicked.
+    const opened = await tryFs("Could not open file", path, async () => {
       const content = await readTextFile(path);
       dispatch({
         type: "OPEN_TAB",
@@ -295,11 +303,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         },
       });
       suggestExtensionFor(path);
-      return true;
-    } catch (err) {
-      console.error(`Failed to open file at "${path}":`, err);
-      return false;
-    }
+    });
+    return opened;
   }, []);
 
 

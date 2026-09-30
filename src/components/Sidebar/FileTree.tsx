@@ -34,6 +34,7 @@ import {
   type ContextMenuOrigin,
 } from "../ContextMenu";
 import { isNativeApp, REVEAL_LABEL } from "../../lib/platform";
+import { copyText } from "../../lib/clipboard";
 
 interface FileTreeProps {
   onOpenFile: (path: string, name: string) => void;
@@ -179,7 +180,7 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
           key: "copy-path",
           label: "Copy Path",
           icon: ClipboardIcon,
-          onSelect: () => navigator.clipboard.writeText(node.data.id),
+          onSelect: () => copyText(node.data.id),
         },
         root
           ? {

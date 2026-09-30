@@ -3,9 +3,10 @@ import path from "node:path";
 
 async function buildExtensions() {
   const outdir = path.resolve(import.meta.dirname, "../extensions/dist");
-  if (!fs.existsSync(outdir)) {
-    fs.mkdirSync(outdir, { recursive: true });
-  }
+  // Every file here is generated and hashed into checksums.json below, so a file
+  // left over from a bundle that no longer exists would be checksummed and shipped.
+  fs.rmSync(outdir, { recursive: true, force: true });
+  fs.mkdirSync(outdir, { recursive: true });
 
   const bundle = async (id: string) => {
     console.log(`Building ${id} extension bundle...`);
@@ -18,8 +19,7 @@ async function buildExtensions() {
       naming: `${id}.js`,
     });
     if (!result.success) {
-      console.error(`${id} build failed:`, result.logs);
-      process.exit(1);
+      throw new Error(`${id} build failed:\n${result.logs.join("\n")}`);
     }
   };
   const copyCss = (id: string) =>

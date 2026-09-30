@@ -66,7 +66,9 @@ export function DiagramViewer({ svg, onClose }: { svg: SVGSVGElement; onClose: (
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = stage.getBoundingClientRect();
-      zoomAt(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), e.clientX - rect.left, e.clientY - rect.top);
+      // A mouse wheel that reports lines rather than pixels moves ~16px a notch.
+      const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 16 : e.deltaY;
+      zoomAt(Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.002)), e.clientX - rect.left, e.clientY - rect.top);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -102,6 +104,7 @@ export function DiagramViewer({ svg, onClose }: { svg: SVGSVGElement; onClose: (
         ref={stageRef}
         className="milkdown relative flex-1 cursor-grab touch-none overflow-hidden active:cursor-grabbing"
         onPointerDown={(e) => {
+          if (e.button !== 0) return; // right-click and middle-click are not a drag
           e.currentTarget.setPointerCapture(e.pointerId);
           drag.current = { x: e.clientX - view.x, y: e.clientY - view.y };
         }}

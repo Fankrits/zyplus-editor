@@ -1,3 +1,5 @@
+import { safeStorage } from "./safeStorage";
+
 export type Theme = keyof typeof THEMES;
 type Base = "light" | "dark";
 
@@ -26,8 +28,12 @@ const THEME_KEY = "zyplus:theme";
 const BASE_KEY = "zyplus:theme-base";
 
 export function getTheme(): Theme {
-  if (typeof window === "undefined" || !window.localStorage) return "system";
-  const stored = localStorage.getItem(THEME_KEY);
+  let stored: string | null = null;
+  try {
+    stored = safeStorage()?.getItem(THEME_KEY) ?? null;
+  } catch {
+    // Reading can still throw once storage is denied; the OS theme is the fallback.
+  }
   // Own keys only: `in` also accepts "toString" and friends off the prototype.
   return stored && Object.prototype.hasOwnProperty.call(THEMES, stored) ? (stored as Theme) : "system";
 }
@@ -53,8 +59,9 @@ export function applyTheme(theme: Theme = getTheme()): void {
 
 export function setTheme(theme: Theme): void {
   try {
-    localStorage.setItem(THEME_KEY, theme);
-    localStorage.setItem(BASE_KEY, THEMES[theme].base ?? "");
+    const storage = safeStorage();
+    storage?.setItem(THEME_KEY, theme);
+    storage?.setItem(BASE_KEY, THEMES[theme].base ?? "");
   } catch {
     // Ignore quota/private-mode errors; the theme still applies for this session.
   }

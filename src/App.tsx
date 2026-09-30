@@ -27,6 +27,7 @@ import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { matchShortcut, type CommandId } from "./lib/shortcuts";
 import { isMac, isNativeApp } from "./lib/platform";
+import { copyText } from "./lib/clipboard";
 
 type CreateKind = "file" | "folder" | null;
 
@@ -192,10 +193,10 @@ function AppShell() {
           if (tab) emit(FIND_EVENT, { replace: true });
           return;
         case "copy-markdown":
-          if (tab) navigator.clipboard.writeText(tab.content);
+          if (tab) copyText(tab.content);
           return;
         case "copy-path":
-          if (tab) navigator.clipboard.writeText(tab.filePath);
+          if (tab) copyText(tab.filePath);
           return;
       }
     },
@@ -243,8 +244,15 @@ function AppShell() {
 
   const handleFirstFolder = useCallback(
     async (folder: string) => {
+      // Read before committing to the folder: a folder that cannot be read must
+      // leave the welcome screen up, not an empty workspace that looks broken.
+      // Welcome does not await this, so a rejection here would be invisible.
+      let node: Awaited<ReturnType<typeof fs.readProjectNode>> | null = null;
+      const read = await fs.tryFs("Could not open the notes folder", folder, async () => {
+        node = await fs.readProjectNode(folder);
+      });
+      if (!read || !node) return;
       setDefaultFolder(folder);
-      const node = await fs.readProjectNode(folder);
       dispatch({ type: "ADD_ROOT", rootPath: folder, node });
     },
     [dispatch, setDefaultFolder],
@@ -282,7 +290,8 @@ function AppShell() {
 
   if (!isHydrated) return <div className="h-app w-full bg-background" />;
 
-  if (!defaultFolder && roots.length === 0 && !hasTabs) {
+  // "" is the user having chosen Skip; only a folder never chosen shows this.
+  if (defaultFolder === null && roots.length === 0 && !hasTabs) {
     return (
       <Welcome
         onReady={handleFirstFolder}

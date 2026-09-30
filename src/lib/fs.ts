@@ -466,8 +466,13 @@ export async function renamePath(oldPath: string, newPath: string): Promise<void
     throw new Error(`Cannot move "${basenameOf(oldPath)}" into itself`);
   }
   // rename(2) replaces an existing file, and the web store would too. A
-  // case-only rename finds itself on a case-insensitive disk, which is fine.
-  if (newPath.toLowerCase() !== oldPath.toLowerCase() && (await pathExists(newPath))) {
+  // case-only rename finds itself on a case-insensitive disk (macOS, Windows),
+  // which is fine — but on Linux and in the web store "File.md" and "file.md"
+  // are two files, and skipping the check would overwrite the other one.
+  const findsItself =
+    newPath === oldPath ||
+    (newPath.toLowerCase() === oldPath.toLowerCase() && isNativeApp && (isMac || isWindows));
+  if (!findsItself && (await pathExists(newPath))) {
     throw new Error(`"${basenameOf(newPath)}" already exists there`);
   }
   if (!isNativeApp) {

@@ -35,8 +35,16 @@ export default function createJsonExtension(): ExtensionRuntime {
     mountFileEditor(host, { initialValue, onChange, mode, onModeChange }) {
       // Keep the file's own indentation and final newline so opening a file and
       // changing one value does not rewrite every line of it in version control.
-      const indentation = /^(\t| +)"/m.exec(initialValue)?.[1] ?? 2;
-      const eol = initialValue.endsWith("\n") ? "\n" : "";
+      // The first indented line of any kind — an array of numbers or a minified-then-
+      // pretty file has no quoted key to anchor on. Line endings survive too: a CRLF
+      // file would otherwise come back all LF, a diff on every line.
+      const indentation = /^(\t| +)\S/m.exec(initialValue)?.[1] ?? 2;
+      const crlf = initialValue.includes("\r\n");
+      const eol = /\n$/.test(initialValue) ? (crlf ? "\r\n" : "\n") : "";
+      const serialize = (json: unknown) => {
+        const text = stringify(json, null, indentation) ?? "";
+        return (crlf ? text.replace(/\n/g, "\r\n") : text) + eol;
+      };
 
       // The tab bar's choice if there is one; else a tree, unless there is none to show
       // (an empty or half-written file).
@@ -65,7 +73,7 @@ export default function createJsonExtension(): ExtensionRuntime {
           queryLanguageId: jsonQueryLanguage.id,
           // Tree edits arrive as { json, text: undefined }, so `"text" in content` is not the test.
           onChange: (content: Content) =>
-            onChange(isTextContent(content) ? content.text : (stringify(content.json, null, indentation) ?? "") + eol),
+            onChange(isTextContent(content) ? content.text : serialize(content.json)),
         },
       });
 

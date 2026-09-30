@@ -16,6 +16,12 @@ describe("shortcuts", () => {
     expect(matchShortcut(key({ code: "KeyS", metaKey: true }), MAC)).toBe("save");
   });
 
+  // The bracket keys are named "]" / "[" by keyOf; an alias spelled "bracketright" never matched.
+  it("switches tabs with Cmd+Shift+] and Cmd+Shift+[", () => {
+    expect(matchShortcut(key({ code: "BracketRight", metaKey: true, shiftKey: true }), MAC)).toBe("next-tab");
+    expect(matchShortcut(key({ code: "BracketLeft", ctrlKey: true, shiftKey: true }), PC)).toBe("prev-tab");
+  });
+
   it("distinguishes shifted combos", () => {
     expect(matchShortcut(key({ code: "KeyS", metaKey: true, shiftKey: true }), MAC)).toBe("export-md");
   });

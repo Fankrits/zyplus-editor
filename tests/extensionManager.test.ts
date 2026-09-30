@@ -156,6 +156,14 @@ describe("Extension System", () => {
     }
   });
 
+  it("routes a bare Dockerfile to the code editor, which has no extension to match", () => {
+    localStorage.setItem("zyplus:enabled-extensions", JSON.stringify(["codefiles"]));
+    expect(extensionManager.getFileEditorId("/app/Dockerfile")).toBe("codefiles");
+    expect(extensionManager.getFileEditorId("C:\\app\\dockerfile")).toBe("codefiles");
+    expect(extensionManager.getFileEditorId("/app/build.dockerfile")).toBe("codefiles");
+    expect(extensionManager.getFileEditorId("/app/README.md")).toBeNull();
+  });
+
   it("hands .json files to the JSON editor only once it is enabled", () => {
     const json = getManifestById("json");
     expect(json?.fileExtensions).toEqual([".json"]);

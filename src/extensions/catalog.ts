@@ -123,7 +123,7 @@ export const EXTENSION_CATALOG: ExtensionManifest[] = [
     fileExtensions: [
       ".yaml", ".yml", ".toml", ".xml", ".sh", ".bash", ".zsh", ".ini", ".env",
       ".css", ".html", ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".go", ".sql",
-      ".rb", ".php", ".c", ".cpp", ".h", ".java", ".kt", ".swift", ".dockerfile", ".gitignore",
+      ".rb", ".php", ".c", ".cpp", ".h", ".java", ".kt", ".swift", ".dockerfile", "dockerfile", ".gitignore",
     ],
     downloadUrl: getAssetUrl("codefiles.js"),
     sha256: checksums["codefiles.js"],

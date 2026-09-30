@@ -46,7 +46,11 @@ const codeHighlighting = syntaxHighlighting(
 );
 
 function getLanguageExtension(filePath: string): Extension {
-  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
+  // By file name, not by whatever follows the last dot in the whole path: a bare
+  // `Dockerfile` has no extension, and `a.d/Makefile` must not read as ".d/Makefile".
+  const base = (filePath.split(/[\\/]/).pop() ?? "").toLowerCase();
+  const dot = base.lastIndexOf(".");
+  const ext = base === "dockerfile" ? ".dockerfile" : dot >= 0 ? base.slice(dot) : "";
   switch (ext) {
     case ".yaml":
     case ".yml":

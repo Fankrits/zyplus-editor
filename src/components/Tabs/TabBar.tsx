@@ -39,6 +39,7 @@ import {
 import { emit, CLOSE_TAB_EVENT, FIND_EVENT } from "../../lib/commands";
 import { useFileEditorId } from "../../extensions/useExtensions";
 import { getManifestById } from "../../extensions/catalog";
+import { copyText } from "../../lib/clipboard";
 
 /** Icons for the views an extension's editor offers (`fileModes`); a view without one shows its label alone. */
 const VIEW_ICONS: Record<string, typeof SourceCodeIcon> = {
@@ -254,7 +255,7 @@ export function TabBar({
           key: "copy-path",
           label: "Copy Path",
           icon: ClipboardIcon,
-          onSelect: () => navigator.clipboard.writeText(tab.filePath),
+          onSelect: () => copyText(tab.filePath),
         },
       ];
       contextMenu.open(e, items);
@@ -283,13 +284,13 @@ export function TabBar({
           key: "copy-markdown",
           label: "Copy Markdown",
           icon: Copy01Icon,
-          onSelect: () => navigator.clipboard.writeText(activeTab.content),
+          onSelect: () => copyText(activeTab.content),
         },
         {
           key: "copy-path",
           label: "Copy Path",
           icon: ClipboardIcon,
-          onSelect: () => navigator.clipboard.writeText(activeTab.filePath),
+          onSelect: () => copyText(activeTab.filePath),
         },
         {
           key: "export-md",

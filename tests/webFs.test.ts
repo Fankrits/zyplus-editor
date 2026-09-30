@@ -40,4 +40,14 @@ describe("web filesystem", () => {
     await fs.renamePath("/v/a.md", "/v/A.md");
     expect(await fs.readTextFile("/v/A.md")).toBe("keep me");
   });
+
+  // The store is case-sensitive, so "File.md" and "file.md" are two notes.
+  it("refuses a case-only rename onto a different existing file", async () => {
+    await fs.writeTextFile("/case/file.md", "lower");
+    await fs.writeTextFile("/case/File.md", "upper");
+    await expect(fs.renamePath("/case/file.md", "/case/File.md")).rejects.toThrow(/already exists/);
+    expect(await fs.readTextFile("/case/File.md")).toBe("upper");
+    expect(await fs.readTextFile("/case/file.md")).toBe("lower");
+    await fs.renamePath("/case/file.md", "/case/file.md"); // renaming to itself stays a no-op
+  });
 });
