@@ -25,6 +25,7 @@ import {
   useWorkspaceSession,
   useWorkspaceTabs,
   useWorkspaceTree,
+  isUntitled,
   type TabState,
 } from "../../state/workspaceStore";
 import { saveDocument, saveFileAs, revealPath, withExtension } from "../../lib/fs";
@@ -146,7 +147,7 @@ export function TabBar({
 }: TabBarProps) {
   const { roots } = useWorkspaceTree();
   const state = useWorkspaceTabs();
-  const { defaultFolder } = useWorkspaceSession();
+  const { defaultFolder, isAutosaveEnabled } = useWorkspaceSession();
   const { dispatch, getState } = useWorkspaceActions();
   const activeTab = state.activeTab;
   const fileEditorId = useFileEditorId(activeTab?.filePath);
@@ -192,9 +193,16 @@ export function TabBar({
         dispatch({ type: "CLOSE_TAB", id });
         return;
       }
+      // Autosaved tabs are only dirty for the debounce: write them now rather than ask.
+      if (isAutosaveEnabled || isUntitled(tab.title)) {
+        saveDocument(tab.filePath, tab.content).then((saved) => {
+          if (saved) dispatch({ type: "CLOSE_TAB", id });
+        });
+        return;
+      }
       setPendingCloseId(id);
     },
-    [getState, dispatch],
+    [getState, dispatch, isAutosaveEnabled],
   );
 
   // ⌘W is handled globally, but the unsaved-changes prompt lives here.

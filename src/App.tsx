@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { listen } from "@tauri-apps/api/event";
 import { Button, Drawer, Input, Label, Modal, TextField, ToastProvider } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { FileAddIcon, FolderAddIcon } from "@hugeicons/core-free-icons";
+import { FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
 import {
   WorkspaceProvider,
@@ -22,7 +22,6 @@ const SettingsModal = lazy(() =>
   import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })),
 );
 import { extensionManager } from "./extensions/extensionManager";
-import { suggestExtensionFor } from "./extensions/suggestExtension";
 import { useIsDesktop } from "./lib/useMediaQuery";
 import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
 import { matchShortcut, type CommandId } from "./lib/shortcuts";
@@ -111,10 +110,24 @@ function AppShell() {
   }, [isHydrated, openFile, addFolder]);
 
 
-  const requestCreate = useCallback((kind: "file" | "folder", targetDir: string) => {
-    setCreateTargetDir(targetDir);
-    setCreateKind(kind);
-  }, []);
+  const requestCreate = useCallback(
+    async (kind: "file" | "folder", targetDir: string) => {
+      if (kind === "folder") {
+        setCreateTargetDir(targetDir);
+        setCreateKind(kind);
+        return;
+      }
+      // A file needs no name up front: it starts as "Untitled.md" and is renamed like any other.
+      const path = await fs.freePath(targetDir, "Untitled.md");
+      if (!(await fs.tryFs("Could not create file", path, () => fs.createFile(path)))) return;
+      await refreshTree();
+      dispatch({
+        type: "OPEN_TAB",
+        tab: { id: path, filePath: path, title: fs.basenameOf(path), content: "", savedContent: "", isDirty: false, mode: "rich" },
+      });
+    },
+    [refreshTree, dispatch],
+  );
 
   const stepTab = useCallback(
     (delta: number) => {
@@ -266,27 +279,13 @@ function AppShell() {
 
   const handleCreate = async () => {
     const targetDir = createTargetDir ?? defaultFolder ?? roots[0];
-    if (!targetDir || !newName.trim() || !createKind || nameError) return;
-    const trimmed = newName.trim();
-    const isFile = createKind === "file";
-    const name = isFile && !/\.[^./\\]+$/.test(trimmed) ? `${trimmed}.md` : trimmed;
-    const path = await fs.joinPath(targetDir, name);
+    if (!targetDir || !newName.trim() || createKind !== "folder" || nameError) return;
+    const path = await fs.joinPath(targetDir, newName.trim());
     // A failed create keeps the modal open with the name still typed, so the
     // user can read the reason and retry or change location.
-    const created = await fs.tryFs(
-      isFile ? "Could not create file" : "Could not create folder",
-      path,
-      () => (isFile ? fs.createFile(path) : fs.createFolder(path)),
-    );
+    const created = await fs.tryFs("Could not create folder", path, () => fs.createFolder(path));
     if (!created) return;
     await refreshTree();
-    if (isFile) {
-      dispatch({
-        type: "OPEN_TAB",
-        tab: { id: path, filePath: path, title: name, content: "", savedContent: "", isDirty: false, mode: "rich" },
-      });
-      suggestExtensionFor(path);
-    }
     closeCreateModal();
   };
 
@@ -368,17 +367,17 @@ function AppShell() {
               <Modal.CloseTrigger />
               <Modal.Header>
                 <Modal.Icon className="size-8 bg-accent-soft text-accent">
-                  <HugeiconsIcon icon={createKind === "folder" ? FolderAddIcon : FileAddIcon} size={16} />
+                  <HugeiconsIcon icon={FolderAddIcon} size={16} />
                 </Modal.Icon>
-                <Modal.Heading>{createKind === "folder" ? "New Folder" : "New File"}</Modal.Heading>
+                <Modal.Heading>New Folder</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
                 <TextField>
-                  <Label className="mb-1.5 block">{createKind === "folder" ? "Folder name" : "File name"}</Label>
+                  <Label className="mb-1.5 block">Folder name</Label>
                   <Input
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    placeholder={createKind === "folder" ? "folder-name" : "file-name.md"}
+                    placeholder="folder-name"
                     autoFocus
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleCreate();
