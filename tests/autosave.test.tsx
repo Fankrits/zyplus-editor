@@ -83,6 +83,26 @@ describe("autosave", () => {
   });
 });
 
+describe("untitled files", () => {
+  it("save themselves even with autosave off", async () => {
+    const ctx = await mountWorkspace();
+    const path = await fs.freePath("/demo-workspace", "Untitled.md");
+    expect(path).toBe("/demo-workspace/Untitled.md");
+    await fs.createFile(path);
+    expect(await fs.freePath("/demo-workspace", "Untitled.md")).toBe("/demo-workspace/Untitled 2.md");
+    await act(async () => {
+      ctx().dispatch({
+        type: "OPEN_TAB",
+        tab: { id: path, filePath: path, title: "Untitled.md", content: "", savedContent: "", isDirty: false, mode: "rich" },
+      });
+      ctx().dispatch({ type: "UPDATE_TAB_CONTENT", id: path, content: "jotted\n" });
+    });
+    await settle(1200);
+    expect(await fs.readTextFile(path)).toBe("jotted\n");
+    expect(ctx().state.tabs.find((t) => t.id === path)!.isDirty).toBe(false);
+  });
+});
+
 describe("settings toggle", () => {
   it("flips autosave from the Settings modal", async () => {
     localStorage.clear();

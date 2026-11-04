@@ -243,7 +243,7 @@ async function importFromDevice(): Promise<string | null> {
 }
 
 /** `dir/name`, or `dir/name<label> 2`, `… 3` and so on until nothing is there. */
-async function freePath(dir: string, name: string, label = ""): Promise<string> {
+export async function freePath(dir: string, name: string, label = ""): Promise<string> {
   const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : "";

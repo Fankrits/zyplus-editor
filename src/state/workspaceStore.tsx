@@ -31,6 +31,7 @@ import {
   workspaceReducer,
   restoreWorkspaceFromSession,
   loadedFolderIds,
+  isUntitled,
   initialState,
   type Action,
   type TabMode,
@@ -40,7 +41,7 @@ import {
 } from "./workspaceReducer";
 
 export type { Action, TabMode, TabState, TreeNode, WorkspaceState };
-export { workspaceReducer, restoreWorkspaceFromSession } from "./workspaceReducer";
+export { workspaceReducer, restoreWorkspaceFromSession, isUntitled } from "./workspaceReducer";
 
 /**
  * The store is split into three subscriptions because typing rewrites `state.tabs`
@@ -249,8 +250,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   ]);
 
   useEffect(() => {
-    if (!isAutosaveEnabled) return;
-    const dirty = state.tabs.filter((t) => t.isDirty);
+    const dirty = state.tabs.filter((t) => t.isDirty && (isAutosaveEnabled || isUntitled(t.title)));
     if (dirty.length === 0) return;
     // Debounce restarts on every keystroke, so this fires once typing stops.
     const timer = setTimeout(() => {

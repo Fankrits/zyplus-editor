@@ -82,7 +82,7 @@ export function EditorPane() {
 
   if (!activeTab) {
     return (
-      <div className="flex h-full flex-1 flex-col items-center justify-center gap-3 text-sm text-muted">
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-sm text-muted">
         <Wordmark size={56} className="opacity-40" />
         Open a folder and select a markdown file to start editing.
       </div>
@@ -94,7 +94,10 @@ export function EditorPane() {
   const editorKey = `${activeTab.id}#${activeTab.reloads ?? 0}`;
 
   return (
-    <div className="relative flex h-full flex-1 min-w-0 flex-col">
+    // Not `h-full`: that is the whole column, so with the tab bar above it the pane overflowed the
+    // shell by the bar's height. The shell clips that but can still be scrolled (a long paste's
+    // scroll-into-view did), which pushed the tab bar off the top. `min-h-0` lets the pane fill the rest.
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {/* An extension's editor has its own search. */}
       {search && !fileEditorId && (
         <Suspense fallback={null}>

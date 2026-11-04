@@ -5,6 +5,9 @@ import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
 
 export type TabMode = "rich" | "plain";
 
+/** "Untitled.md", "Untitled 2.md", ...: what New File creates. These save themselves, since they were never named. */
+export const isUntitled = (name: string) => /^Untitled( \d+)?\.md$/.test(name);
+
 export interface TreeNode {
   id: string;
   name: string;
