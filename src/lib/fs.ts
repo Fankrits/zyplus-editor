@@ -7,6 +7,7 @@ import {
   remove,
   rename as renameRaw,
   exists,
+  stat,
 } from "@tauri-apps/plugin-fs";
 import { join as tauriJoin, dirname as tauriDirname, appDataDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
@@ -349,6 +350,16 @@ export async function ensureFolder(path: string): Promise<void> {
   const missing: WebOp[] = [];
   for (let p = path; p !== "/" && !webDirs.has(p); p = mockDirname(p)) missing.push([p, null]);
   await applyWeb(missing);
+}
+
+/** A file's size in bytes, without reading it. The web build counts the stored text's UTF-8 length. */
+export async function fileSize(path: string): Promise<number> {
+  if (!isNativeApp) {
+    const content = webFiles.get(path);
+    if (content === undefined) throw new Error(`File not found: ${path}`);
+    return new TextEncoder().encode(content).length;
+  }
+  return (await stat(path)).size;
 }
 
 export async function readTextFile(path: string): Promise<string> {

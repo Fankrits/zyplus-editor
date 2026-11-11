@@ -2,6 +2,7 @@ import { basenameOf, isUnder, readProjectNode, readTextFile } from "../lib/fs";
 
 export { isUnder };
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
+import { isTooLargeToOpen, modeForSize } from "../lib/fileSize";
 
 export type TabMode = "rich" | "plain";
 
@@ -293,15 +294,20 @@ export async function restoreWorkspaceFromSession(
     Promise.all(
       stored.tabs.map((tab) =>
         fsApi.readTextFile(tab.filePath).then(
-          (content): TabState => ({
-            id: tab.filePath,
-            filePath: tab.filePath,
-            title: basenameOf(tab.filePath),
-            content,
-            savedContent: content,
-            isDirty: false,
-            mode: tab.mode,
-          }),
+          (content): TabState | null => {
+            // A file that grew past the limits while the app was closed gets the same
+            // treatment as one opened now: dropped if huge, source editor if big.
+            if (isTooLargeToOpen(content.length)) return null;
+            return {
+              id: tab.filePath,
+              filePath: tab.filePath,
+              title: basenameOf(tab.filePath),
+              content,
+              savedContent: content,
+              isDirty: false,
+              mode: modeForSize(content.length, tab.mode),
+            };
+          },
           () => null,
         ),
       ),

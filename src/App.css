@@ -274,3 +274,23 @@ body,
   /* Not the page background: white on the warning amber is ~2:1 in light themes. */
   color: var(--warning-foreground, #000);
 }
+
+/*
+ * The caret blinks for about twenty seconds after the last cursor movement, then stays solid.
+ * Both editors restart their animation on every cursor move or keystroke, so typing keeps it
+ * going; an editor left focused and untouched stops waking the compositor twice a second. It
+ * was the only thing running while idle. (`!important`: CodeMirror injects its own rule at
+ * runtime and the Milkdown stylesheet loads after this one, so neither can be beaten on order.)
+ */
+.cm-editor.cm-focused > .cm-scroller > .cm-cursorLayer {
+  animation-iteration-count: 17 !important; /* 17 x 1.2 s */
+}
+.ProseMirror-focused .prosemirror-virtual-cursor-animation {
+  animation-iteration-count: 20 !important; /* 20 x 1 s */
+}
+@media (prefers-reduced-motion: reduce) {
+  .cm-editor.cm-focused > .cm-scroller > .cm-cursorLayer,
+  .ProseMirror-focused .prosemirror-virtual-cursor-animation {
+    animation: none !important;
+  }
+}
