@@ -35,6 +35,12 @@ export interface TabState {
   view?: string;
   /** Bumped when the file changed underneath the tab, so the editor remounts with it. */
   reloads?: number;
+  /**
+   * A big, unmodified tab that is not showing has let go of its text (`content` and
+   * `savedContent` are empty); the editor pane reads it back from disk when the tab is
+   * focused. See `evictBackgroundTabs`.
+   */
+  evicted?: boolean;
 }
 
 export interface WorkspaceState {
@@ -121,7 +127,34 @@ export function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: s
   return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
 }
 
+/** Text above this many characters is not kept for a tab nobody is looking at. */
+export const EVICT_MIN_CHARS = 256 * 1024;
+
+/**
+ * Lets go of the text of every big, unmodified tab that is not the active one.
+ *
+ * A background tab's text is only ever needed again when it is focused, and then it can be
+ * read back from disk, so holding it costs memory for nothing (two copies once edited, and a
+ * string is two bytes a character). Small tabs are kept: they cost nothing worth a disk read.
+ * A tab with unsaved changes is never evicted, since the text is the only copy.
+ * Returns `state` itself when nothing changes, so the keystroke path stays allocation-free.
+ */
+export function evictBackgroundTabs(state: WorkspaceState): WorkspaceState {
+  let changed = false;
+  const tabs = state.tabs.map((t) => {
+    if (t.id === state.activeTabId || t.evicted || t.isDirty || t.content !== t.savedContent) return t;
+    if (t.content.length < EVICT_MIN_CHARS) return t;
+    changed = true;
+    return { ...t, content: "", savedContent: "", evicted: true };
+  });
+  return changed ? { ...state, tabs } : state;
+}
+
 export function workspaceReducer(state: WorkspaceState, action: Action): WorkspaceState {
+  return evictBackgroundTabs(reduceWorkspace(state, action));
+}
+
+function reduceWorkspace(state: WorkspaceState, action: Action): WorkspaceState {
   switch (action.type) {
     case "RESTORE_WORKSPACE":
       return {
@@ -228,7 +261,13 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
         ...state,
         tabs: state.tabs.map((t) =>
           t.id === action.id && !t.isDirty
-            ? { ...t, content: action.content, savedContent: action.content, reloads: (t.reloads ?? 0) + 1 }
+            ? {
+                ...t,
+                content: action.content,
+                savedContent: action.content,
+                reloads: (t.reloads ?? 0) + 1,
+                evicted: undefined,
+              }
             : t,
         ),
       };
