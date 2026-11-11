@@ -276,17 +276,24 @@ body,
 }
 
 /*
- * The caret blinks for about twenty seconds after the last cursor movement, then stays solid.
+ * The caret blinks for a few seconds after the last cursor movement, then stays solid, and
+ * while it blinks it switches on and off instead of fading.
+ *
  * Both editors restart their animation on every cursor move or keystroke, so typing keeps it
- * going; an editor left focused and untouched stops waking the compositor twice a second. It
- * was the only thing running while idle. (`!important`: CodeMirror injects its own rule at
- * runtime and the Milkdown stylesheet loads after this one, so neither can be beaten on order.)
+ * going; an editor left focused and untouched stops waking the compositor. ProseMirror's own
+ * caret fades with a `linear` timing function, which repaints every frame (60 a second, about a
+ * core's worth of CPU in a headless run) for as long as the editor has focus; stepping it
+ * costs two repaints a second, the way CodeMirror's already does. (`!important`: CodeMirror
+ * injects its own rule at runtime and the Milkdown stylesheet loads after this one, so neither
+ * can be beaten on order.) ProseMirror restarts its animation a few seconds after the last
+ * keystroke, so the counts end well before a 25 s idle.
  */
 .cm-editor.cm-focused > .cm-scroller > .cm-cursorLayer {
-  animation-iteration-count: 17 !important; /* 17 x 1.2 s */
+  animation-iteration-count: 10 !important; /* 10 x 1.2 s */
 }
 .ProseMirror-focused .prosemirror-virtual-cursor-animation {
-  animation-iteration-count: 20 !important; /* 20 x 1 s */
+  animation-iteration-count: 12 !important; /* 12 x 1 s */
+  animation-timing-function: steps(1, end) !important;
 }
 @media (prefers-reduced-motion: reduce) {
   .cm-editor.cm-focused > .cm-scroller > .cm-cursorLayer,

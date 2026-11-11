@@ -1,0 +1,47 @@
+name: Perf
+
+# Opt-in: launches the release binary headless and fails when its memory is over a budget.
+# Nothing here runs on push; start it from the Actions tab before a release.
+# The numbers come from Xvfb with software rendering, so a budget only means something against
+# runs of this same workflow (see docs/performance.md).
+on:
+  workflow_dispatch:
+    inputs:
+      max_pss_mb:
+        description: "Fail when the app's PSS (app + WebKit processes) at the end of the run is above this many MB"
+        default: "230"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-memory:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb dbus-x11
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: perf
+
+      - run: bun install --frozen-lockfile
+      - run: bun run tauri build --no-bundle
+
+      - name: Desktop memory and idle CPU
+        run: node scripts/perf/desktop.mjs src-tauri/target/release/zyplus-editor --seconds 40 --max-pss ${{ inputs.max_pss_mb }} --json perf-desktop.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-desktop
+          path: perf-desktop.json

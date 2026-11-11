@@ -10,7 +10,7 @@ Status: partly implemented; see "Implementation status" below. Written against c
 | 0.2 PSS per process in `desktop.mjs` | Done (Linux) | 174 MB PSS vs 311 MB RSS for the same run. Windows and macOS samplers not written. |
 | 0.3 scenario fixtures | Partly | `bigfile.mjs` / `bun run perf:bigfile` covers S6. S5, S7, S8 and the 13k-file fixture exist or are still manual. |
 | 0.4 baselines per OS | Partly | Linux only, in `docs/performance.md`. |
-| 0.5 CI memory budget | Not done | Needs a display and a release binary; left for a release-tag job. |
+| 0.5 CI memory budget | Done (manual) | `desktop.mjs --max-pss` exits 3 over budget; `.github/workflows/perf.yml` runs it on demand. Not wired to every push or tag: it needs Xvfb and a release build, and its budget is only meaningful against runs of itself. |
 | 1.1 Windows low-memory mode | Implemented, **off by default** | Compiles for Windows; unmeasured. `ZYPLUS_WEBVIEW_LOWMEM=1`. |
 | 1.2 WebKitGTK cache model and settings | Tried, **removed** | Measured: no effect (<0.3 MB). |
 | 1.3 GPU policy, 1.4 WebView2 flags, 1.5 idle recycle | Not done | Linux 1.3 is confounded by the harness forcing software rendering; 1.4 and 1.5 need a Windows machine. |
@@ -19,7 +19,7 @@ Status: partly implemented; see "Implementation status" below. Written against c
 | 2.2 batch big source edits | Done (variant) | Kept the CodeMirror wrapper and replaced only its change reporting; flushed through `getState()`. |
 | 2.3 evict background tabs | Done (big tabs only) | Correctness verified; memory saving not measured. |
 | 2.4 per-keystroke effects | Partly | Session persistence no longer re-runs per keystroke; autosave still depends on tab content by design (it is the debounce). |
-| 2.5 caret blink | Done | Not measurable by the current idle script. |
+| 2.5 caret blink | Done, and bigger than expected | ProseMirror's caret repainted at 60 fps whenever focused. Now stepped and time-limited: 60 -> ~2 frames/s, ~92% -> ~5% CPU in Chromium (`idle.mjs`). |
 | 2.6 release extension resources | **Dropped** | Finding F8 was partly wrong: Chart.js is destroyed after rasterizing, and Mermaid/KaTeX return static output. |
 | 2.7 image lazy-load | Not done | Milkdown's image block is a Vue component; setting `loading` after insertion is not reliable and it could not be measured. |
 | 2.8 file tree | Verified, no change | Already reads one folder at a time. |
@@ -157,7 +157,7 @@ Each task is an A/B: ship only if it beats noise (>= 5% PSS) with no visible reg
 ### Phase 2: app-level memory and CPU
 | Task | Fixes | Detail | Effort |
 |---|---|---|---|
-| **2.1** Large-file policy | F1 | Thresholds (tune from S6): above ~512 KB open in source mode by default with a banner; above ~10 MB open read-only/plain with no syntax parsing, or offer "open in default app". Reuse `tryFs` error reporting. Include a size check in `readTextFile` using `stat` so the file isn't read before the decision. | M |
+| **2.1** Large-file policy | F1 | Thresholds (tune from S6): above 200 KB open in source mode (measured; see docs/performance.md) by default with a banner; above ~10 MB open read-only/plain with no syntax parsing, or offer "open in default app". Reuse `tryFs` error reporting. Include a size check in `readTextFile` using `stat` so the file isn't read before the decision. | M |
 | **2.2** Drive CodeMirror directly, debounce reads | F2 | Replace `@uiw/react-codemirror` with a thin `EditorView` wrapper; push changes with a debounced `updateListener` (~150 ms) that reads `doc.toString()` once per pause and tracks dirtiness by a change counter, not string comparison. Also removes a dependency. | M |
 | **2.3** Evict background tab content | F3 | For tabs that are clean and inactive for > N minutes, drop `content`/`savedContent` and re-read from disk on activation. Dirty tabs are never evicted. Keep one copy (`savedContent` alias) when clean. | M |
 | **2.4** Stop per-keystroke effects | F4 | Persist the session only when its inputs change (derive a path/mode key, not `state.tabs`); autosave via a `dirtyIds` selector. | S |

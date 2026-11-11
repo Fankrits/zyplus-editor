@@ -8,9 +8,11 @@ Nothing here runs in `bun run check`; it is opt-in tooling in `scripts/perf/`.
 | What | Command |
 |---|---|
 | Chromium: boot, keystroke latency (small + 120-code-block note), heap, long tasks, idle CPU | `bun run build && bun run perf` (`--dist <dir>` for another build, `--json out.json`) |
-| What opening one big note costs (editor chosen, time, heap, DOM) | `bun run build && bun run perf:bigfile` (`--kb 1000`) |
+| What opening one big note costs, and typing at the end of it (editor chosen, time, heap, DOM, keystroke latency) | `bun run build && bun run perf:bigfile` (`--kb 1000`) |
+| What a focused but untouched editor costs while idle (compositor frames/s, CPU of every Chromium process) | `bun run build && node scripts/perf/idle.mjs` (`--settle 25 --window 15`) |
 | What is in the bundle, brotli sizes (the size Tauri embeds) | `bun run analyze` -> `bundle-report.html` |
-| Desktop PSS / RSS / CPU of the app + WebKit processes, per process, headless | `node scripts/perf/desktop.mjs <release-binary> --seconds 30` |
+| Desktop PSS / RSS / CPU of the app + WebKit processes, per process, headless (`--max-pss <MB>` fails above a budget) | `node scripts/perf/desktop.mjs <release-binary> --seconds 30` |
+| The same, in CI | Actions tab -> Perf -> Run workflow (`.github/workflows/perf.yml`, manual only) |
 | Same, comparing frontends on one binary, with a big project restored | `node scripts/perf/desktop.mjs <debug-binary> --dist <build-dir> --project <folder>` |
 | A big project folder to open | `node scripts/perf/fixture.mjs <dir> 4000` (13,000 files: notes, a `node_modules`, a `target`) |
 
@@ -104,18 +106,66 @@ implemented in `src-tauri/src/tuning.rs` but **off unless `ZYPLUS_WEBVIEW_LOWMEM
 measured, because it needs a Windows machine. It compiles for the Windows target (`cargo check --target
 x86_64-pc-windows-msvc`). Measure with and without the variable and make it the default only if it wins.
 
+## Idle with a focused editor: 60 frames a second to about 2
+
+ProseMirror draws its caret as an element faded by a CSS animation with a `linear` timing function and no
+iteration limit, so for as long as a rich editor has focus the compositor produces a frame every 16 ms,
+even when nothing else on the page changes. The previous idle figure (1-2% of the main thread) hid this:
+it counted main-thread time, not the compositor work behind it. Now the caret steps on and off (as
+CodeMirror's always has) and stops blinking a few seconds after the last keystroke. Chromium, focused rich
+editor, 15 s window after 25 s of no input (`node scripts/perf/idle.mjs`), two runs each:
+
+| | compositor frames/s | CPU of all Chromium processes |
+|---|---|---|
+| before | 59-60 | 92-98% of a core |
+| after, still blinking (5 s after the last key) | 3.7 | 8% |
+| after, settled (25 s after the last key) | 2.1 | 4.7% |
+| editor not focused (floor of the harness) | 0.07 | 0.9% |
+
+The CPU percentages include the cost of Chromium's screencast capturing every frame, so they overstate a
+real window; the frame rate is the figure to trust. What remains once the blink stops is the browser's own
+native caret, which every focused text field has. The desktop harness shows no difference here (idle CPU
+0% before and after) because there the Welcome note's editor is not focused and rendering is software.
+
+## Desktop memory: nothing in the app moves the floor
+
+Release binaries built from `0fec639` (before) and from this branch (after), three 60 s runs each,
+interleaved, Welcome note open, idle window at the end:
+
+| | PSS | web process | network process | boot CPU | idle CPU |
+|---|---|---|---|---|---|
+| before | 168.2 MB | 76.3 MB | 26.2 MB | 0.28 s | 0% |
+| after | 168.2 MB | 76.3 MB | 26.3 MB | 0.25 s | 0% |
+
+Identical. The work in this file lowers memory and CPU in the cases that scale with what the user does
+(big notes, many tabs, a focused editor left alone), not the idle floor, which is the webview. Process-level
+settings were tried on the same binary to see whether any of them moves that floor (three 25 s runs each,
+median PSS): `MALLOC_ARENA_MAX=1` 167.7 MB, `=2` 168.1 MB, JavaScriptCore with FTL off 168.3 MB, with DFG
+and FTL off 168.4 MB, with the JIT off 166.4 MB, against 168.5 MB. The best of them (JIT off, -1.2%) makes
+every script slower, so none was adopted.
+
 ## Large files
 
 Before, a file of any size opened in the rich editor, which builds a ProseMirror document and a DOM node
-per block. Now a file over 512 KB opens in the source editor (the user can still switch to rich) and
+per block. Now a file over 200 KB opens in the source editor (the user can still switch to rich) and
 one over 20 MB is refused, with the size checked by `stat` before the file is read.
 
-One note of about 1 MB, reopened from the tree (`bun run perf:bigfile`, Chromium):
+One note of about 1 MB, reopened from the tree and typed in (`bun run perf:bigfile`, Chromium):
 
-| | opens in | time to usable | heap growth | DOM nodes |
-|---|---|---|---|---|
-| before (`0fec639`) | rich | 3.76 s | +23.3 MB | 103,835 |
-| after | source | 0.09 s | -0.4 MB | 1,012 |
+| | opens in | time to usable | heap growth | DOM nodes | keystroke p50 / p95 | main thread per key |
+|---|---|---|---|---|---|---|
+| before (`0fec639`) | rich | 3.76 s | +22.4 MB | 103,835 | 363 / 614 ms | 152 ms |
+| after | source | 0.10 s | -0.4 MB | 1,012 | 13 / 19 ms | 11 ms |
+
+The 200 KB threshold comes from measuring the rich editor's keystroke latency (p50, same harness):
+
+| note size | 60 KB | 120 KB | 200 KB | 300 KB | 1 MB |
+|---|---|---|---|---|---|
+| rich | 15 ms | 20 ms | 28 ms | 41 ms | 363 ms |
+| source | | | | | 13 ms |
+
+and the source editor stays usable up to the 20 MB cap: p50 21 ms at 5 MB, 33 ms at 15 MB, 0.1-0.2 s to open.
+Notes between 200 KB and 1 MB were already open in rich before and after; only the default editor changed.
 
 Above 200,000 characters the source editor also reports edits to the store at most every 150 ms instead
 of copying the whole document out on every keystroke; `getState()` settles a waiting batch first, so
@@ -142,10 +192,9 @@ Measured, then left alone, so they are not re-investigated:
 
 ## Not measured yet
 
-- The caret now stops blinking about 20 s after the last cursor movement; the idle script waits 7.5 s, so
-  it cannot show this. Idle CPU with a focused editor was 1.4-1.6% before and after.
-- The CPU saved by batching big-document edits, and the memory saved by evicting background tabs, were
-  verified for correctness (tests plus a browser run that saves and reopens), not for size.
+- GPU use on real hardware. There is no GPU here; compositor frames per second is the proxy.
+- The memory saved by evicting background tabs was verified for correctness (tests plus a browser run
+  that saves and reopens), not for size.
 - Windows low-memory mode, and anything on macOS.
 
 ## Budgets

@@ -7,8 +7,13 @@
  * app's memory and freeze it. Sizes are bytes on disk (the web build counts the UTF-8 length).
  */
 
-/** Above this a file opens in the source editor; the user can still switch to rich. */
-export const RICH_TEXT_LIMIT = 512 * 1024;
+/**
+ * Above this a file opens in the source editor; the user can still switch to rich. Measured
+ * (`bun run perf:bigfile`): rich typing costs ~15 ms a key at 60 KB, ~28 at 200 KB, ~41 at 300 KB and
+ * ~360 at 1 MB, against ~13 ms at 1 MB in the source editor. 200 KB is where a key stops fitting in
+ * two frames.
+ */
+export const RICH_TEXT_LIMIT = 200 * 1024;
 
 /** Above this a file is not opened at all. */
 export const MAX_OPEN_SIZE = 20 * 1024 * 1024;

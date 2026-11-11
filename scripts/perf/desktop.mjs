@@ -1,7 +1,7 @@
 // Launches the desktop binary headless (Xvfb + a private D-Bus session, fresh HOME so every
 // run is a first run) and samples the whole process tree: app + WebKit web/network processes.
 //   node scripts/perf/desktop.mjs <binary> [--seconds 40] [--json out.json]
-//        [--dist <dir> [--project <folder>]]
+//        [--dist <dir> [--project <folder>]] [--max-pss <MB>]
 // Reports peak / final PSS (and RSS), a per-process breakdown, and the CPU spent while booting
 // versus while idle. Compare runs by PSS: summed RSS double-counts pages the processes share.
 // Note the environment below forces software rendering (no compositing, no DMABUF), so absolute
@@ -24,7 +24,7 @@ const opt = (name, fallback) => {
 };
 const binary = args.find((a) => !a.startsWith("--") && args.indexOf(a) === 0);
 if (!binary) {
-  console.error("usage: node scripts/perf/desktop.mjs <binary> [--seconds 40] [--json out.json] [--dist <dir> [--project <folder>]]");
+  console.error("usage: node scripts/perf/desktop.mjs <binary> [--seconds 40] [--json out.json] [--dist <dir> [--project <folder>]] [--max-pss <MB>]");
   process.exit(1);
 }
 const seconds = Number(opt("--seconds", 40));
@@ -157,4 +157,10 @@ const result = {
 console.log(JSON.stringify(result, null, 2));
 const out = opt("--json", null);
 if (out) fs.writeFileSync(out, JSON.stringify({ ...result, samples }, null, 2));
+// A budget makes this a gate: exit 3 when the app's PSS at the end of the run is over it.
+const maxPss = opt("--max-pss", null);
+if (maxPss !== null && result.finalPssMB > Number(maxPss)) {
+  console.error(`over budget: ${result.finalPssMB.toFixed(1)} MB PSS at the end of the run, budget is ${maxPss} MB`);
+  process.exit(3);
+}
 process.exit(0);
