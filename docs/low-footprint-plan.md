@@ -1,7 +1,36 @@
 # Low-footprint plan: lowest RAM and CPU for Zyplus
 
-Status: proposal. Nothing in here is implemented yet.
-Written against commit `0fec639` (v0.4.0).
+Status: partly implemented; see "Implementation status" below. Written against commit `0fec639` (v0.4.0).
+
+## Implementation status
+
+| Task | Status | Result |
+|---|---|---|
+| 0.1 fix `web.mjs` | Done | Runs green; baseline matches the old doc. |
+| 0.2 PSS per process in `desktop.mjs` | Done (Linux) | 174 MB PSS vs 311 MB RSS for the same run. Windows and macOS samplers not written. |
+| 0.3 scenario fixtures | Partly | `bigfile.mjs` / `bun run perf:bigfile` covers S6. S5, S7, S8 and the 13k-file fixture exist or are still manual. |
+| 0.4 baselines per OS | Partly | Linux only, in `docs/performance.md`. |
+| 0.5 CI memory budget | Not done | Needs a display and a release binary; left for a release-tag job. |
+| 1.1 Windows low-memory mode | Implemented, **off by default** | Compiles for Windows; unmeasured. `ZYPLUS_WEBVIEW_LOWMEM=1`. |
+| 1.2 WebKitGTK cache model and settings | Tried, **removed** | Measured: no effect (<0.3 MB). |
+| 1.3 GPU policy, 1.4 WebView2 flags, 1.5 idle recycle | Not done | Linux 1.3 is confounded by the harness forcing software rendering; 1.4 and 1.5 need a Windows machine. |
+| 1.6 no extra processes or features in release | Verified | Three processes at steady state; no devtools feature. |
+| 2.1 large-file policy | Done | 1 MB note: 3.76 s / +23 MB / 103,835 nodes -> 0.09 s / -0.4 MB / 1,012 nodes. |
+| 2.2 batch big source edits | Done (variant) | Kept the CodeMirror wrapper and replaced only its change reporting; flushed through `getState()`. |
+| 2.3 evict background tabs | Done (big tabs only) | Correctness verified; memory saving not measured. |
+| 2.4 per-keystroke effects | Partly | Session persistence no longer re-runs per keystroke; autosave still depends on tab content by design (it is the debounce). |
+| 2.5 caret blink | Done | Not measurable by the current idle script. |
+| 2.6 release extension resources | **Dropped** | Finding F8 was partly wrong: Chart.js is destroyed after rasterizing, and Mermaid/KaTeX return static output. |
+| 2.7 image lazy-load | Not done | Milkdown's image block is a Vue component; setting `loading` after insertion is not reliable and it could not be measured. |
+| 2.8 file tree | Verified, no change | Already reads one folder at a time. |
+| 2.9 trim UI libraries | Not done | Startup JS is under budget; do it only if a measurement points at it. |
+| 3.x guard rails | Not done | Depends on 0.5. |
+
+Corrections to the analysis below: **F6 is confirmed** (RSS overstated the app's memory by ~1.8x), and
+**F8 is largely wrong** (see 2.6). Section 1's "WebKitGTK cache model" research note is also superseded:
+it was measured and does nothing here.
+
+
 
 ## 0. Verdict
 
