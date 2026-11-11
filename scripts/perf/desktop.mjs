@@ -2,7 +2,10 @@
 // run is a first run) and samples the whole process tree: app + WebKit web/network processes.
 //   node scripts/perf/desktop.mjs <binary> [--seconds 40] [--json out.json]
 //        [--dist <dir> [--project <folder>]]
-// Reports peak / final RSS and the CPU spent while booting versus while idle.
+// Reports peak / final PSS (and RSS), a per-process breakdown, and the CPU spent while booting
+// versus while idle. Compare runs by PSS: summed RSS double-counts pages the processes share.
+// Note the environment below forces software rendering (no compositing, no DMABUF), so absolute
+// numbers differ from a real desktop; compare runs of this script against each other.
 //
 // With a release binary the app runs its embedded frontend. To compare frontends on one
 // binary instead, pass a DEBUG binary (it loads devUrl, http://localhost:1420) and --dist:
@@ -86,21 +89,36 @@ const descendants = (root) => {
   walk(root);
   return out;
 };
+// PSS (proportional set size) splits every shared page between the processes that map it, so
+// summing it over the tree gives the memory the app really costs. RSS counts a shared page in
+// full in each process, so its sum overstates (WebKit's processes share the GTK/WebKit libraries).
+// smaps_rollup can be unreadable for a process; that one falls back to RSS rather than vanishing.
 const sample = () => {
-  let rss = 0, ticks = 0, procs = 0;
-  for (const pid of descendants(app.pid)) {
+  let rss = 0, pss = 0, ticks = 0, procs = 0;
+  const byName = {};
+  for (const pid of [app.pid, ...descendants(app.pid)]) {
     try {
       const st = fs.readFileSync(`/proc/${pid}/status`, "utf8");
       const name = /Name:\s+(\S+)/.exec(st)?.[1] ?? "";
       if (/^(dbus|Xvfb|bwrap)/.test(name)) continue;
-      rss += Number(/VmRSS:\s+(\d+)/.exec(st)?.[1] ?? 0);
+      const procRss = Number(/VmRSS:\s+(\d+)/.exec(st)?.[1] ?? 0);
+      let procPss = procRss;
+      try {
+        procPss = Number(/^Pss:\s+(\d+)/m.exec(fs.readFileSync(`/proc/${pid}/smaps_rollup`, "utf8"))?.[1] ?? procRss);
+      } catch {}
+      rss += procRss;
+      pss += procPss;
+      const entry = (byName[name] ??= { count: 0, pssMB: 0, rssMB: 0 });
+      entry.count++;
+      entry.pssMB += procPss / 1024;
+      entry.rssMB += procRss / 1024;
       const raw = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
       const stat = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
       ticks += Number(stat[11]) + Number(stat[12]); // utime + stime
       procs++;
     } catch {}
   }
-  return { rssMB: rss / 1024, cpuS: ticks / TICK, procs };
+  return { rssMB: rss / 1024, pssMB: pss / 1024, cpuS: ticks / TICK, procs, byName };
 };
 
 const samples = [];
@@ -122,8 +140,16 @@ const idleStart = samples.find((s) => s.t >= seconds - idleWindow) ?? samples[0]
 const result = {
   binary: path.basename(binary),
   project: project ?? null,
+  // PSS is the number to compare runs and budgets by; RSS is kept to line up with older results.
+  peakPssMB: Math.max(...samples.map((s) => s.pssMB)),
+  finalPssMB: last.pssMB,
   peakRssMB: Math.max(...samples.map((s) => s.rssMB)),
   finalRssMB: last.rssMB,
+  // Per process name at the end of the run: which of the app / WebKitWebProcess / network / GPU
+  // processes holds the memory.
+  byProcess: Object.fromEntries(
+    Object.entries(last.byName).map(([name, e]) => [name, { count: e.count, pssMB: Math.round(e.pssMB * 10) / 10, rssMB: Math.round(e.rssMB * 10) / 10 }]),
+  ),
   processes: last.procs,
   cpuSecondsTotal: last.cpuS,
   idleCpuPercent: ((last.cpuS - idleStart.cpuS) / (last.t - idleStart.t)) * 100,
