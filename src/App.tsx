@@ -1,8 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Button, Drawer, Input, Label, Modal, TextField, ToastProvider } from "@heroui/react";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { FolderAddIcon } from "@hugeicons/core-free-icons";
 import "./App.css";
 import {
   WorkspaceProvider,
@@ -11,11 +8,16 @@ import {
   useWorkspaceTree,
 } from "./state/workspaceStore";
 import * as fs from "./lib/fs";
-import { Sidebar, SidebarContent } from "./components/Sidebar/Sidebar";
+import { Sidebar } from "./components/Sidebar/Sidebar";
+import { OnDemand } from "./components/OnDemand";
+import { ToastHost } from "./components/ToastHost";
 import { TabBar } from "./components/Tabs/TabBar";
 import { EditorPane } from "./components/Editor/EditorPane";
 import { Welcome } from "./components/Welcome";
 import type { SettingsSection } from "./components/SettingsModal";
+
+const CreateFolderModal = lazy(() => import("./components/CreateFolderModal"));
+const MobileDrawer = lazy(() => import("./components/Sidebar/MobileDrawer"));
 
 /** Settings is a modal nobody has open at launch, so it and its panels load on first use. */
 const SettingsModal = lazy(() =>
@@ -327,28 +329,18 @@ function AppShell() {
       </div>
 
       {!isDesktop && (
-        <Drawer isOpen={isMobileDrawerOpen} onOpenChange={setIsMobileDrawerOpen}>
-          <Drawer.Backdrop>
-            <Drawer.Content placement="left" className="w-72 max-w-[85vw] h-full p-0">
-              <Drawer.Dialog className="h-full flex flex-col bg-background text-foreground">
-                <Drawer.Header className="flex items-center justify-between border-b border-border px-3 py-2">
-                  <Drawer.Heading className="text-sm font-semibold truncate">Files</Drawer.Heading>
-                  <Drawer.CloseTrigger />
-                </Drawer.Header>
-                <Drawer.Body className="flex-1 p-0 overflow-hidden">
-                  <SidebarContent
-                    onRequestCreate={(kind, targetDir) => {
-                      setIsMobileDrawerOpen(false);
-                      requestCreate(kind, targetDir);
-                    }}
-                    onOpenFile={handleOpenFileFromDrawer}
-                    onOpenFolder={() => setIsMobileDrawerOpen(false)}
-                  />
-                </Drawer.Body>
-              </Drawer.Dialog>
-            </Drawer.Content>
-          </Drawer.Backdrop>
-        </Drawer>
+        <OnDemand when={isMobileDrawerOpen}>
+          <MobileDrawer
+            isOpen={isMobileDrawerOpen}
+            onOpenChange={setIsMobileDrawerOpen}
+            onRequestCreate={(kind, targetDir) => {
+              setIsMobileDrawerOpen(false);
+              requestCreate(kind, targetDir);
+            }}
+            onOpenFile={handleOpenFileFromDrawer}
+            onOpenFolder={() => setIsMobileDrawerOpen(false)}
+          />
+        </OnDemand>
       )}
 
       {/* Kept mounted once opened, so closing still animates. */}
@@ -363,49 +355,16 @@ function AppShell() {
         </Suspense>
       )}
 
-      <Modal>
-        <Modal.Backdrop isOpen={createKind !== null} onOpenChange={(open) => !open && closeCreateModal()}>
-          <Modal.Container size="sm">
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
-                <Modal.Icon className="size-8 bg-accent-soft text-accent">
-                  <HugeiconsIcon icon={FolderAddIcon} size={16} />
-                </Modal.Icon>
-                <Modal.Heading>New Folder</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <TextField>
-                  <Label className="mb-1.5 block">Folder name</Label>
-                  <Input
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    placeholder="folder-name"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleCreate();
-                    }}
-                  />
-                  {nameError && <p className="mt-1.5 text-xs text-danger">{nameError}</p>}
-                </TextField>
-              </Modal.Body>
-              <Modal.Footer>
-                <Button size="sm" variant="ghost" onPress={closeCreateModal}>
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onPress={handleCreate}
-                  isDisabled={!newName.trim() || nameError !== null}
-                >
-                  Create
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
+      <OnDemand when={createKind !== null}>
+        <CreateFolderModal
+          isOpen={createKind !== null}
+          name={newName}
+          error={nameError}
+          onNameChange={setNewName}
+          onCreate={handleCreate}
+          onClose={closeCreateModal}
+        />
+      </OnDemand>
     </div>
   );
 }
@@ -414,7 +373,7 @@ function App() {
   return (
     <WorkspaceProvider>
       <AppShell />
-      <ToastProvider />
+      <ToastHost />
     </WorkspaceProvider>
   );
 }

@@ -1,0 +1,41 @@
+import { Dropdown } from "@heroui/react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import type { ContextMenuState } from "./ContextMenu";
+
+/**
+ * Renders a right-click menu anchored at `state.x/y`. The anchor is a real
+ * (but invisible, 1x1) HeroUI Dropdown.Trigger positioned at the click point —
+ * react-aria-components' Popover positions relative to its trigger's DOM rect,
+ * so this is what makes the menu appear at the cursor instead of a fixed button.
+ */
+export default function ContextMenuPopover({ state, onClose }: { state: ContextMenuState | null; onClose: () => void }) {
+  return (
+    <Dropdown isOpen={state !== null} onOpenChange={(open) => !open && onClose()}>
+      <Dropdown.Trigger
+        aria-hidden="true"
+        excludeFromTabOrder
+        style={{ position: "fixed", left: state?.x ?? 0, top: state?.y ?? 0, width: 1, height: 1 }}
+        className="pointer-events-none opacity-0"
+      />
+      <Dropdown.Popover placement="bottom start">
+        <Dropdown.Menu>
+          {(state?.items ?? []).map((item) => (
+            <Dropdown.Item
+              key={item.key}
+              id={item.key}
+              textValue={item.label}
+              isDisabled={item.disabled}
+              variant={item.danger ? "danger" : "default"}
+              onAction={item.onSelect}
+            >
+              <span className="flex items-center gap-2">
+                {item.icon && <HugeiconsIcon icon={item.icon} size={16} strokeWidth={1.75} />}
+                {item.label}
+              </span>
+            </Dropdown.Item>
+          ))}
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  );
+}

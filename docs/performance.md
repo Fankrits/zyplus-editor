@@ -145,7 +145,8 @@ The original and the shipped binary, same method, three 60 s runs interleaved, W
 | | PSS | peak PSS | web process | boot CPU | idle CPU |
 |---|---|---|---|---|---|
 | before (`0fec639`) | 247.6 MB | 262.2 | 153.4 | 1.49 s | 0% |
-| after | **239.3 MB** (-8.3) | **250.9** (-11) | 145.1 | 1.36 s | 0% |
+| after the JIT change | **239.3 MB** (-8.3) | **250.9** (-11) | 145.1 | 1.36 s | 0% |
+| after, with the on-demand UI lazy (a later interleaved run: 247.8 / 239.2 / **234.3**) | **234.3 MB** (-13.5) | **244.9** (-18) | 140.2 | 1.36 s | 0% |
 
 and with a 600 KB note, real keystrokes, two runs each:
 
@@ -162,8 +163,8 @@ rich.)
 
 ## What is left, and what it would cost
 
-With the JIT tiers off, the idle app is 239 MB PSS: the webview's floor (a blank page, 165 MB in total,
-76.5 MB of it web process) plus about 75 MB that is the app's own. Measured by swapping entry points
+With the JIT tiers off and the on-demand UI lazy, the idle app is 234 MB PSS: the webview's floor (a blank
+page, 165 MB in total, 76.5 MB of it web process) plus about 70 MB that is the app's own. Measured by swapping entry points
 (web-process PSS, two runs each, same JIT setting as shipped):
 
 | what is loaded | web process | step |
@@ -182,11 +183,13 @@ What was tried or sized and not done:
 - **A longer batch window for big-note edits** (150 ms -> 1.5 s): typing in a 600 KB note ended at 347
   MB instead of 356 MB, so the ~90 MB it grows while typing is CodeMirror and the webview, not the
   reporting.
-- **Dropping HeroUI from the startup path.** Upper bound, with every HeroUI part stubbed: -13 MB of the
-  web process (113 -> 100). Keeping only `Button` eager and lazy-loading the modals, drawer, menu, inputs
-  and toasts: at most -8.5 MB, and only until the first time one of them is opened, since the code then
-  stays loaded. About 3.5% of the launch footprint for a change across six files and their tests, with
-  exit-animation and accessibility (react-aria) risk. Not done.
+- **Dropping HeroUI from the startup path.** Sized first: with every HeroUI part stubbed the web process
+  was 13 MB lower, and keeping only `Button` eager 8.5 MB lower. The second is what was done: the
+  create-folder, unsaved-changes and delete dialogs, the mobile drawer, the right-click and document-actions
+  menus, the inline rename field and the toast region are lazy chunks that mount the first time they are
+  needed (`OnDemand`, `ToastHost`, `showToast`). Startup JavaScript fell from 686 KB to 538 KB raw (187 to
+  148 KB brotli) and idle PSS from 239.2 to 234.3 MB (three runs each, interleaved). The cost is that the
+  first open of each loads its chunk (a frame or two from the local protocol); after that it stays loaded.
 - **React -> Preact.** React alone is ~10 MB, so the ceiling is a few MB, and HeroUI's react-aria
   would have to work under `preact/compat`. Not tried.
 - **Trimming the editor.** It is +32 MB for ProseMirror, remark, Vue (Milkdown's UI) and CodeMirror
