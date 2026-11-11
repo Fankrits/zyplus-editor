@@ -160,6 +160,43 @@ and with a 600 KB note, real keystrokes, two runs each:
 (The 600 KB note opens in the source editor now because of the large-file policy below; before, it opened in
 rich.)
 
+## What is left, and what it would cost
+
+With the JIT tiers off, the idle app is 239 MB PSS: the webview's floor (a blank page, 165 MB in total,
+76.5 MB of it web process) plus about 75 MB that is the app's own. Measured by swapping entry points
+(web-process PSS, two runs each, same JIT setting as shipped):
+
+| what is loaded | web process | step |
+|---|---|---|
+| blank page | 76.5 MB | |
+| React 19 alone | 86 MB | +9.6 |
+| + one HeroUI `Button` | 90.4 | +4.2 |
+| + one icon | 92.5 | +2.0 |
+| the whole shell (no editor) | 113 | +20.5 (the other components, the stylesheet, the app) |
+| + the rich editor | ~145 | +32 |
+
+What was tried or sized and not done:
+
+- **More JavaScriptCore options**, on the shipped binary: mini-VM mode -1.5 MB for +0.15 s boot CPU,
+  concurrent GC off, concurrent JIT off, WebAssembly off: all within noise. Nothing beyond the JIT tiers.
+- **A longer batch window for big-note edits** (150 ms -> 1.5 s): typing in a 600 KB note ended at 347
+  MB instead of 356 MB, so the ~90 MB it grows while typing is CodeMirror and the webview, not the
+  reporting.
+- **Dropping HeroUI from the startup path.** Upper bound, with every HeroUI part stubbed: -13 MB of the
+  web process (113 -> 100). Keeping only `Button` eager and lazy-loading the modals, drawer, menu, inputs
+  and toasts: at most -8.5 MB, and only until the first time one of them is opened, since the code then
+  stays loaded. About 3.5% of the launch footprint for a change across six files and their tests, with
+  exit-animation and accessibility (react-aria) risk. Not done.
+- **React -> Preact.** React alone is ~10 MB, so the ceiling is a few MB, and HeroUI's react-aria
+  would have to work under `preact/compat`. Not tried.
+- **Trimming the editor.** It is +32 MB for ProseMirror, remark, Vue (Milkdown's UI) and CodeMirror
+  (for code blocks). Each Crepe feature is a product feature; removing one is a decision about the
+  product, not a tuning.
+
+So, within this stack, the app is within about 75 MB of the empty-webview floor at idle and the levers
+that measured have been taken. Going meaningfully lower means replacing a dependency (HeroUI, React or
+Milkdown) or dropping a feature.
+
 ## Other webview settings, measured on the real app
 
 The WebKitGTK settings a markdown editor does not need were tried through `with_webview` (cache model
