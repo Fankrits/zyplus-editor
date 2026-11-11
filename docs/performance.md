@@ -190,8 +190,10 @@ What was tried or sized and not done:
   needed (`OnDemand`, `ToastHost`, `showToast`). Startup JavaScript fell from 686 KB to 538 KB raw (187 to
   148 KB brotli) and idle PSS from 239.2 to 234.3 MB (three runs each, interleaved). The cost is that the
   first open of each loads its chunk (a frame or two from the local protocol); after that it stays loaded.
-- **React -> Preact.** React alone is ~10 MB, so the ceiling is a few MB, and HeroUI's react-aria
-  would have to work under `preact/compat`. Not tried.
+- **React -> Preact.** Tried with an alias build (`react`, `react-dom` and the JSX runtimes pointed at
+  `preact/compat` 10.26): it does not build. HeroUI and react-aria import React 19 APIs (`use` among them,
+  60 errors) that `preact/compat` 10.x does not export. React alone is ~10 MB, so the ceiling was a few MB
+  anyway; it is not a drop-in and would need a different UI library, not an alias.
 - **Trimming the editor.** It is +32 MB for ProseMirror, remark, Vue (Milkdown's UI) and CodeMirror
   (for code blocks). Each Crepe feature is a product feature; removing one is a decision about the
   product, not a tuning.
