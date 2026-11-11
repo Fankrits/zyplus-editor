@@ -145,6 +145,9 @@ function AppShell() {
       // Commands needing a document are no-ops without one.
       const { tabs, activeTabId, roots } = getState();
       const tab = tabs.find((t) => t.id === activeTabId) ?? null;
+      // A big background tab that was just focused has no text until it is read back, a moment
+      // later; exporting or copying it now would write an empty document.
+      if (tab?.evicted && (id === "export-md" || id === "export-pdf" || id === "copy-markdown")) return;
       switch (id) {
         case "save":
           if (!tab?.isDirty) return;

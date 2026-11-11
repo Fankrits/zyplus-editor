@@ -123,7 +123,8 @@ editor, 15 s window after 25 s of no input (`node scripts/perf/idle.mjs`), two r
 | editor not focused (floor of the harness) | 0.07 | 0.9% |
 
 The CPU percentages include the cost of Chromium's screencast capturing every frame, so they overstate a
-real window; the frame rate is the figure to trust. What remains once the blink stops is the browser's own
+real window; the frame rate is the figure to trust. The main-thread-only figure that the baseline above
+tracked (`web.mjs`, editor focused) went from 1.4-1.6% to 0.4%. What remains once the blink stops is the browser's own
 native caret, which every focused text field has. The desktop harness shows no difference here (idle CPU
 0% before and after) because there the Welcome note's editor is not focused and rendering is software.
 
@@ -148,7 +149,11 @@ every script slower, so none was adopted.
 
 Before, a file of any size opened in the rich editor, which builds a ProseMirror document and a DOM node
 per block. Now a file over 200 KB opens in the source editor (the user can still switch to rich) and
-one over 20 MB is refused, with the size checked by `stat` before the file is read.
+one over 20 MB is refused, with the size checked by `stat` before the file is read. The check sits in
+front of every path that reads a document into an editor: opening, restoring the session at launch (a
+file that grew while the app was closed is dropped without being read) and reading an evicted tab back.
+Sizes are bytes everywhere. A restored tab keeps the editor it was left in, so a big note the user
+switched to rich stays rich.
 
 One note of about 1 MB, reopened from the tree and typed in (`bun run perf:bigfile`, Chromium):
 

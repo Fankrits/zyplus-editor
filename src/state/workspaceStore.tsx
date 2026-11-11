@@ -12,12 +12,12 @@ import {
 import {
   basenameOf,
   createDefaultFolder,
-  fileSize,
   openFileDialog,
   joinPath,
   openFolderDialog,
   pathExists,
   readChildren,
+  readOpenableTextFile,
   readProjectNode,
   readTextFile,
   setStoreChangedListener,
@@ -28,7 +28,7 @@ import {
 import { flushSync } from "react-dom";
 import { flushPendingEdits, hasPendingEdits } from "../lib/pendingEdits";
 import { WELCOME_NOTE, WELCOME_NOTE_NAME } from "../lib/welcomeNote";
-import { isTooLargeToOpen, modeForSize, tooLargeMessage } from "../lib/fileSize";
+import { modeForSize } from "../lib/fileSize";
 import { suggestExtensionFor } from "../extensions/suggestExtension";
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
@@ -230,7 +230,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // localStorage writes are synchronous, and nothing here changes while typing —
   // the session records paths and modes, not content — so skip the identical write.
   // `state.tabs` is a new array on every keystroke, so the effect keys on what the session
-  // actually stores of it (path and mode per tab): typing no longer re-runs it at all.
+  // actually stores of it (path and mode per tab): typing no longer re-runs it, builds the
+  // session JSON or compares it. (Building the key is a short string per open tab, so typing
+  // still pays for that.)
   const persistedTabs = state.tabs.map((t) => `${t.mode}:${t.filePath}`).join("\n");
   const lastPersisted = useRef<string | null>(null);
   useEffect(() => {
@@ -335,10 +337,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // Reported, not just logged: a file that cannot be read used to do nothing
     // at all when clicked.
     const opened = await tryFs("Could not open file", path, async () => {
-      // Checked before the read, so a huge file is never pulled into memory just to be refused.
-      const size = await fileSize(path);
-      if (isTooLargeToOpen(size)) throw new Error(tooLargeMessage(size));
-      const content = await readTextFile(path);
+      // The size is checked before the read, so a huge file is never pulled into memory to be refused.
+      const { content, size } = await readOpenableTextFile(path);
       dispatch({
         type: "OPEN_TAB",
         tab: {

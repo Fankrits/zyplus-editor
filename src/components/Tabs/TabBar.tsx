@@ -292,7 +292,7 @@ export function TabBar({
           key: "copy-markdown",
           label: "Copy Markdown",
           icon: Copy01Icon,
-          onSelect: () => copyText(activeTab.content),
+          onSelect: () => !activeTab.evicted && copyText(activeTab.content),
         },
         {
           key: "copy-path",
@@ -304,7 +304,7 @@ export function TabBar({
           key: "export-md",
           label: "Export as .md",
           icon: FileExportIcon,
-          onSelect: () => saveFileAs(withExtension(activeTab.title, ".md"), activeTab.content),
+          onSelect: () => !activeTab.evicted && saveFileAs(withExtension(activeTab.title, ".md"), activeTab.content),
         },
         {
           // Asks where to save, then writes the PDF there — no print dialog.
@@ -312,6 +312,8 @@ export function TabBar({
           label: "Export as PDF…",
           icon: Pdf01Icon,
           onSelect: () =>
+            // An evicted tab has no text until it is read back (a moment after it is focused).
+            !activeTab.evicted &&
             import("../../lib/exportPdf").then(
               (m) => m.exportPdf(activeTab.title, activeTab.content),
               (err) => console.error("Could not load the PDF exporter:", err),

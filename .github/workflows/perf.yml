@@ -38,7 +38,12 @@ jobs:
       - run: bun run tauri build --no-bundle
 
       - name: Desktop memory and idle CPU
-        run: node scripts/perf/desktop.mjs src-tauri/target/release/zyplus-editor --seconds 40 --max-pss ${{ inputs.max_pss_mb }} --json perf-desktop.json
+        # The input goes through the environment, never into the script text, and must be a number.
+        env:
+          MAX_PSS_MB: ${{ inputs.max_pss_mb }}
+        run: |
+          case "$MAX_PSS_MB" in ''|*[!0-9.]*) echo "max_pss_mb must be a number" >&2; exit 2;; esac
+          node scripts/perf/desktop.mjs src-tauri/target/release/zyplus-editor --seconds 40 --max-pss "$MAX_PSS_MB" --json perf-desktop.json
 
       - uses: actions/upload-artifact@v4
         if: always()

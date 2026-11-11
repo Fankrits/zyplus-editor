@@ -4,7 +4,7 @@ import { Wordmark } from "../Logo";
 import { FIND_EVENT } from "../../lib/commands";
 import { useFileEditorId } from "../../extensions/useExtensions";
 import { ExtensionFileEditor } from "./ExtensionFileEditor";
-import { readTextFile } from "../../lib/fs";
+import { readOpenableTextFile } from "../../lib/fs";
 
 /**
  * The editors are the heaviest thing the app owns — Milkdown/ProseMirror for the
@@ -72,8 +72,9 @@ export function EditorPane() {
   useEffect(() => {
     if (!evictedId || !evictedPath) return;
     let cancelled = false;
-    readTextFile(evictedPath).then(
-      (content) => {
+    // Through the size check: the file may have grown while the tab sat in the background.
+    readOpenableTextFile(evictedPath).then(
+      ({ content }) => {
         if (!cancelled) dispatch({ type: "RELOAD_TAB", id: evictedId, content });
       },
       (err) => {

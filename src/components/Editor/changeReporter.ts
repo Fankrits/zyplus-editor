@@ -11,9 +11,17 @@
 export const LARGE_DOC_CHARS = 200_000;
 export const BATCH_MS = 150;
 
+/** Anything that can copy its current document text out: a CodeMirror `EditorView`. */
+export interface TextSource {
+  readonly state: { readonly doc: { toString(): string } };
+}
+
 export interface ChangeReporter {
-  /** The document changed; `read` copies its current text out, and is only called when a report is due. */
-  docChanged(length: number, read: () => string): void;
+  /**
+   * The document changed. The text is copied out of `source` only when a report is due, and
+   * `source` (the view) is all that is kept while one waits, not the update that caused it.
+   */
+  docChanged(length: number, source: TextSource): void;
   /** Reports a waiting batch now. A no-op when there is none. */
   flush(): void;
   hasPending(): boolean;
@@ -21,31 +29,31 @@ export interface ChangeReporter {
 
 export function createChangeReporter(report: (text: string) => void): ChangeReporter {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let pendingRead: (() => string) | null = null;
+  let pending: TextSource | null = null;
 
   const flush = () => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
-    const read = pendingRead;
-    pendingRead = null;
-    if (read) report(read());
+    const source = pending;
+    pending = null;
+    if (source) report(source.state.doc.toString());
   };
 
   return {
-    docChanged(length, read) {
+    docChanged(length, source) {
       if (length <= LARGE_DOC_CHARS) {
         // The document shrank back under the limit with a batch waiting: that batch is stale.
         if (timer !== undefined) clearTimeout(timer);
         timer = undefined;
-        pendingRead = null;
-        report(read());
+        pending = null;
+        report(source.state.doc.toString());
         return;
       }
-      pendingRead = read;
+      pending = source;
       // Throttle, not debounce: continuous typing still reports every interval.
       timer ??= setTimeout(flush, BATCH_MS);
     },
     flush,
-    hasPending: () => pendingRead !== null,
+    hasPending: () => pending !== null,
   };
 }

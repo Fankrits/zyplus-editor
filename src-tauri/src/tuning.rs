@@ -26,32 +26,46 @@ const IDLE_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[cfg(windows)]
 pub fn apply(window: &tauri::WebviewWindow) {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
+    use std::sync::mpsc::{channel, RecvTimeoutError};
 
     if !enabled(std::env::var("ZYPLUS_WEBVIEW_LOWMEM").ok().as_deref()) {
         return;
     }
 
-    // Each focus change bumps this; a pending "go low" only fires if nothing changed since.
-    let generation = Arc::new(AtomicU64::new(0));
+    // One thread for the window's life, fed focus changes by the window's listener. The listener
+    // owns only the sender, so it holds nothing alive; the thread ends when the window's
+    // listeners are dropped and the channel closes.
+    let (focus_changes, receiver) = channel::<bool>();
     let target = window.clone();
-    window.on_window_event(move |event| {
-        let tauri::WindowEvent::Focused(focused) = event else {
-            return;
-        };
-        let now = generation.fetch_add(1, Ordering::SeqCst) + 1;
-        if *focused {
-            set_memory_target(&target, false);
-            return;
-        }
-        let (generation, target) = (generation.clone(), target.clone());
-        std::thread::spawn(move || {
-            std::thread::sleep(IDLE_AFTER);
-            if generation.load(Ordering::SeqCst) == now {
-                set_memory_target(&target, true);
+    std::thread::spawn(move || {
+        let mut unfocused = false;
+        loop {
+            // Unfocused: wait for either focus to return or the idle time to pass. Otherwise
+            // (focused, or already Low) there is nothing to time, so wait for the next change.
+            let change = if unfocused {
+                receiver.recv_timeout(IDLE_AFTER)
+            } else {
+                receiver.recv().map_err(|_| RecvTimeoutError::Disconnected)
+            };
+            match change {
+                Ok(true) => {
+                    unfocused = false;
+                    set_memory_target(&target, false);
+                }
+                // Focus lost again (or still lost): the idle clock restarts.
+                Ok(false) => unfocused = true,
+                Err(RecvTimeoutError::Timeout) => {
+                    unfocused = false;
+                    set_memory_target(&target, true);
+                }
+                Err(RecvTimeoutError::Disconnected) => return,
             }
-        });
+        }
+    });
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Focused(focused) = event {
+            let _ = focus_changes.send(*focused);
+        }
     });
 }
 

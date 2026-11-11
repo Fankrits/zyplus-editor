@@ -1,8 +1,8 @@
-import { basenameOf, isUnder, readProjectNode, readTextFile } from "../lib/fs";
+import { basenameOf, fileSize, isUnder, readProjectNode, readTextFile } from "../lib/fs";
 
 export { isUnder };
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
-import { isTooLargeToOpen, modeForSize } from "../lib/fileSize";
+import { isTooLargeToOpen, utf8Length } from "../lib/fileSize";
 
 export type TabMode = "rich" | "plain";
 
@@ -140,14 +140,18 @@ export const EVICT_MIN_CHARS = 256 * 1024;
  * Returns `state` itself when nothing changes, so the keystroke path stays allocation-free.
  */
 export function evictBackgroundTabs(state: WorkspaceState): WorkspaceState {
-  let changed = false;
-  const tabs = state.tabs.map((t) => {
-    if (t.id === state.activeTabId || t.evicted || t.isDirty || t.content !== t.savedContent) return t;
-    if (t.content.length < EVICT_MIN_CHARS) return t;
-    changed = true;
-    return { ...t, content: "", savedContent: "", evicted: true };
-  });
-  return changed ? { ...state, tabs } : state;
+  const evictable = (t: TabState) =>
+    t.id !== state.activeTabId &&
+    !t.evicted &&
+    !t.isDirty &&
+    t.content === t.savedContent &&
+    t.content.length >= EVICT_MIN_CHARS;
+  // Runs after every action, typing included, so the common case allocates nothing.
+  if (!state.tabs.some(evictable)) return state;
+  return {
+    ...state,
+    tabs: state.tabs.map((t) => (evictable(t) ? { ...t, content: "", savedContent: "", evicted: true } : t)),
+  };
 }
 
 export function workspaceReducer(state: WorkspaceState, action: Action): WorkspaceState {
@@ -307,7 +311,9 @@ export async function restoreWorkspaceFromSession(
   fsApi: {
     readProjectNode: (dir: string, loaded?: ReadonlySet<string>) => Promise<TreeNode>;
     readTextFile: (path: string) => Promise<string>;
-  } = { readProjectNode, readTextFile },
+    /** Checked before a tab's file is read; without it the text's own length is used after. */
+    fileSize?: (path: string) => Promise<number>;
+  } = { readProjectNode, readTextFile, fileSize },
 ): Promise<WorkspaceState | null> {
   if (!stored || (stored.roots.length === 0 && stored.tabs.length === 0)) return null;
 
@@ -331,25 +337,28 @@ export async function restoreWorkspaceFromSession(
     ),
     // As is a tab whose file was deleted or moved while the app was closed.
     Promise.all(
-      stored.tabs.map((tab) =>
-        fsApi.readTextFile(tab.filePath).then(
-          (content): TabState | null => {
-            // A file that grew past the limits while the app was closed gets the same
-            // treatment as one opened now: dropped if huge, source editor if big.
-            if (isTooLargeToOpen(content.length)) return null;
-            return {
-              id: tab.filePath,
-              filePath: tab.filePath,
-              title: basenameOf(tab.filePath),
-              content,
-              savedContent: content,
-              isDirty: false,
-              mode: modeForSize(content.length, tab.mode),
-            };
-          },
-          () => null,
-        ),
-      ),
+      stored.tabs.map(async (tab): Promise<TabState | null> => {
+        try {
+          // A file that grew past the limit while the app was closed is dropped before it is read:
+          // reading it at every launch is what the limit exists to prevent. A big file that is
+          // kept comes back in the mode the user left it in.
+          const size = fsApi.fileSize ? await fsApi.fileSize(tab.filePath) : 0;
+          if (isTooLargeToOpen(size)) return null;
+          const content = await fsApi.readTextFile(tab.filePath);
+          if (isTooLargeToOpen(utf8Length(content))) return null;
+          return {
+            id: tab.filePath,
+            filePath: tab.filePath,
+            title: basenameOf(tab.filePath),
+            content,
+            savedContent: content,
+            isDirty: false,
+            mode: tab.mode,
+          };
+        } catch {
+          return null;
+        }
+      }),
     ),
   ]);
 

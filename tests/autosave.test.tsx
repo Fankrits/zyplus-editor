@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { act, fireEvent, render } from "@testing-library/react";
 import { WorkspaceProvider, useWorkspace } from "../src/state/workspaceStore";
 import * as fs from "../src/lib/fs";
+import { registerPendingEdits } from "../src/lib/pendingEdits";
 import { SettingsModal } from "../src/components/SettingsModal";
 
 const PATH = "/demo-workspace/notes.md";
@@ -127,5 +128,40 @@ describe("settings toggle", () => {
 
     await act(async () => fireEvent.click(toggle));
     expect(ctx.isAutosaveEnabled).toBe(false);
+  });
+});
+
+describe("getState settles edits an editor is still batching", () => {
+  it("flushes a pending batch into the store before returning state", async () => {
+    await fs.writeTextFile(PATH, "original\n");
+    const ctx = await mountWorkspace();
+    let pending: string | null = "typed in the last 150 ms\n";
+    const unregister = registerPendingEdits({
+      hasPending: () => pending !== null,
+      flush: () => {
+        const text = pending;
+        pending = null;
+        if (text !== null) ctx().dispatch({ type: "UPDATE_TAB_CONTENT", id: PATH, content: text });
+      },
+    });
+    try {
+      // The store has not seen the edit yet; asking for state must make it current first.
+      expect(ctx().state.tabs.find((t) => t.id === PATH)?.content).toBe("original\n");
+      let content = "";
+      await act(async () => {
+        content = ctx().getState().tabs.find((t) => t.id === PATH)?.content ?? "";
+      });
+      expect(content).toBe("typed in the last 150 ms\n");
+      expect(pending).toBeNull();
+    } finally {
+      unregister();
+    }
+  });
+
+  it("leaves state alone when nothing is waiting", async () => {
+    await fs.writeTextFile(PATH, "original\n");
+    const ctx = await mountWorkspace();
+    const before = ctx().getState();
+    expect(ctx().getState()).toBe(before);
   });
 });

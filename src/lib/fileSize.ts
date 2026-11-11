@@ -18,6 +18,22 @@ export const RICH_TEXT_LIMIT = 200 * 1024;
 /** Above this a file is not opened at all. */
 export const MAX_OPEN_SIZE = 20 * 1024 * 1024;
 
+/** The UTF-8 length of a string, counted in place (no encoded copy of a possibly huge text). */
+export function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+      // A surrogate pair is one 4-byte character.
+      i++;
+      bytes += 4;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

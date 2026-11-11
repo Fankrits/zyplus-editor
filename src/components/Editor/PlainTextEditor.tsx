@@ -38,7 +38,7 @@ export function PlainTextEditor({ initialValue, onChange }: PlainTextEditorProps
     // on every change, before we can decide whether a report is due.
     const listener = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
-        reporter.docChanged(update.state.doc.length, () => update.view.state.doc.toString());
+        reporter.docChanged(update.state.doc.length, update.view);
       }
     });
     return { reporter, extensions: [...baseExtensions, listener] };
