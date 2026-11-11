@@ -60,46 +60,124 @@ Linux, where nothing changes.
 
 ## Desktop memory is PSS, not RSS
 
-`desktop.mjs` now reports PSS (proportional set size) next to RSS, and a per-process table. RSS counts a
+`desktop.mjs` reports PSS (proportional set size) next to RSS, and a per-process table. RSS counts a
 page shared between processes in full in each of them, and the app and WebKit's processes share the
-GTK/WebKit libraries, so a summed RSS overstates what the app costs. Every RSS figure above, and in
-older commits, overstates by the same kind of margin: compare runs by PSS.
+GTK/WebKit libraries, so a summed RSS overstates what the app costs (here 391 MB RSS for 248 MB PSS).
+Every RSS figure in the baseline above overstates by the same kind of margin: compare runs by PSS.
 
-Linux x86_64, release binary, first run with the Welcome note open (Xvfb, software rendering):
+> **Build the binary with `bun run tauri build --no-bundle`.** A plain `cargo build --release` does not
+> embed the frontend: the app loads the dev server on `localhost:1420` and shows "Could not connect to
+> localhost: Connection refused". Such a binary boots in a quarter of a CPU-second and measures the
+> webview's empty floor (~165 MB), not the app. An earlier round of numbers in this file's history came
+> from exactly that mistake and was thrown away; `desktop.mjs` now warns when a run used under 0.8
+> CPU-seconds. Take a screenshot (`import -window root`) before trusting a new kind of run.
+
+Linux x86_64, release binary, first run with the Welcome note open in the rich editor (Xvfb, software
+rendering), median of three 60 s runs, idle window at the end:
 
 | | PSS | RSS |
 |---|---|---|
-| Total | 174 MB | 311 MB |
-| `zyplus-editor` (Rust + GTK + the libraries it maps) | 66 MB | 122 MB |
-| `WebKitWebProcess` | 81 MB | 135 MB |
-| `WebKitNetworkProcess` | 27 MB | 54 MB |
+| Total | 247.6 MB | 390.7 MB |
+| `zyplus-editor` (Rust + GTK + the libraries it maps) | 72.9 MB | |
+| `WebKitWebProcess` | 153.4 MB | |
+| `WebKitNetworkProcess` | 21.3 MB | |
 
-So the web process, the part the frontend can influence, is under half of the total. The harness forces
-software rendering (`LIBGL_ALWAYS_SOFTWARE`, compositing and DMABUF off), which inflates the app process
-on a headless box; on a real desktop the split differs. Use these numbers to compare runs of the script
-against each other, not against Task Manager or `top`.
+The harness forces software rendering (`LIBGL_ALWAYS_SOFTWARE`, compositing and DMABUF off), which
+inflates the app process on a headless box; on a real desktop the split differs. Use these numbers to
+compare runs of the script against each other, not against Task Manager or `top`.
 
-## Webview levers, measured on Linux: no effect
+### Where the web process's memory goes
 
-The WebKitGTK settings a markdown editor does not need were tried through `with_webview`
-(cache model `DocumentViewer`, page cache off, WebGL off, media stream and MSE off, WebAudio off).
-Each was applied (read back from the settings object) and measured alone, plus all together, three
-fresh-`HOME` runs each, 25 s idle with the Welcome note open:
+Same binary and method, with the frontend swapped through the debug binary's `--dist` mode (web-process
+PSS, two runs each):
 
-| setting | final PSS, median of 3 |
+| page | web process | step |
+|---|---|---|
+| blank page | 76.5 MB | the floor |
+| + stylesheet only | ~81 MB | +4.5 |
+| + JavaScript only, no CSS | ~112 MB | **+35** |
+| + both, no editor mounted | ~120 MB | +8 |
+| + the rich editor (Welcome note) | ~152 MB | **+33** |
+
+So about 76 MB of the 153 MB is the webview's floor and the rest is the app's JavaScript and the editor.
+The JavaScript is where the engine's own overhead shows (the Chromium JS heap for the same page is ~10
+MB): see the next section.
+
+## JavaScriptCore's JIT tiers: the lever that paid
+
+WebKit's engine compiles hot JavaScript through four tiers (interpreter, baseline JIT, DFG, FTL). The two
+top tiers pay off in long-running compute, which an editor does not do, and they cost memory and CPU to
+compile code that short interactive bursts never reuse. The options are read from the environment
+(`JSC_useDFGJIT`, `JSC_useFTLJIT`, `JSC_useJIT`), so the app can set them before it starts the webview.
+
+Same binary, idle with the Welcome note, three 25 s runs each (median PSS):
+
+| setting | PSS | peak PSS |
+|---|---|---|
+| default | 246.7 MB | 261 |
+| FTL off | 246.1 | 260 |
+| **FTL and DFG off** (shipped) | **238.8** (-3.2%) | 251 |
+| JIT off entirely | 225.4 (-8.7%) | 229 |
+| `MALLOC_ARENA_MAX=1` / `=2` | 245.7 / 246.0 | |
+
+The gap widens under load. Real keystrokes (`xdotool`, 544 keys at 15 ms) in the real app, one note
+open, CPU of every process in the tree:
+
+| | default | FTL + DFG off | JIT off |
+|---|---|---|---|
+| Welcome note: PSS after typing | 289 MB | 270 MB | 236 MB |
+| Welcome note: CPU per key | 10.4 ms | 9.9 ms | 10.0 ms |
+| 600 KB note: PSS after typing | 452 MB | 332-356 MB | 245-250 MB |
+| 600 KB note: CPU per key | 14.3 ms | 11.8 ms | 11.6 ms |
+| 8 MB note: PSS after typing | 506 MB | 385 MB | 253 MB |
+| 8 MB note: CPU per key | 14.6 ms | 11.9 ms | 12.3 ms |
+| 8 MB note: CPU to open | 1.00 s | 0.88 s | 1.20 s |
+
+Turning the top two tiers off lowers memory and CPU in every case measured, so it is what the app now
+does on Linux (`tuning.rs`, applied before the webview starts; a `JSC_*` value already in the
+environment is left alone). Turning the JIT off entirely saves another 20-130 MB but opens the 8 MB note
+20% slower, and it would slow JavaScript-heavy extensions (Mermaid layout, a large CSV or JSON), which
+this harness cannot drive, so it stays an opt-in for the user: `JSC_useJIT=false zyplus`.
+macOS's WKWebView and Windows' WebView2 take no such options from the environment, so this is Linux only.
+
+The original and the shipped binary, same method, three 60 s runs interleaved, Welcome note idle:
+
+| | PSS | peak PSS | web process | boot CPU | idle CPU |
+|---|---|---|---|---|---|
+| before (`0fec639`) | 247.6 MB | 262.2 | 153.4 | 1.49 s | 0% |
+| after | **239.3 MB** (-8.3) | **250.9** (-11) | 145.1 | 1.36 s | 0% |
+
+and with a 600 KB note, real keystrokes, two runs each:
+
+| | before | after |
+|---|---|---|
+| CPU to open | 4.3 s | **0.6 s** |
+| PSS after opening | 471-546 MB | **261 MB** |
+| PSS after typing | 477-612 MB | **344-361 MB** |
+| CPU per key | 13.0 ms | **11.8 ms** |
+| Welcome note: PSS after typing | 291 MB | **270 MB** |
+
+(The 600 KB note opens in the source editor now because of the large-file policy below; before, it opened in
+rich.)
+
+## Other webview settings, measured on the real app
+
+The WebKitGTK settings a markdown editor does not need were tried through `with_webview` (cache model
+`DocumentViewer`, page cache off, WebGL off, media stream and MSE off, WebAudio off), each alone and all
+together, two fresh-`HOME` runs each, 25 s idle (PSS):
+
+| setting | PSS |
 |---|---|
-| none | 174.4 MB |
-| all five | 174.4 MB |
-| cache model alone | 174.6 MB |
-| page cache alone | 174.5 MB |
-| WebGL alone | 174.4 MB |
-| media alone | 174.5 MB |
-| WebAudio alone | 174.5 MB |
+| none | 247.7 / 248.0 MB |
+| all five | 250.0 / 250.3 |
+| cache model alone | 249.9 / 250.5 |
+| page cache alone | 247.6 / 247.8 |
+| WebGL alone | 247.2 / 247.8 |
+| media alone | 247.3 / 248.5 |
+| WebAudio alone | 245.4 / 245.9 |
 
-Every difference is under 0.3 MB and inside the run-to-run noise (about 0.4 MB). Switching off a feature
-that is never used saves nothing, and the cache model only matters once resources are loaded and evicted,
-which a local-protocol app barely does. They were not shipped. This was an idle measurement; a long
-session may behave differently, but there is no evidence for these levers.
+The cache model makes it **worse** (+2 MB), page cache, WebGL and media are noise, and WebAudio off is
+-2 MB (~1%), which is not worth a new native dependency and a per-platform code path. None was shipped.
 
 The Windows equivalent (WebView2's `MemoryUsageTargetLevel`, Low while the window sits unfocused) is
 implemented in `src-tauri/src/tuning.rs` but **off unless `ZYPLUS_WEBVIEW_LOWMEM=1`**: it has not been
@@ -117,9 +195,9 @@ editor, 15 s window after 25 s of no input (`node scripts/perf/idle.mjs`), two r
 
 | | compositor frames/s | CPU of all Chromium processes |
 |---|---|---|
-| before | 59-60 | 92-98% of a core |
+| before | 59-60 | 92-98% of a core (GPU process alone: 46-48%, renderer 4%, browser 56-59%) |
 | after, still blinking (5 s after the last key) | 3.7 | 8% |
-| after, settled (25 s after the last key) | 2.1 | 4.7% |
+| after, settled (25 s after the last key) | 2.1 | 4.7% (GPU process alone: 2%, renderer 1%, browser 2%) |
 | editor not focused (floor of the harness) | 0.07 | 0.9% |
 
 The CPU percentages include the cost of Chromium's screencast capturing every frame, so they overstate a
@@ -127,23 +205,6 @@ real window; the frame rate is the figure to trust. The main-thread-only figure 
 tracked (`web.mjs`, editor focused) went from 1.4-1.6% to 0.4%. What remains once the blink stops is the browser's own
 native caret, which every focused text field has. The desktop harness shows no difference here (idle CPU
 0% before and after) because there the Welcome note's editor is not focused and rendering is software.
-
-## Desktop memory: nothing in the app moves the floor
-
-Release binaries built from `0fec639` (before) and from this branch (after), three 60 s runs each,
-interleaved, Welcome note open, idle window at the end:
-
-| | PSS | web process | network process | boot CPU | idle CPU |
-|---|---|---|---|---|---|
-| before | 168.2 MB | 76.3 MB | 26.2 MB | 0.28 s | 0% |
-| after | 168.2 MB | 76.3 MB | 26.3 MB | 0.25 s | 0% |
-
-Identical. The work in this file lowers memory and CPU in the cases that scale with what the user does
-(big notes, many tabs, a focused editor left alone), not the idle floor, which is the webview. Process-level
-settings were tried on the same binary to see whether any of them moves that floor (three 25 s runs each,
-median PSS): `MALLOC_ARENA_MAX=1` 167.7 MB, `=2` 168.1 MB, JavaScriptCore with FTL off 168.3 MB, with DFG
-and FTL off 168.4 MB, with the JIT off 166.4 MB, against 168.5 MB. The best of them (JIT off, -1.2%) makes
-every script slower, so none was adopted.
 
 ## Large files
 
@@ -197,10 +258,13 @@ Measured, then left alone, so they are not re-investigated:
 
 ## Not measured yet
 
-- GPU use on real hardware. There is no GPU here; compositor frames per second is the proxy.
+- GPU use on real hardware. There is no GPU here: the Chromium GPU process runs software GL, so its
+  CPU time (46-48% of a core before, ~2% after, with a focused editor idle) and the compositor frame
+  rate are what is measured. The work is the same, but the cost of a real GPU is not.
+- Windows and macOS memory and CPU, since the JIT-tier setting is Linux only.
 - The memory saved by evicting background tabs was verified for correctness (tests plus a browser run
   that saves and reopens), not for size.
-- Windows low-memory mode, and anything on macOS.
+- Windows low-memory mode.
 
 ## Budgets
 

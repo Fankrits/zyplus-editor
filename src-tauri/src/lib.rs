@@ -414,6 +414,7 @@ fn cli_file_args() -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    tuning::configure_javascript_engine();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let cwd_path = std::path::Path::new(&cwd);

@@ -6,7 +6,8 @@
 //            blinking caret produces a couple a second; a solid caret produces none. This is the
 //            closest thing to GPU/compositor wake-ups a headless run can count.
 //   cpu      CPU seconds spent by every Chromium process (browser, renderer, GPU, utility), as a
-//            percentage of one core, over the window.
+//            percentage of one core, over the window, in total and per process type (the GPU
+//            process on its own is the closest number to GPU load a headless run has).
 // Needs Playwright with a Chromium, like web.mjs.
 import { createRequire } from "node:module";
 import http from "node:http";
@@ -45,9 +46,11 @@ const cdp = await page.context().newCDPSession(page);
 
 // Chromium reports every process it owns (browser, renderer, GPU, utility) with its CPU time.
 const browserCdp = await browser.newBrowserCDPSession();
-const treeCpuSeconds = async () => {
+const cpuByType = async () => {
   const { processInfo } = await browserCdp.send("SystemInfo.getProcessInfo");
-  return processInfo.reduce((sum, p) => sum + p.cpuTime, 0);
+  const by = {};
+  for (const p of processInfo) by[p.type] = (by[p.type] ?? 0) + p.cpuTime;
+  return by;
 };
 
 await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: "networkidle" });
@@ -64,10 +67,10 @@ cdp.on("Page.screencastFrame", (f) => {
 await cdp.send("Page.startScreencast", { format: "jpeg", quality: 10, everyNthFrame: 1 });
 const running = await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length);
 if (process.env.DEBUG_ANIM) console.log(JSON.stringify(await page.evaluate(() => document.getAnimations().map((a) => ({ n: a.animationName, s: a.playState, t: a.currentTime, it: a.effect?.getComputedTiming().iterations, cur: a.effect?.getComputedTiming().currentIteration })))));
-const c0 = await treeCpuSeconds();
+const c0 = await cpuByType();
 const t0 = Date.now();
 await page.waitForTimeout(windowS * 1000);
-const c1 = await treeCpuSeconds();
+const c1 = await cpuByType();
 const secs = (Date.now() - t0) / 1000;
 await cdp.send("Page.stopScreencast");
 await browser.close();
@@ -79,7 +82,12 @@ const out = {
   runningAnimations: running,
   frames,
   framesPerSecond: Math.round((frames / secs) * 100) / 100,
-  treeCpuPercent: Math.round(((c1 - c0) / secs) * 10000) / 100,
+  treeCpuPercent: Math.round(((Object.values(c1).reduce((a, b) => a + b, 0) - Object.values(c0).reduce((a, b) => a + b, 0)) / secs) * 10000) / 100,
+  // Per process type, as a percentage of one core. `GPU` is Chromium's GPU process (software GL
+  // here, but the same process and the same work a real GPU would be handed).
+  cpuPercentByProcess: Object.fromEntries(
+    Object.keys(c1).map((t) => [t, Math.round((((c1[t] ?? 0) - (c0[t] ?? 0)) / secs) * 10000) / 100]),
+  ),
 };
-for (const [k, v] of Object.entries(out)) console.log(k.padEnd(18), v);
+for (const [k, v] of Object.entries(out)) console.log(k.padEnd(18), typeof v === "object" ? JSON.stringify(v) : v);
 if (opt("--json", null)) fs.writeFileSync(opt("--json"), JSON.stringify(out, null, 2));

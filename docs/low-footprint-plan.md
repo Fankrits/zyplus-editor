@@ -7,12 +7,13 @@ Status: partly implemented; see "Implementation status" below. Written against c
 | Task | Status | Result |
 |---|---|---|
 | 0.1 fix `web.mjs` | Done | Runs green; baseline matches the old doc. |
-| 0.2 PSS per process in `desktop.mjs` | Done (Linux) | 174 MB PSS vs 311 MB RSS for the same run. Windows and macOS samplers not written. |
+| 0.2 PSS per process in `desktop.mjs` | Done (Linux) | 247.6 MB PSS vs 390.7 MB RSS for the same run, and a warning when a binary never loaded the frontend. Windows and macOS samplers not written. |
 | 0.3 scenario fixtures | Partly | `bigfile.mjs` / `bun run perf:bigfile` covers S6. S5, S7, S8 and the 13k-file fixture exist or are still manual. |
 | 0.4 baselines per OS | Partly | Linux only, in `docs/performance.md`. |
 | 0.5 CI memory budget | Done (manual) | `desktop.mjs --max-pss` exits 3 over budget; `.github/workflows/perf.yml` runs it on demand. Not wired to every push or tag: it needs Xvfb and a release build, and its budget is only meaningful against runs of itself. |
 | 1.1 Windows low-memory mode | Implemented, **off by default** | Compiles for Windows; unmeasured. `ZYPLUS_WEBVIEW_LOWMEM=1`. |
-| 1.2 WebKitGTK cache model and settings | Tried, **removed** | Measured: no effect (<0.3 MB). |
+| 1.2 WebKitGTK cache model and settings | Tried, **not shipped** | Measured on the real app: the cache model is +2 MB worse, WebAudio off -2 MB, the rest noise. (An earlier "no effect" result came from a binary that never loaded the frontend and was discarded.) |
+| 1.7 JavaScriptCore JIT tiers (new) | **Done (Linux)** | DFG and FTL off, set before the webview starts: idle 247.6 -> 239.3 MB, 600 KB note after typing 477-612 -> 344-361 MB, CPU per key -9%. See docs/performance.md. |
 | 1.3 GPU policy, 1.4 WebView2 flags, 1.5 idle recycle | Not done | Linux 1.3 is confounded by the harness forcing software rendering; 1.4 and 1.5 need a Windows machine. |
 | 1.6 no extra processes or features in release | Verified | Three processes at steady state; no devtools feature. |
 | 2.1 large-file policy | Done | 1 MB note: 3.76 s / +23 MB / 103,835 nodes -> 0.09 s / -0.4 MB / 1,012 nodes. |
@@ -26,7 +27,7 @@ Status: partly implemented; see "Implementation status" below. Written against c
 | 2.9 trim UI libraries | Not done | Startup JS is under budget; do it only if a measurement points at it. |
 | 3.x guard rails | Not done | Depends on 0.5. |
 
-Corrections to the analysis below: **F6 is confirmed** (RSS overstated the app's memory by ~1.8x), and
+Corrections to the analysis below: **F6 is confirmed** (RSS overstated the app's memory by ~1.6x), and
 **F8 is largely wrong** (see 2.6). Section 1's "WebKitGTK cache model" research note is also superseded:
 it was measured and does nothing here.
 

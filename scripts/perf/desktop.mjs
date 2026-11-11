@@ -132,6 +132,16 @@ server?.close();
 fs.rmSync(home, { recursive: true, force: true });
 
 const last = samples.at(-1);
+// A binary built with a plain `cargo build --release` does not embed the frontend: it loads the dev
+// server on localhost:1420 and shows "Could not connect". It boots in a fraction of a second and
+// every number from it is the webview's floor, not the app. A real boot of this app costs over a
+// CPU-second; build with `bun run tauri build --no-bundle` (or `--features tauri/custom-protocol`).
+if (!dist && last && last.cpuS < 0.8) {
+  console.error(
+    `warning: only ${last.cpuS.toFixed(2)} CPU-seconds for the whole run. This binary probably never loaded the ` +
+      "frontend (a plain `cargo build --release` points at localhost:1420). Build it with `bun run tauri build --no-bundle`.",
+  );
+}
 if (!last || last.procs === 0) {
   console.error("the app never started (no processes sampled); is port 1420 or display :97 still in use?");
   process.exit(2);

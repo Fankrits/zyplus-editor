@@ -1,14 +1,45 @@
-//! Webview memory tuning. Windows only, and off unless asked for.
+//! Webview memory and CPU tuning.
 //!
 //! Most of the app's memory is the OS webview's own processes, so the levers worth trying are
-//! the webview's. On Linux they were measured and turned out to do nothing (see
-//! docs/performance.md), so nothing is applied there. WebView2 on Windows is different: it can
-//! be told the app is idle and should use less memory. Microsoft's guidance is Low while
-//! inactive and Normal when active; the effect is best effort, and some of the webview's memory
-//! may be swapped out meanwhile. Scripts keep running either way.
+//! the webview's.
 //!
-//! This is opt-in (`ZYPLUS_WEBVIEW_LOWMEM=1`) because it has not been measured on Windows yet.
-//! Measure with the variable unset and set, and make it the default only if it wins.
+//! **Linux (WebKitGTK):** JavaScriptCore's two top JIT tiers (DFG and FTL) are turned off. They
+//! pay off for long-running compute, which an editor does not do, and they cost memory and CPU
+//! to compile code that short interactive bursts never reuse. Measured on the real desktop app
+//! (docs/performance.md): about 8 MB less at idle and 100-120 MB less after typing in a big note,
+//! with about 17% less CPU per key. The baseline JIT stays on. A value already in the
+//! environment (`JSC_useDFGJIT=true`, or `JSC_useJIT=false` for no JIT at all) is left alone.
+//!
+//! **Windows (WebView2):** it can be told the app is idle and should use less memory. Microsoft's
+//! guidance is Low while inactive and Normal when active; the effect is best effort, and some of
+//! the webview's memory may be swapped out meanwhile. Scripts keep running either way. This is
+//! opt-in (`ZYPLUS_WEBVIEW_LOWMEM=1`) because it has not been measured on Windows yet: measure
+//! with the variable unset and set, and make it the default only if it wins.
+//!
+//! macOS has neither lever.
+
+/// JavaScriptCore options set for the web process, which reads them from its environment.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const JSC_OPTIONS: &[(&str, &str)] = &[("JSC_useDFGJIT", "false"), ("JSC_useFTLJIT", "false")];
+
+/// The options to set, given which variables the environment already defines.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn jsc_options_to_set(is_defined: impl Fn(&str) -> bool) -> Vec<(&'static str, &'static str)> {
+    JSC_OPTIONS
+        .iter()
+        .filter(|(name, _)| !is_defined(name))
+        .copied()
+        .collect()
+}
+
+/// Sets the JavaScriptCore options. Call it first thing in `run`, before the webview is created:
+/// its processes inherit the environment of the app that starts them.
+pub fn configure_javascript_engine() {
+    #[cfg(target_os = "linux")]
+    for (name, value) in jsc_options_to_set(|name| std::env::var_os(name).is_some()) {
+        std::env::set_var(name, value);
+    }
+}
 
 /// Whether the opt-in is on for this value of `ZYPLUS_WEBVIEW_LOWMEM`.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -100,7 +131,20 @@ pub fn apply(_window: &tauri::WebviewWindow) {}
 
 #[cfg(test)]
 mod tests {
-    use super::enabled;
+    use super::{enabled, jsc_options_to_set};
+
+    #[test]
+    fn sets_the_jit_options_the_environment_does_not_define() {
+        let all = jsc_options_to_set(|_| false);
+        assert_eq!(
+            all,
+            [("JSC_useDFGJIT", "false"), ("JSC_useFTLJIT", "false")]
+        );
+        // A user's own choice, either way, is never overridden.
+        let left = jsc_options_to_set(|name| name == "JSC_useDFGJIT");
+        assert_eq!(left, [("JSC_useFTLJIT", "false")]);
+        assert!(jsc_options_to_set(|_| true).is_empty());
+    }
 
     #[test]
     fn off_unless_asked_for() {
