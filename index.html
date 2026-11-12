@@ -17,6 +17,13 @@
           ? base === "dark"
           : matchMedia("(prefers-color-scheme: dark)").matches;
         var root = document.documentElement;
+        // The text size too, so a larger setting does not flash at the default size first.
+        try {
+          var size = Number(localStorage.getItem("zyplus:text-size"));
+          if ([80, 90, 100, 110, 125, 150, 175, 200].indexOf(size) !== -1) {
+            root.style.setProperty("--editor-text-scale", String(size / 100));
+          }
+        } catch (e) {}
         root.dataset.theme = dark ? "dark" : "light";
         root.style.colorScheme = dark ? "dark" : "light";
         // Base themes ("light"/"dark") name no palette; tagging them here would

@@ -25,7 +25,8 @@ const SettingsModal = lazy(() =>
 );
 import { extensionManager } from "./extensions/extensionManager";
 import { useIsDesktop } from "./lib/useMediaQuery";
-import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit } from "./lib/commands";
+import { CLOSE_TAB_EVENT, FIND_EVENT, SETTINGS_EVENT, emit, focusEditorSoon } from "./lib/commands";
+import { resetTextSize, stepTextSize } from "./lib/textSize";
 import { matchShortcut, type CommandId } from "./lib/shortcuts";
 import { isMac, isNativeApp } from "./lib/platform";
 import { copyText } from "./lib/clipboard";
@@ -127,6 +128,9 @@ function AppShell() {
         type: "OPEN_TAB",
         tab: { id: path, filePath: path, title: fs.basenameOf(path), content: "", savedContent: "", isDirty: false, mode: "rich" },
       });
+      // Ready to type in at once. The editor focuses itself when it mounts, but the menu or button that
+      // started this can hand focus back to itself as it closes, a moment later, so ask again after.
+      focusEditorSoon();
     },
     [refreshTree, dispatch],
   );
@@ -198,6 +202,15 @@ function AppShell() {
           return;
         case "toggle-mode":
           if (tab) dispatch({ type: "SET_TAB_MODE", id: tab.id, mode: tab.mode === "rich" ? "plain" : "rich" });
+          return;
+        case "zoom-in":
+          stepTextSize(1);
+          return;
+        case "zoom-out":
+          stepTextSize(-1);
+          return;
+        case "zoom-reset":
+          resetTextSize();
           return;
         case "settings":
           setSettingsSection("general");

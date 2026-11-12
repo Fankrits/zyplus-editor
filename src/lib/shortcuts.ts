@@ -21,6 +21,9 @@ export type CommandId =
   | "prev-tab"
   | "toggle-sidebar"
   | "toggle-mode"
+  | "zoom-in"
+  | "zoom-out"
+  | "zoom-reset"
   | "settings"
   | "shortcuts"
   | "find"
@@ -51,6 +54,10 @@ export const SHORTCUTS: Shortcut[] = [
 
   { id: "toggle-sidebar", combos: ["mod+b"], label: "Toggle sidebar", group: "View" },
   { id: "toggle-mode", combos: ["mod+e"], label: "Toggle rich / plain text", group: "View" },
+  // `=` is the unshifted key that carries `+` on most layouts, so both it and Shift+= (a typed "+") zoom in.
+  { id: "zoom-in", combos: ["mod+=", "mod+shift+="], label: "Increase text size", group: "View" },
+  { id: "zoom-out", combos: ["mod+-"], label: "Decrease text size", group: "View" },
+  { id: "zoom-reset", combos: ["mod+0"], label: "Reset text size", group: "View" },
   { id: "settings", combos: ["mod+,"], label: "Settings", group: "View" },
   { id: "shortcuts", combos: ["mod+/"], label: "Keyboard shortcuts", group: "View" },
 
@@ -73,6 +80,10 @@ const CODE_ALIASES: Record<string, string> = {
   Minus: "-",
   Equal: "=",
   Space: "space",
+  // The number pad's keys do the same as the main row's.
+  NumpadAdd: "=",
+  NumpadSubtract: "-",
+  Numpad0: "0",
 };
 
 /** Layout-position name of the pressed key, lowercased. */
@@ -117,6 +128,7 @@ const MAC_DISPLAY: Record<string, string> = {
   alt: "⌥",
   arrowleft: "←",
   arrowright: "→",
+  "=": "+",
 };
 const PC_DISPLAY: Record<string, string> = {
   mod: "Ctrl",
@@ -124,6 +136,7 @@ const PC_DISPLAY: Record<string, string> = {
   alt: "Alt",
   arrowleft: "←",
   arrowright: "→",
+  "=": "+",
 };
 
 /** "mod+shift+s" → ["⌘", "⇧", "S"] */

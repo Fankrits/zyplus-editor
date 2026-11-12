@@ -30,6 +30,8 @@ import { supportedLanguages, renderCodeBlockPreview } from "./codeBlockPreview";
 import { githubAlerts } from "./githubAlerts";
 import { extensionManager } from "../../extensions/extensionManager";
 import { DiagramViewer } from "./DiagramViewer";
+import { FOCUS_EDITOR_EVENT } from "../../lib/commands";
+import { isTypingElsewhere } from "../../lib/focus";
 
 const ZOOM_BUTTON_CLASS = "diagram-zoom-button";
 const FULL_SCREEN_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 21c1.4 0 2.1 0 2.66-.17a3.6 3.6 0 0 0 2.67-2.67c.17-.56.17-1.26.17-2.66M21 8.5c0-1.4 0-2.1-.17-2.66a3.6 3.6 0 0 0-2.67-2.67C17.6 3 16.9 3 15.5 3M8.5 21c-1.4 0-2.1 0-2.66-.17a3.6 3.6 0 0 1-2.67-2.67C3 17.6 3 16.9 3 15.5M3 8.5c0-1.4 0-2.1.17-2.66a3.6 3.6 0 0 1 2.67-2.67C6.4 3 7.1 3 8.5 3"/></svg>`;
@@ -104,14 +106,15 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
   }, []);
 
   useEffect(() => {
-    if (!rootRef.current) return;
+    const root = rootRef.current;
+    if (!root) return;
     // Crepe's LaTeX feature treats any "$...$" span as inline math, so prose like
     // "$12.9 billion ($13B value)" renders as italic KaTeX. Most markdown tools
     // don't do that; math still works in a ```latex fenced block (see codeBlockPreview).
     // The builder rather than `new Crepe` because Crepe's entry imports every
     // feature, and the LaTeX one drags ~450 KB of KaTeX in even when switched off.
     // Features are added in Crepe's default order, minus LaTeX.
-    const crepe = new CrepeBuilder({ root: rootRef.current, defaultValue: initialValue })
+    const crepe = new CrepeBuilder({ root, defaultValue: initialValue })
       .addFeature(cursor)
       .addFeature(listItem)
       .addFeature(linkTooltip)
@@ -138,8 +141,21 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
         if (markdown !== prevMarkdown) onChangeRef.current(markdown);
       });
     });
-    crepe.create().catch((err) => console.error("The rich text editor failed to start:", err));
+    // Ready to type in as soon as it is up, like the source editor (which focuses itself): a new or
+    // newly opened file should not need a click first. Not when the user is already typing somewhere
+    // else, such as renaming a file in the tree.
+    let destroyed = false;
+    crepe
+      .create()
+      .then(() => {
+        if (!destroyed && !isTypingElsewhere(root)) findRichEditor()?.focus();
+      })
+      .catch((err) => console.error("The rich text editor failed to start:", err));
     liveCrepe = crepe;
+    const focusOnRequest = () => {
+      if (!isTypingElsewhere(root)) findRichEditor()?.focus();
+    };
+    window.addEventListener(FOCUS_EDITOR_EVENT, focusOnRequest);
     // Milkdown only asks for a preview when a block's text or language changes, so
     // blocks already on screen would keep their old preview until edited. A fresh
     // code_block node view makes ProseMirror redraw them, which asks again.
@@ -155,6 +171,8 @@ export function RichTextEditor({ initialValue, onChange }: RichTextEditorProps) 
       view.setProps({ nodeViews: { ...view.props.nodeViews, code_block: (...args) => codeBlock(...args) } });
     });
     return () => {
+      destroyed = true;
+      window.removeEventListener(FOCUS_EDITOR_EVENT, focusOnRequest);
       unsubscribe();
       if (liveCrepe === crepe) liveCrepe = null;
       crepe.destroy();

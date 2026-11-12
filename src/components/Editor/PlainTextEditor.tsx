@@ -8,6 +8,8 @@ import { supportedLanguages } from "./codeBlockPreview";
 import { createChangeReporter } from "./changeReporter";
 import { registerPendingEdits } from "../../lib/pendingEdits";
 import { useLatest } from "../../lib/useLatest";
+import { FOCUS_EDITOR_EVENT } from "../../lib/commands";
+import { isTypingElsewhere } from "../../lib/focus";
 
 interface PlainTextEditorProps {
   initialValue: string;
@@ -52,6 +54,16 @@ export function PlainTextEditor({ initialValue, onChange }: PlainTextEditorProps
       reporter.flush();
     };
   }, [reporter]);
+
+  // Asked to take focus (a new file was just created): the same as at mount, which `autoFocus` covers.
+  useEffect(() => {
+    const focusOnRequest = () => {
+      const view = findPlainEditor();
+      if (view && !isTypingElsewhere(view.dom)) view.focus();
+    };
+    window.addEventListener(FOCUS_EDITOR_EVENT, focusOnRequest);
+    return () => window.removeEventListener(FOCUS_EDITOR_EVENT, focusOnRequest);
+  }, []);
 
   return (
     <CodeMirror
