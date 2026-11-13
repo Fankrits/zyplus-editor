@@ -1,7 +1,8 @@
-import { basenameOf, isUnder, readProjectNode, readTextFile } from "../lib/fs";
+import { basenameOf, fileSize, isUnder, readProjectNode, readTextFile } from "../lib/fs";
 
 export { isUnder };
 import type { PersistedWorkspaceSession } from "../lib/sessionStorage";
+import { isTooLargeToOpen, utf8Length } from "../lib/fileSize";
 
 export type TabMode = "rich" | "plain";
 
@@ -34,6 +35,12 @@ export interface TabState {
   view?: string;
   /** Bumped when the file changed underneath the tab, so the editor remounts with it. */
   reloads?: number;
+  /**
+   * A big, unmodified tab that is not showing has let go of its text (`content` and
+   * `savedContent` are empty); the editor pane reads it back from disk when the tab is
+   * focused. See `evictBackgroundTabs`.
+   */
+  evicted?: boolean;
 }
 
 export interface WorkspaceState {
@@ -120,7 +127,38 @@ export function nextActiveId(tabs: TabState[], closedId: string, prevActiveId: s
   return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
 }
 
+/** Text above this many characters is not kept for a tab nobody is looking at. */
+export const EVICT_MIN_CHARS = 256 * 1024;
+
+/**
+ * Lets go of the text of every big, unmodified tab that is not the active one.
+ *
+ * A background tab's text is only ever needed again when it is focused, and then it can be
+ * read back from disk, so holding it costs memory for nothing (two copies once edited, and a
+ * string is two bytes a character). Small tabs are kept: they cost nothing worth a disk read.
+ * A tab with unsaved changes is never evicted, since the text is the only copy.
+ * Returns `state` itself when nothing changes, so the keystroke path stays allocation-free.
+ */
+export function evictBackgroundTabs(state: WorkspaceState): WorkspaceState {
+  const evictable = (t: TabState) =>
+    t.id !== state.activeTabId &&
+    !t.evicted &&
+    !t.isDirty &&
+    t.content === t.savedContent &&
+    t.content.length >= EVICT_MIN_CHARS;
+  // Runs after every action, typing included, so the common case allocates nothing.
+  if (!state.tabs.some(evictable)) return state;
+  return {
+    ...state,
+    tabs: state.tabs.map((t) => (evictable(t) ? { ...t, content: "", savedContent: "", evicted: true } : t)),
+  };
+}
+
 export function workspaceReducer(state: WorkspaceState, action: Action): WorkspaceState {
+  return evictBackgroundTabs(reduceWorkspace(state, action));
+}
+
+function reduceWorkspace(state: WorkspaceState, action: Action): WorkspaceState {
   switch (action.type) {
     case "RESTORE_WORKSPACE":
       return {
@@ -227,7 +265,13 @@ export function workspaceReducer(state: WorkspaceState, action: Action): Workspa
         ...state,
         tabs: state.tabs.map((t) =>
           t.id === action.id && !t.isDirty
-            ? { ...t, content: action.content, savedContent: action.content, reloads: (t.reloads ?? 0) + 1 }
+            ? {
+                ...t,
+                content: action.content,
+                savedContent: action.content,
+                reloads: (t.reloads ?? 0) + 1,
+                evicted: undefined,
+              }
             : t,
         ),
       };
@@ -267,7 +311,9 @@ export async function restoreWorkspaceFromSession(
   fsApi: {
     readProjectNode: (dir: string, loaded?: ReadonlySet<string>) => Promise<TreeNode>;
     readTextFile: (path: string) => Promise<string>;
-  } = { readProjectNode, readTextFile },
+    /** Checked before a tab's file is read; without it the text's own length is used after. */
+    fileSize?: (path: string) => Promise<number>;
+  } = { readProjectNode, readTextFile, fileSize },
 ): Promise<WorkspaceState | null> {
   if (!stored || (stored.roots.length === 0 && stored.tabs.length === 0)) return null;
 
@@ -291,9 +337,16 @@ export async function restoreWorkspaceFromSession(
     ),
     // As is a tab whose file was deleted or moved while the app was closed.
     Promise.all(
-      stored.tabs.map((tab) =>
-        fsApi.readTextFile(tab.filePath).then(
-          (content): TabState => ({
+      stored.tabs.map(async (tab): Promise<TabState | null> => {
+        try {
+          // A file that grew past the limit while the app was closed is dropped before it is read:
+          // reading it at every launch is what the limit exists to prevent. A big file that is
+          // kept comes back in the mode the user left it in.
+          const size = fsApi.fileSize ? await fsApi.fileSize(tab.filePath) : 0;
+          if (isTooLargeToOpen(size)) return null;
+          const content = await fsApi.readTextFile(tab.filePath);
+          if (isTooLargeToOpen(utf8Length(content))) return null;
+          return {
             id: tab.filePath,
             filePath: tab.filePath,
             title: basenameOf(tab.filePath),
@@ -301,10 +354,11 @@ export async function restoreWorkspaceFromSession(
             savedContent: content,
             isDirty: false,
             mode: tab.mode,
-          }),
-          () => null,
-        ),
-      ),
+          };
+        } catch {
+          return null;
+        }
+      }),
     ),
   ]);
 

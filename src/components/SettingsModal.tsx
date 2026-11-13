@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Button, Label, Modal, Switch } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -16,6 +16,15 @@ import { useWorkspaceActions, useWorkspaceSession } from "../state/workspaceStor
 import * as fs from "../lib/fs";
 import { getTheme, setTheme, THEMES, type Theme } from "../lib/theme";
 import { formatCombo, SHORTCUTS, TAB_DIGIT_LABEL } from "../lib/shortcuts";
+import {
+  DEFAULT_TEXT_SIZE,
+  canDecreaseTextSize,
+  canIncreaseTextSize,
+  getTextSize,
+  resetTextSize,
+  stepTextSize,
+  subscribeTextSize,
+} from "../lib/textSize";
 import { isNativeApp, isMac } from "../lib/platform";
 import { Logo } from "./Logo";
 import { UpdateButton } from "./UpdateButton";
@@ -128,6 +137,60 @@ function DefaultAppField({
 }
 
 export type { SectionId as SettingsSection };
+
+/**
+ * The size of the text in the editors. It follows the keyboard shortcuts (and they follow it), through the
+ * same store, so the number here is always the one in force.
+ */
+function TextSizeField() {
+  const size = useSyncExternalStore(subscribeTextSize, getTextSize, () => DEFAULT_TEXT_SIZE);
+  const mod = isMac ? "⌘" : "Ctrl";
+  return (
+    <Field
+      label="Text size"
+      hint={`Makes the text in the editor larger or smaller. Shortcuts: ${mod} + to increase, ${mod} − to decrease, ${mod} 0 to reset.`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1 rounded-lg border border-border p-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label="Decrease text size"
+            isDisabled={!canDecreaseTextSize()}
+            onPress={() => stepTextSize(-1)}
+          >
+            <span aria-hidden="true" className="text-xs font-semibold">
+              A−
+            </span>
+          </Button>
+          <span className="min-w-14 text-center tabular-nums" aria-live="polite" data-testid="text-size-value">
+            {size}%
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label="Increase text size"
+            isDisabled={!canIncreaseTextSize()}
+            onPress={() => stepTextSize(1)}
+          >
+            <span aria-hidden="true" className="text-base font-semibold">
+              A+
+            </span>
+          </Button>
+        </div>
+        <Button size="sm" variant="secondary" isDisabled={size === DEFAULT_TEXT_SIZE} onPress={() => resetTextSize()}>
+          Reset
+        </Button>
+      </div>
+      <p
+        className="mt-1 overflow-hidden rounded-lg border border-border px-3 py-2 text-foreground"
+        style={{ fontSize: "calc(16px * var(--editor-text-scale, 1))", lineHeight: 1.5 }}
+      >
+        The quick brown fox jumps over the lazy dog.
+      </p>
+    </Field>
+  );
+}
 
 export function SettingsModal({
   isOpen,
@@ -242,6 +305,7 @@ export function SettingsModal({
                           />
                         </>
                       )}
+                      <TextSizeField />
                       <Field label="Autosave" hint="Saves open files a moment after you stop typing.">
                         <Switch isSelected={isAutosaveEnabled} onChange={setIsAutosaveEnabled}>
                           <Switch.Content>

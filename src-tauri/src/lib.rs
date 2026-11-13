@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 
+mod tuning;
+
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -412,6 +414,7 @@ fn cli_file_args() -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    tuning::configure_javascript_engine();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let cwd_path = std::path::Path::new(&cwd);
@@ -428,6 +431,12 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                tuning::apply(&window);
+            }
+            Ok(())
+        })
         .manage(PendingFiles(Mutex::new(cli_file_args())))
         .manage(PrintDoc::default())
         .register_uri_scheme_protocol("zyprint", |ctx, request| {

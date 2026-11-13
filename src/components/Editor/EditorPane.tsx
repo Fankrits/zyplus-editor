@@ -4,6 +4,7 @@ import { Wordmark } from "../Logo";
 import { FIND_EVENT } from "../../lib/commands";
 import { useFileEditorId } from "../../extensions/useExtensions";
 import { ExtensionFileEditor } from "./ExtensionFileEditor";
+import { readOpenableTextFile } from "../../lib/fs";
 
 /**
  * The editors are the heaviest thing the app owns — Milkdown/ProseMirror for the
@@ -64,6 +65,29 @@ export function EditorPane() {
     return () => window.removeEventListener(FIND_EVENT, open);
   }, []);
 
+  // A big tab that sat in the background let go of its text (see `evictBackgroundTabs`);
+  // read it back now that it is showing. The reload also remounts the editor with it.
+  const evictedId = activeTab?.evicted ? activeTab.id : null;
+  const evictedPath = activeTab?.filePath;
+  useEffect(() => {
+    if (!evictedId || !evictedPath) return;
+    let cancelled = false;
+    // Through the size check: the file may have grown while the tab sat in the background.
+    readOpenableTextFile(evictedPath).then(
+      ({ content }) => {
+        if (!cancelled) dispatch({ type: "RELOAD_TAB", id: evictedId, content });
+      },
+      (err) => {
+        // Gone or unreadable since it was last shown: nothing to show, so close it.
+        console.warn("Could not read the tab back:", evictedPath, err);
+        if (!cancelled) dispatch({ type: "CLOSE_TAB", id: evictedId });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [evictedId, evictedPath, dispatch]);
+
   const handleChange = useCallback(
     (markdown: string) => {
       if (!activeTab) return;
@@ -88,6 +112,9 @@ export function EditorPane() {
       </div>
     );
   }
+
+  // Nothing to show until an evicted tab's text is back.
+  if (activeTab.evicted) return <div className="min-h-0 flex-1" />;
 
   // The editors read their content once, at mount. A reload (another
   // tab) has to remount them, or the next keystroke writes the old text back.

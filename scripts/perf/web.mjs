@@ -75,9 +75,9 @@ out.domNodesBoot = boot.Nodes;
 await drain();
 
 // 2. type in a small note (rich editor)
+// New File creates "Untitled.md" at once and opens it; there is no name prompt any more.
 await page.keyboard.press("Control+n");
-await page.getByPlaceholder("file-name.md").fill("small");
-await page.keyboard.press("Enter");
+await page.getByRole("tab", { name: /Untitled\.md/ }).waitFor();
 await page.locator(".milkdown .ProseMirror").waitFor();
 await page.locator(".milkdown .ProseMirror").click();
 await page.keyboard.type("Typing into a small note, one key at a time. ".repeat(6), { delay: 25 });
@@ -89,8 +89,7 @@ const md = Array.from({ length: 120 }, (_, i) =>
   [`## Section ${i}`, "", `Paragraph ${i} with **bold**, *italic* and \`code\`. `.repeat(3), "", "```js", `const value${i} = ${i}`, `function f${i}() { return value${i} }`, "```", ""].join("\n"),
 ).join("\n");
 await page.keyboard.press("Control+n");
-await page.getByPlaceholder("file-name.md").fill("big");
-await page.keyboard.press("Enter");
+await page.getByRole("tab", { name: /Untitled 2\.md/ }).waitFor();
 await page.getByLabel("Plain text editor").click();
 await page.locator(".cm-content").first().click();
 await page.keyboard.insertText(md);

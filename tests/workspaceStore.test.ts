@@ -7,6 +7,7 @@ import {
   type TreeNode,
 } from "../src/state/workspaceStore";
 import { basenameOf } from "../src/lib/fs";
+import { EVICT_MIN_CHARS, evictBackgroundTabs } from "../src/state/workspaceReducer";
 import type { PersistedWorkspaceSession } from "../src/lib/sessionStorage";
 
 describe("workspaceReducer", () => {
@@ -383,5 +384,73 @@ describe("UPDATE_TAB_CONTENT", () => {
 
     expect(workspaceReducer(tree, { type: "SET_TAB_VIEW", id: tab.id, view: "tree" })).toBe(tree);
     expect(workspaceReducer(tree, { type: "SET_TAB_VIEW", id: "/p/other.json", view: "text" })).toBe(tree);
+  });
+});
+
+describe("evicting big background tabs", () => {
+  const big = "x".repeat(EVICT_MIN_CHARS + 1);
+  const tab = (id: string, content: string, extra: Partial<TabState> = {}): TabState => ({
+    id,
+    filePath: id,
+    title: id,
+    content,
+    savedContent: content,
+    isDirty: false,
+    mode: "plain",
+    ...extra,
+  });
+  const state = (tabs: TabState[], activeTabId: string): WorkspaceState => ({
+    roots: [],
+    tree: [],
+    tabs,
+    activeTabId,
+  });
+
+  it("lets go of a big clean tab once another is focused, and keeps the active one", () => {
+    const start = state([tab("/a.md", big), tab("/b.md", "small")], "/a.md");
+    const next = workspaceReducer(start, { type: "FOCUS_TAB", id: "/b.md" });
+    const [a, b] = next.tabs;
+    expect(a).toMatchObject({ content: "", savedContent: "", evicted: true, isDirty: false });
+    expect(b.content).toBe("small");
+    expect(b.evicted).toBeUndefined();
+  });
+
+  it("never evicts the active tab, a small tab, or a tab with unsaved changes", () => {
+    const dirty = tab("/d.md", big + "!", { savedContent: big, isDirty: true });
+    const next = workspaceReducer(
+      state([tab("/a.md", big), tab("/s.md", "tiny"), dirty], "/a.md"),
+      { type: "FOCUS_TAB", id: "/a.md" },
+    );
+    expect(next.tabs[0].evicted).toBeUndefined();
+    expect(next.tabs[1].content).toBe("tiny");
+    expect(next.tabs[2].content).toBe(big + "!");
+  });
+
+  it("brings the text back through RELOAD_TAB, which remounts the editor", () => {
+    const evicted = workspaceReducer(state([tab("/a.md", big), tab("/b.md", "s")], "/a.md"), {
+      type: "FOCUS_TAB",
+      id: "/b.md",
+    });
+    const focused = workspaceReducer(evicted, { type: "FOCUS_TAB", id: "/a.md" });
+    expect(focused.tabs[0].evicted).toBe(true);
+    const back = workspaceReducer(focused, { type: "RELOAD_TAB", id: "/a.md", content: big });
+    expect(back.tabs[0]).toMatchObject({ content: big, savedContent: big, reloads: 1 });
+    expect(back.tabs[0].evicted).toBeUndefined();
+  });
+
+  it("returns the same state when there is nothing to evict", () => {
+    const start = state([tab("/a.md", "x"), tab("/b.md", "y")], "/a.md");
+    expect(evictBackgroundTabs(start)).toBe(start);
+  });
+
+  it("evicts a big tab as soon as a restored session leaves it in the background", () => {
+    const restored = workspaceReducer(state([], ""), {
+      type: "RESTORE_WORKSPACE",
+      roots: [],
+      tree: [],
+      tabs: [tab("/a.md", big), tab("/b.md", "s")],
+      activeTabId: "/b.md",
+    });
+    expect(restored.tabs[0].evicted).toBe(true);
   });
 });

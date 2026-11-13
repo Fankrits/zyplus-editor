@@ -2,9 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { applyTheme } from "./lib/theme";
+import { applyTextSize } from "./lib/textSize";
 import { initWebFs } from "./lib/fs";
 
 applyTheme();
+applyTextSize();
 
 // The notes have to be loaded before the first render, because it reads them.
 // initWebFs reports its own failures; whatever escapes it must not blank the app.

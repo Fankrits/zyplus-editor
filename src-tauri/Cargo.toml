@@ -37,6 +37,11 @@ tauri-plugin-updater = "2.11.0"
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tauri-plugin-updater = { version = "2.11.0", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 
+# WebView2's memory target (see tuning.rs). The versions Tauri itself resolves to.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = "0.62"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 objc2 = "0.6"

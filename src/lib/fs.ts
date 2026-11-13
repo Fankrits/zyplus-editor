@@ -7,11 +7,13 @@ import {
   remove,
   rename as renameRaw,
   exists,
+  stat,
 } from "@tauri-apps/plugin-fs";
 import { join as tauriJoin, dirname as tauriDirname, appDataDir } from "@tauri-apps/api/path";
 import { invoke } from "@tauri-apps/api/core";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isMac, isNativeApp, isWindows } from "./platform";
+import { isTooLargeToOpen, tooLargeMessage, utf8Length } from "./fileSize";
 import { onOtherTabWrite, openWebStore, persistWeb, type WebOp } from "./webStore";
 import type { TreeNode } from "../state/workspaceReducer";
 
@@ -349,6 +351,27 @@ export async function ensureFolder(path: string): Promise<void> {
   const missing: WebOp[] = [];
   for (let p = path; p !== "/" && !webDirs.has(p); p = mockDirname(p)) missing.push([p, null]);
   await applyWeb(missing);
+}
+
+/** A file's size in bytes, without reading it. The web build counts the stored text's UTF-8 length. */
+export async function fileSize(path: string): Promise<number> {
+  if (!isNativeApp) {
+    const content = webFiles.get(path);
+    if (content === undefined) throw new Error(`File not found: ${path}`);
+    return utf8Length(content);
+  }
+  return (await stat(path)).size;
+}
+
+/**
+ * Reads a file to open it in an editor: the size is checked first, so a file over the limit is
+ * refused without ever being read into memory. Throws with a message fit to show the user.
+ * `size` is in bytes, for choosing the editor.
+ */
+export async function readOpenableTextFile(path: string): Promise<{ content: string; size: number }> {
+  const size = await fileSize(path);
+  if (isTooLargeToOpen(size)) throw new Error(tooLargeMessage(size));
+  return { content: await readTextFile(path), size };
 }
 
 export async function readTextFile(path: string): Promise<string> {

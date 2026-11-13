@@ -43,6 +43,24 @@ describe("shortcuts", () => {
     );
   });
 
+  it("zooms the text with Cmd/Ctrl and plus, minus and zero, from either keyboard row", () => {
+    expect(matchShortcut(key({ code: "Equal", key: "=", metaKey: true }), MAC)).toBe("zoom-in");
+    // A typed "+" on a US layout is Shift+=.
+    expect(matchShortcut(key({ code: "Equal", key: "+", ctrlKey: true, shiftKey: true }), PC)).toBe("zoom-in");
+    expect(matchShortcut(key({ code: "NumpadAdd", key: "+", ctrlKey: true }), PC)).toBe("zoom-in");
+    expect(matchShortcut(key({ code: "Minus", key: "-", ctrlKey: true }), PC)).toBe("zoom-out");
+    expect(matchShortcut(key({ code: "NumpadSubtract", key: "-", metaKey: true }), MAC)).toBe("zoom-out");
+    expect(matchShortcut(key({ code: "Digit0", key: "0", ctrlKey: true }), PC)).toBe("zoom-reset");
+    expect(matchShortcut(key({ code: "Numpad0", key: "0", metaKey: true }), MAC)).toBe("zoom-reset");
+    // The bare keys type text.
+    expect(matchShortcut(key({ code: "Minus", key: "-" }), PC)).toBeNull();
+  });
+
+  it("shows the zoom-in combo as a plus", () => {
+    expect(formatCombo("mod+=", PC)).toEqual(["Ctrl", "+"]);
+    expect(formatCombo("mod+=", MAC)).toEqual(["⌘", "+"]);
+  });
+
   it("formats combos for display", () => {
     expect(formatCombo("mod+shift+s", MAC)).toEqual(["⌘", "⇧", "S"]);
   });

@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Button, Modal } from "@heroui/react";
+import { lazy, memo, useCallback, useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { OnDemand } from "../OnDemand";
+import { Button } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Cancel01Icon,
@@ -7,7 +8,6 @@ import {
   MultiplicationSignIcon,
   FolderOpenIcon,
   ClipboardIcon,
-  Alert01Icon,
   PlusSignIcon,
   TextFontIcon,
   SourceCodeIcon,
@@ -28,6 +28,7 @@ import {
   isUntitled,
   type TabState,
 } from "../../state/workspaceStore";
+const UnsavedChangesModal = lazy(() => import("./UnsavedChangesModal"));
 import { saveDocument, saveFileAs, revealPath, withExtension } from "../../lib/fs";
 import { isNativeApp, REVEAL_LABEL } from "../../lib/platform";
 import {
@@ -292,7 +293,7 @@ export function TabBar({
           key: "copy-markdown",
           label: "Copy Markdown",
           icon: Copy01Icon,
-          onSelect: () => copyText(activeTab.content),
+          onSelect: () => !activeTab.evicted && copyText(activeTab.content),
         },
         {
           key: "copy-path",
@@ -304,7 +305,7 @@ export function TabBar({
           key: "export-md",
           label: "Export as .md",
           icon: FileExportIcon,
-          onSelect: () => saveFileAs(withExtension(activeTab.title, ".md"), activeTab.content),
+          onSelect: () => !activeTab.evicted && saveFileAs(withExtension(activeTab.title, ".md"), activeTab.content),
         },
         {
           // Asks where to save, then writes the PDF there — no print dialog.
@@ -312,6 +313,8 @@ export function TabBar({
           label: "Export as PDF…",
           icon: Pdf01Icon,
           onSelect: () =>
+            // An evicted tab has no text until it is read back (a moment after it is focused).
+            !activeTab.evicted &&
             import("../../lib/exportPdf").then(
               (m) => m.exportPdf(activeTab.title, activeTab.content),
               (err) => console.error("Could not load the PDF exporter:", err),
@@ -469,37 +472,15 @@ export function TabBar({
       <ContextMenu state={contextMenu.state} onClose={contextMenu.close} />
       <ContextMenu state={actionsMenu.state} onClose={actionsMenu.close} />
 
-      <Modal>
-        <Modal.Backdrop isOpen={pendingTab !== null} onOpenChange={(open) => !open && setPendingCloseId(null)}>
-          <Modal.Container>
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
-                <Modal.Icon className="bg-warning-soft text-warning">
-                  <HugeiconsIcon icon={Alert01Icon} size={20} />
-                </Modal.Icon>
-                <Modal.Heading>Unsaved changes</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <p>
-                  "{pendingTab?.title}" has unsaved changes. Save before closing, or discard them?
-                </p>
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="ghost" onPress={() => setPendingCloseId(null)}>
-                  Cancel
-                </Button>
-                <Button variant="danger" onPress={handleDiscard}>
-                  Discard
-                </Button>
-                <Button variant="primary" onPress={handleSaveAndClose}>
-                  Save
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
+      <OnDemand when={pendingTab !== null}>
+        <UnsavedChangesModal
+          isOpen={pendingTab !== null}
+          title={pendingTab?.title}
+          onCancel={() => setPendingCloseId(null)}
+          onDiscard={handleDiscard}
+          onSave={handleSaveAndClose}
+        />
+      </OnDemand>
     </>
   );
 }

@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "analyze": "vite build --mode analyze",
     "perf": "node scripts/perf/web.mjs",
+    "perf:bigfile": "node scripts/perf/bigfile.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "bun test",

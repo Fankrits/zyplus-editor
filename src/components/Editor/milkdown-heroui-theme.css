@@ -57,6 +57,54 @@
   margin: 0 auto;
   padding: 3rem 3rem 8rem 4rem;
   box-sizing: border-box;
+  /* The text-size setting (lib/textSize.ts). Headings, lists, quotes and code are all sized in em,
+     so this one value scales the whole document. */
+  font-size: calc(16px * var(--editor-text-scale, 1));
+}
+
+/* Long unbroken strings (URLs, hashes) wrap instead of pushing the page sideways. */
+.milkdown .ProseMirror {
+  overflow-wrap: anywhere;
+}
+
+.milkdown .ProseMirror img,
+.milkdown .ProseMirror video {
+  max-width: 100%;
+  height: auto;
+}
+
+/*
+ * Tables. ProseMirror's table stylesheet sets `table-layout: fixed`, which divides the width equally
+ * between the columns: on a phone an eight-column table was crushed into columns one character wide.
+ * Instead the columns size to their content, wrapping text to fit, and never narrower than a readable
+ * minimum. A table that still cannot fit (its longest words side by side are wider than the page)
+ * scrolls sideways inside its own wrapper, so the page itself never does. (The row and column handles
+ * live outside the wrapper, so they are not clipped.)
+ */
+.milkdown .milkdown-table-block .table-wrapper {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.milkdown .milkdown-table-block table {
+  table-layout: auto;
+  width: 100%;
+  max-width: none;
+}
+
+.milkdown .milkdown-table-block th,
+.milkdown .milkdown-table-block td {
+  min-width: 5rem;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@media (max-width: 640px) {
+  .milkdown .milkdown-table-block th,
+  .milkdown .milkdown-table-block td {
+    padding: 4px 10px;
+  }
 }
 
 @media (max-width: 768px) {

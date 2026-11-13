@@ -21,7 +21,8 @@ export const plainTextTheme: Extension = EditorView.theme({
     maxWidth: "48rem",
     margin: "0 auto",
     padding: "1.5rem 1rem 8rem 1rem",
-    fontSize: "15px",
+    // The text-size setting (lib/textSize.ts) multiplies the base size.
+    fontSize: "calc(15px * var(--editor-text-scale, 1))",
     caretColor: "var(--accent, currentColor)",
   },
   "@media (min-width: 640px)": {

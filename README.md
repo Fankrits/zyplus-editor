@@ -35,6 +35,8 @@ Built with Tauri&nbsp;2, React&nbsp;19 and TypeScript.
 | 🗂️ **Real workspace** | Multiple project folders, tabs, file tree, find & replace, optional autosave |
 | 📄 **PDF export** | Genuinely paginated PDFs through the native print pipeline — not `window.print()` |
 | 🖱️ **OS integration** | Registered editor for `.md`, `.markdown`, `.mdown`, `.mkd`, `.txt` — double-click opens a tab |
+| 🔠 **Text size** | Make the editor text larger or smaller in Settings → General, or with `⌘ +` / `⌘ −` / `⌘ 0` (`Ctrl` on Windows and Linux); it applies to both editors and is remembered |
+| 📱 **Responsive** | Wide tables wrap and scroll inside their own frame, long lines and links wrap, and nothing makes the page scroll sideways on a phone |
 | 🌗 **Themes** | Light, dark, system, plus Catppuccin and Tokyo Night variants |
 | ⬆️ **Self-updating** | In-app updater backed by signed GitHub releases |
 

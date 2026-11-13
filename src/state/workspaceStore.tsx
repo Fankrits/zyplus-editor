@@ -17,6 +17,7 @@ import {
   openFolderDialog,
   pathExists,
   readChildren,
+  readOpenableTextFile,
   readProjectNode,
   readTextFile,
   setStoreChangedListener,
@@ -24,7 +25,10 @@ import {
   writeTextFile,
 } from "../lib/fs";
 
+import { flushSync } from "react-dom";
+import { flushPendingEdits, hasPendingEdits } from "../lib/pendingEdits";
 import { WELCOME_NOTE, WELCOME_NOTE_NAME } from "../lib/welcomeNote";
+import { modeForSize } from "../lib/fileSize";
 import { suggestExtensionFor } from "../extensions/suggestExtension";
 import { loadSession, saveSession, type PersistedWorkspaceSession } from "../lib/sessionStorage";
 import {
@@ -139,7 +143,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const stateRef = useRef(state);
   stateRef.current = state;
-  const getState = useCallback(() => stateRef.current, []);
+  const getState = useCallback(() => {
+    // A big source document reports its edits in batches (see changeReporter). Whoever asks for
+    // state is about to save, export, copy or close what is on screen, so settle the batch
+    // first; flushSync makes the store, and so `stateRef`, current before this returns.
+    if (hasPendingEdits()) flushSync(flushPendingEdits);
+    return stateRef.current;
+  }, []);
   const restoreFailed = useRef(false);
 
   useEffect(() => {
@@ -219,16 +229,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   // localStorage writes are synchronous, and nothing here changes while typing —
   // the session records paths and modes, not content — so skip the identical write.
+  // `state.tabs` is a new array on every keystroke, so the effect keys on what the session
+  // actually stores of it (path and mode per tab): typing no longer re-runs it, builds the
+  // session JSON or compares it. (Building the key is a short string per open tab, so typing
+  // still pays for that.)
+  const persistedTabs = state.tabs.map((t) => `${t.mode}:${t.filePath}`).join("\n");
   const lastPersisted = useRef<string | null>(null);
   useEffect(() => {
     if (!isHydrated) return;
-    if (restoreFailed.current && state.roots.length === 0 && state.tabs.length === 0) return;
+    const tabs = stateRef.current.tabs;
+    if (restoreFailed.current && state.roots.length === 0 && tabs.length === 0) return;
     restoreFailed.current = false;
     const session: PersistedWorkspaceSession = {
       version: 2,
       roots: state.roots,
       defaultFolder,
-      tabs: state.tabs.map((t) => ({ filePath: t.filePath, mode: t.mode })),
+      tabs: tabs.map((t) => ({ filePath: t.filePath, mode: t.mode })),
       activeFilePath: state.activeTabId,
       isSidebarCollapsed,
       isAutosaveEnabled,
@@ -241,7 +257,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [
     isHydrated,
     state.roots,
-    state.tabs,
+    persistedTabs,
     state.activeTabId,
     defaultFolder,
     isAutosaveEnabled,
@@ -321,7 +337,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     // Reported, not just logged: a file that cannot be read used to do nothing
     // at all when clicked.
     const opened = await tryFs("Could not open file", path, async () => {
-      const content = await readTextFile(path);
+      // The size is checked before the read, so a huge file is never pulled into memory to be refused.
+      const { content, size } = await readOpenableTextFile(path);
       dispatch({
         type: "OPEN_TAB",
         tab: {
@@ -331,7 +348,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           content,
           savedContent: content,
           isDirty: false,
-          mode: "rich",
+          // Big files start in the source editor: the rich one costs many times their size.
+          mode: modeForSize(size, "rich"),
         },
       });
       suggestExtensionFor(path);

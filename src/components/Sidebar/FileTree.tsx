@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { lazy, useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { OnDemand } from "../OnDemand";
 import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from "react-arborist";
-import { Button, Input, Modal } from "@heroui/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowDown01Icon,
@@ -17,13 +17,14 @@ import {
   ClipboardIcon,
   TrashIcon,
   Cancel01Icon,
-  Alert01Icon,
 } from "@hugeicons/core-free-icons";
 import {
   useWorkspaceActions,
   useWorkspaceTree,
   type TreeNode,
 } from "../../state/workspaceStore";
+const RenameInput = lazy(() => import("./RenameInput"));
+const DeleteModal = lazy(() => import("./DeleteModal"));
 import { findTreeNode } from "../../state/workspaceReducer";
 import * as fs from "../../lib/fs";
 import { extensionManager } from "../../extensions/extensionManager";
@@ -302,34 +303,9 @@ export function FileTree({ onOpenFile, onRequestCreate, onOpenFolder, onOpenFile
 
       <ContextMenu state={contextMenu.state} onClose={contextMenu.close} />
 
-      <Modal>
-        <Modal.Backdrop isOpen={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
-          <Modal.Container>
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header>
-                <Modal.Icon className="bg-danger-soft text-danger">
-                  <HugeiconsIcon icon={Alert01Icon} size={20} />
-                </Modal.Icon>
-                <Modal.Heading>
-                  Delete {pendingDelete && pendingDelete.length > 1 ? `${pendingDelete.length} items` : pendingDelete?.[0]?.data.name}?
-                </Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <p>This can&apos;t be undone.</p>
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="ghost" onPress={() => setPendingDelete(null)}>
-                  Cancel
-                </Button>
-                <Button variant="danger" onPress={confirmDelete}>
-                  Delete
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal>
+      <OnDemand when={pendingDelete !== null}>
+        <DeleteModal items={pendingDelete} onCancel={() => setPendingDelete(null)} onConfirm={confirmDelete} />
+      </OnDemand>
     </div>
   );
 }
@@ -372,27 +348,9 @@ function Node({
           strokeWidth={1.75}
           className="shrink-0 opacity-70"
         />
-        <Input
-          defaultValue={node.data.name}
-          autoFocus
-          fullWidth
-          onFocus={(e) => {
-            // Select just the filename stem (like Finder/VS Code) so retyping
-            // doesn't clobber the extension by accident. Folders have no extension.
-            const dotIndex = node.data.name.lastIndexOf(".");
-            if (isFile && dotIndex > 0) {
-              e.currentTarget.setSelectionRange(0, dotIndex);
-            } else {
-              e.currentTarget.select();
-            }
-          }}
-          onBlur={() => node.reset()}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") node.reset();
-            if (e.key === "Enter") node.submit(e.currentTarget.value);
-          }}
-          className="h-7 px-2 py-0 text-sm"
-        />
+        <OnDemand when>
+          <RenameInput node={node} isFile={isFile} />
+        </OnDemand>
       </div>
     );
   }
