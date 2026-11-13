@@ -1,8 +1,10 @@
-import { describe, it, expect } from "bun:test";
-import { render } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "bun:test";
+import { cleanup, render } from "@testing-library/react";
 import { OnDemand } from "../src/components/OnDemand";
 
 describe("OnDemand", () => {
+  afterEach(() => cleanup());
+
   it("renders nothing until it is wanted", () => {
     const { container } = render(
       <OnDemand when={false}>

@@ -1,9 +1,12 @@
-import { describe, it, expect } from "bun:test";
-import { act, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "bun:test";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { ToastHost } from "../src/components/ToastHost";
 import { showToast } from "../src/lib/toasts";
 
 describe("toasts load on demand", () => {
+  // See textSizeSettings.test.tsx: do not leave the toast region in the shared DOM for later files.
+  afterEach(() => cleanup());
+
   it("renders nothing until a toast is asked for, then shows it", async () => {
     render(<ToastHost />);
     // No toast region has been mounted yet.

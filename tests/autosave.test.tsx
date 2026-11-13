@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "bun:test";
-import { act, fireEvent, render } from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { WorkspaceProvider, useWorkspace } from "../src/state/workspaceStore";
 import * as fs from "../src/lib/fs";
 import { registerPendingEdits } from "../src/lib/pendingEdits";
@@ -132,6 +132,8 @@ describe("settings toggle", () => {
 });
 
 describe("getState settles edits an editor is still batching", () => {
+  afterEach(() => cleanup());
+
   it("flushes a pending batch into the store before returning state", async () => {
     await fs.writeTextFile(PATH, "original\n");
     const ctx = await mountWorkspace();

@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "bun:test";
-import { act, fireEvent, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { WorkspaceProvider } from "../src/state/workspaceStore";
 import { SettingsModal } from "../src/components/SettingsModal";
 import { getTextSize, resetTextSizeCache, setTextSize, stepTextSize } from "../src/lib/textSize";
@@ -17,7 +17,14 @@ async function openSettings() {
 }
 
 describe("text size setting", () => {
+  // Testing Library only unmounts what a test rendered if its auto-cleanup hook happened to be registered
+  // by the first file that imported it, which depends on the order bun loads the files in. Without this
+  // each test left its Settings modal in the shared DOM, and the next one found several "Increase text
+  // size" buttons (and so did whichever file ran after this one).
+  afterEach(() => cleanup());
+
   beforeEach(() => {
+    cleanup();
     localStorage.clear();
     resetTextSizeCache();
     document.documentElement.style.removeProperty("--editor-text-scale");
