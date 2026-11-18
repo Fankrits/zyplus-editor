@@ -7,15 +7,15 @@
 //!
 //! Ported from the web build: session restore, the ten palettes, find/replace,
 //! the rich (WYSIWYG) and plain markdown views, the CSV, JSON and chart views,
-//! PDF export (`export_pdf`, which uses the macOS system fonts), the update check
-//! and install (`updater`), context menus, settings, autosave and the keyboard
-//! shortcuts. Not ported: Mermaid and KaTeX rendering (those fences show as
-//! source; `mermaid.rs` and `math.rs` are not wired in yet), and extensions that
-//! are downloaded JavaScript bundles.
+//! Mermaid diagrams (`mermaid.rs`), LaTeX math (`math.rs`), PDF export (`export_pdf`,
+//! which uses the macOS system fonts), the update check and install (`updater`),
+//! context menus, settings, autosave and the keyboard shortcuts. Not ported:
+//! extensions that are downloaded JavaScript bundles.
 
 mod app_icon;
 mod chart;
 mod csv_view;
+mod diagram_cache;
 mod editor;
 mod export_pdf;
 mod highlight;
@@ -126,7 +126,7 @@ const WELCOME_NOTE: &str = r#"# Welcome to Zyplus
 
 ## Beyond plain text
 
-Callouts and syntax-highlighted code work out of the box. Mermaid diagrams and math are not rendered in this build, so their fences show as source. The web version renders them once you turn on **Mermaid** and **KaTeX** in Settings → Extensions:
+Callouts and syntax-highlighted code work out of the box. Diagrams and math render once you turn on **Mermaid** and **KaTeX** in Settings → Extensions:
 
 ```mermaid
 flowchart LR
@@ -545,7 +545,7 @@ const DEFAULT_APPS: [(&str, &str, &str, &str); 3] = [
 /// Built-in extensions for Settings → Extensions:
 /// (id, toggle element id, name, description, applies to). Descriptions are
 /// the web catalog's (`src/extensions/catalog.ts`).
-const EXTENSIONS: [(&str, &str, &str, &str, &str); 4] = [
+const EXTENSIONS: [(&str, &str, &str, &str, &str); 6] = [
     (
         "json",
         "ext-toggle-json",
@@ -568,25 +568,25 @@ const EXTENSIONS: [(&str, &str, &str, &str, &str); 4] = [
         "Applies to ```chart blocks in markdown.",
     ),
     (
+        "mermaid",
+        "ext-toggle-mermaid",
+        "Mermaid Diagrams",
+        "Renders rich interactive diagrams, sequence charts, git graphs, and flowcharts directly in markdown preview.",
+        "Applies to ```mermaid blocks in markdown.",
+    ),
+    (
+        "katex",
+        "ext-toggle-katex",
+        "LaTeX Math (KaTeX)",
+        "Fast math typesetting engine that transforms LaTeX equations into formatted mathematical expressions.",
+        "Applies to ```latex, ```math, ```katex and ```tex blocks in markdown.",
+    ),
+    (
         "codefiles",
         "ext-toggle-codefiles",
         "Code & Config Files",
         "Syntax highlighting and basic editor for various code, config and script files.",
         "Applies to code and config file types, such as .yaml, .rs and .ts.",
-    ),
-];
-
-/// Catalog extensions the native build cannot run yet: (toggle id, name, description).
-const UNAVAILABLE_EXTENSIONS: [(&str, &str, &str); 2] = [
-    (
-        "ext-toggle-mermaid",
-        "Mermaid Diagrams",
-        "Renders rich interactive diagrams, sequence charts, git graphs, and flowcharts directly in markdown preview.",
-    ),
-    (
-        "ext-toggle-katex",
-        "LaTeX Math (KaTeX)",
-        "Fast math typesetting engine that transforms LaTeX equations into formatted mathematical expressions.",
     ),
 ];
 
@@ -984,12 +984,16 @@ impl Zyplus {
         let path = self.tabs[index].path.clone();
         let theme_name = self.theme_name.clone();
         let charts = self.extension_enabled("chart");
+        let mermaid = self.extension_enabled("mermaid");
+        let katex = self.extension_enabled("katex");
         let workspace = cx.entity();
         let rich = cx.new(|cx| {
             let mut editor = RichEditor::new(cx);
             editor.theme_name = theme_name;
             editor.set_file_path(Some(std::path::PathBuf::from(&path)), cx);
             editor.set_charts_enabled(charts, cx);
+            editor.set_mermaid_enabled(mermaid, cx);
+            editor.set_katex_enabled(katex, cx);
             editor.set_text(&content, cx);
             editor
         });
@@ -3936,8 +3940,14 @@ impl Zyplus {
         let rich_view = if rich {
             self.ensure_rich(index, cx);
             let charts = self.extension_enabled("chart");
+            let mermaid = self.extension_enabled("mermaid");
+            let katex = self.extension_enabled("katex");
             if let Some(editor) = self.tabs[index].rich.clone() {
-                editor.update(cx, |editor, cx| editor.set_charts_enabled(charts, cx));
+                editor.update(cx, |editor, cx| {
+                    editor.set_charts_enabled(charts, cx);
+                    editor.set_mermaid_enabled(mermaid, cx);
+                    editor.set_katex_enabled(katex, cx);
+                });
             }
             self.tabs[index].rich.clone()
         } else {
@@ -3952,7 +3962,9 @@ impl Zyplus {
                 .into_any_element()
         } else if rich {
             let charts = self.extension_enabled("chart");
-            preview::render_preview(&content, std::path::Path::new(&path), theme, charts)
+            let mermaid = self.extension_enabled("mermaid");
+            let katex = self.extension_enabled("katex");
+            preview::render_preview(&content, std::path::Path::new(&path), theme, charts, mermaid, katex)
                 .into_any_element()
         } else {
             let child: AnyElement = match view {
@@ -4712,18 +4724,6 @@ impl Zyplus {
                         false,
                     ));
                 }
-                let mut unavailable = div().flex().flex_col();
-                for (toggle_id, name, description) in UNAVAILABLE_EXTENSIONS {
-                    let toggle = toggle_switch(theme, toggle_id, false).opacity(0.4);
-                    unavailable = unavailable.child(extension_row(
-                        theme,
-                        name,
-                        description,
-                        "Needs the web build's JavaScript renderer, which this native build does not include.",
-                        toggle,
-                        true,
-                    ));
-                }
                 div()
                     .flex()
                     .flex_col()
@@ -4737,15 +4737,6 @@ impl Zyplus {
                             .child("Built-in extensions. Turn one off to stop it handling its file types. Nothing is downloaded."),
                     )
                     .child(rows)
-                    .child(
-                        div()
-                            .mt_3()
-                            .text_size(px(10.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.muted)
-                            .child("NOT AVAILABLE IN THE NATIVE APP YET"),
-                    )
-                    .child(unavailable)
             }
             SettingsSection::About => div()
                 .flex()
@@ -6190,7 +6181,7 @@ mod lifecycle_tests {
     fn welcome_note_matches_the_web_text() {
         assert!(WELCOME_NOTE.starts_with("# Welcome to Zyplus\n"));
         assert!(WELCOME_NOTE.contains("Press `⌘E` (`Ctrl+E` on Windows and Linux)"));
-        assert!(WELCOME_NOTE.contains("Mermaid diagrams and math are not rendered in this build"));
+        assert!(WELCOME_NOTE.contains("Diagrams and math render once you turn on **Mermaid** and **KaTeX** in Settings → Extensions:"));
         assert!(WELCOME_NOTE.contains("```mermaid\nflowchart LR\n"));
         assert!(WELCOME_NOTE.contains("```latex\ne^{i\\pi} + 1 = 0\n"));
         assert!(WELCOME_NOTE.ends_with("Happy writing!\n"));

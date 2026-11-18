@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, AnyElement, Div, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString,
+    div, img, px, AnyElement, Div, FontStyle, FontWeight, HighlightStyle, InteractiveText, SharedString,
     Stateful, StyledText, StrikethroughStyle, TextAlign, UnderlineStyle,
 };
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
@@ -525,14 +525,23 @@ pub fn parse(content: &str) -> Document {
 // ---------------------------------------------------------------------------
 
 /// Draws a markdown document for reading, resolving relative image paths
-/// against the file that holds it. `charts` turns ```chart fences into charts;
-/// off, they stay code.
-pub fn render_preview(content: &str, file: &Path, theme: &Theme, charts: bool) -> Stateful<Div> {
+/// against the file that holds it. `charts`, `mermaid`, `katex` turn those
+/// fences into rendered views; off, they stay code.
+pub fn render_preview(
+    content: &str,
+    file: &Path,
+    theme: &Theme,
+    charts: bool,
+    mermaid: bool,
+    katex: bool,
+) -> Stateful<Div> {
     let doc = parse(content);
     let ctx = Ctx {
         file,
         theme,
         charts,
+        mermaid,
+        katex,
         next_id: Cell::new(0),
     };
     let mut inner = div().w_full().max_w(px(760.0)).flex().flex_col();
@@ -567,6 +576,8 @@ struct Ctx<'a> {
     file: &'a Path,
     theme: &'a Theme,
     charts: bool,
+    mermaid: bool,
+    katex: bool,
     /// Gives every link its own element id within one frame.
     next_id: Cell<usize>,
 }
@@ -683,8 +694,8 @@ thread_local! {
 }
 
 /// A fenced block drawn as its source with a label, for diagram and maths
-/// fences the native app does not render.
-fn source_card(label: &'static str, text: &str, theme: &Theme) -> Div {
+/// fences or error reporting.
+fn source_card(label: impl Into<SharedString>, text: &str, theme: &Theme) -> Div {
     div()
         .w_full()
         .my_2()
@@ -702,7 +713,7 @@ fn source_card(label: &'static str, text: &str, theme: &Theme) -> Div {
                 .text_size(px(11.0))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme.muted)
-                .child(label),
+                .child(label.into()),
         )
         .child(
             div()
@@ -717,6 +728,44 @@ fn source_card(label: &'static str, text: &str, theme: &Theme) -> Div {
                     text.to_string()
                 })),
         )
+}
+
+fn render_preview_diagram(kind: crate::diagram_cache::DiagramKind, text: &str, ctx: &Ctx) -> Div {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        let msg = match kind {
+            crate::diagram_cache::DiagramKind::Mermaid => "the Mermaid block is empty",
+            crate::diagram_cache::DiagramKind::Math => "Empty math block",
+        };
+        return source_card(msg, text, ctx.theme);
+    }
+    match crate::diagram_cache::get_or_render(kind, text, ctx.theme) {
+        Ok(diagram) => {
+            let (w, h) = crate::diagram_cache::scale_diagram_size(diagram.size, 760.0);
+            div()
+                .w_full()
+                .my_2()
+                .flex()
+                .justify_center()
+                .child(
+                    img(diagram.path)
+                        .w(px(w))
+                        .h(px(h))
+                        .rounded(px(6.0)),
+                )
+        }
+        Err(err) => {
+            let label = format!(
+                "{} error: {}",
+                match kind {
+                    crate::diagram_cache::DiagramKind::Mermaid => "Mermaid",
+                    crate::diagram_cache::DiagramKind::Math => "LaTeX",
+                },
+                err
+            );
+            source_card(label, text, ctx.theme)
+        }
+    }
 }
 
 fn code_block(lang: &str, text: &str, theme: &Theme) -> Div {
@@ -802,13 +851,11 @@ fn render_block(block: &Block, ctx: &Ctx) -> Div {
             .py(px(3.0))
             .child(inline(spans, ctx)),
         Block::Code { lang, text } => match lang.to_ascii_lowercase().as_str() {
-            "mermaid" => source_card(
-                "Mermaid diagram — not rendered in the native app",
-                text,
-                theme,
-            ),
-            "math" | "latex" | "katex" => {
-                source_card("Math — not rendered in the native app", text, theme)
+            "mermaid" if ctx.mermaid => {
+                render_preview_diagram(crate::diagram_cache::DiagramKind::Mermaid, text, ctx)
+            }
+            "math" | "latex" | "katex" | "tex" if ctx.katex => {
+                render_preview_diagram(crate::diagram_cache::DiagramKind::Math, text, ctx)
             }
             "chart" | "chartjs" if ctx.charts => div()
                 .w_full()
@@ -1164,5 +1211,26 @@ mod tests {
         );
         assert!(code_tokens("no-such-language", "x = 1").is_empty());
         assert!(code_tokens("", "plain").is_empty());
+    }
+
+    #[test]
+    fn render_preview_with_diagrams_and_math() {
+        let theme = Theme::for_name("system", gpui::WindowAppearance::Dark);
+        let path = Path::new("/test/doc.md");
+        let content = "# Title\n\n```mermaid\nflowchart LR\n    A --> B\n```\n\n```latex\ne^{i\\pi}+1=0\n```\n";
+
+        // Enabled
+        let _ = render_preview(content, path, &theme, true, true, true);
+
+        // Disabled
+        let _ = render_preview(content, path, &theme, false, false, false);
+    }
+
+    #[test]
+    fn render_preview_with_broken_diagrams() {
+        let theme = Theme::for_name("system", gpui::WindowAppearance::Dark);
+        let path = Path::new("/test/doc.md");
+        let content = "```mermaid\nthis is invalid mermaid\n```\n\n```latex\n\\invalidcmd\n```\n";
+        let _ = render_preview(content, path, &theme, true, true, true);
     }
 }

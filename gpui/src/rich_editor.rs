@@ -763,6 +763,34 @@ impl RichEditor {
         self.widgets.charts
     }
 
+    /// Whether ```mermaid fences draw as diagrams (the mermaid extension).
+    pub fn set_mermaid_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
+        rich_blocks::set_mermaid_enabled(on);
+        if self.widgets.mermaid != on {
+            self.widgets.mermaid = on;
+            self.layout.heights.clear();
+            cx.notify();
+        }
+    }
+
+    pub fn mermaid_enabled(&self) -> bool {
+        self.widgets.mermaid
+    }
+
+    /// Whether ```latex, ```math, ```katex, ```tex fences draw as math (the katex extension).
+    pub fn set_katex_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
+        rich_blocks::set_katex_enabled(on);
+        if self.widgets.katex != on {
+            self.widgets.katex = on;
+            self.layout.heights.clear();
+            cx.notify();
+        }
+    }
+
+    pub fn katex_enabled(&self) -> bool {
+        self.widgets.katex
+    }
+
     /// Replaces the document. Resets undo and does not report a change.
     pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.content = text.to_string();

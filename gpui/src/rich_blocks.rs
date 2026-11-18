@@ -63,8 +63,29 @@ const CODE_LH: f32 = 18.0;
 const FENCE_BUTTON_H: f32 = 17.0;
 const WIDGET_GAP: f32 = 8.0;
 
-pub const MERMAID_LABEL: &str = "Mermaid diagram — not rendered in the native app";
-pub const MATH_LABEL: &str = "Math — not rendered in the native app";
+pub const MERMAID_LABEL: &str = "Mermaid Diagram";
+pub const MATH_LABEL: &str = "LaTeX Math";
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static MERMAID_ENABLED: AtomicBool = AtomicBool::new(true);
+static KATEX_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn is_mermaid_enabled() -> bool {
+    MERMAID_ENABLED.load(Ordering::Relaxed)
+}
+
+pub fn set_mermaid_enabled(on: bool) {
+    MERMAID_ENABLED.store(on, Ordering::Relaxed);
+}
+
+pub fn is_katex_enabled() -> bool {
+    KATEX_ENABLED.load(Ordering::Relaxed)
+}
+
+pub fn set_katex_enabled(on: bool) {
+    KATEX_ENABLED.store(on, Ordering::Relaxed);
+}
 
 // ---------------------------------------------------------------- classification
 
@@ -97,8 +118,8 @@ pub fn widget_span(
     let kind = match &block.kind {
         BlockKind::Table => WidgetKind::Table,
         BlockKind::CodeBlock { lang } => match lang.to_ascii_lowercase().as_str() {
-            "mermaid" => WidgetKind::Mermaid,
-            "math" | "latex" | "katex" => WidgetKind::Math,
+            "mermaid" if is_mermaid_enabled() => WidgetKind::Mermaid,
+            "math" | "latex" | "katex" | "tex" if is_katex_enabled() => WidgetKind::Math,
             "chart" | "chartjs" if charts => WidgetKind::Chart,
             _ => return None,
         },
@@ -364,6 +385,10 @@ pub enum Body {
         rect: Rect,
         src: String,
     },
+    Diagram {
+        rect: Rect,
+        path: PathBuf,
+    },
 }
 
 /// A small control drawn on a widget or a code fence.
@@ -430,15 +455,30 @@ impl Widget {
 
 /// Per-editor state the widgets read: the file (for relative images), the
 /// chart extension switch, the hovered control target, the last copy.
-#[derive(Default)]
 pub struct BlockState {
     pub file_path: Option<PathBuf>,
     pub charts: bool,
+    pub mermaid: bool,
+    pub katex: bool,
     /// Natural size of each image file, by path. `None` when unreadable.
     pub dims: HashMap<String, Option<(f32, f32)>>,
     pub hover: Option<Hover>,
     /// The fence copied last and when; shows "Copied" for about a second.
     pub copied: Option<(usize, std::time::Instant)>,
+}
+
+impl Default for BlockState {
+    fn default() -> Self {
+        Self {
+            file_path: None,
+            charts: false,
+            mermaid: true,
+            katex: true,
+            dims: HashMap::new(),
+            hover: None,
+            copied: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------- building
@@ -831,27 +871,120 @@ pub fn fence_text(content: &str, lines: &[Line], range: Range<usize>) -> String 
 }
 
 fn build_card(ctx: &mut Ctx, lines: Range<usize>, top: f32, kind: WidgetKind) -> Widget {
-    let label = if kind == WidgetKind::Mermaid { MERMAID_LABEL } else { MATH_LABEL };
+    let dkind = match kind {
+        WidgetKind::Mermaid => crate::diagram_cache::DiagramKind::Mermaid,
+        WidgetKind::Math => crate::diagram_cache::DiagramKind::Math,
+        _ => return build_error_card(ctx, lines, top, kind, "Unsupported diagram kind", ""),
+    };
     let text = fence_text(ctx.content, ctx.lines, lines.clone());
-    let shown = if text.is_empty() { " ".to_string() } else { text };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        let msg = if dkind == crate::diagram_cache::DiagramKind::Mermaid {
+            "the Mermaid block is empty"
+        } else {
+            "Empty math block"
+        };
+        return build_error_card(ctx, lines, top, kind, msg, &text);
+    }
+
+    match crate::diagram_cache::get_or_render(dkind, &text, ctx.theme) {
+        Ok(diagram) => {
+            let (w, h) = crate::diagram_cache::scale_diagram_size(diagram.size, ctx.col_w);
+            let x = ctx.col_left + ((ctx.col_w - w) / 2.0).max(0.0);
+            let rect = Rect {
+                x,
+                y: top + CARD_TOP,
+                w,
+                h,
+            };
+            let total_h = CARD_TOP + h + WIDGET_GAP;
+            Widget {
+                kind,
+                lines: lines.clone(),
+                rect: Rect {
+                    x: ctx.col_left,
+                    y: top,
+                    w: ctx.col_w,
+                    h: total_h,
+                },
+                enter: ctx.lines[lines.start].range.start,
+                body: Body::Diagram {
+                    rect,
+                    path: diagram.path,
+                },
+                buttons: Vec::new(),
+            }
+        }
+        Err(err) => build_error_card(ctx, lines, top, kind, &err, &text),
+    }
+}
+
+fn build_error_card(
+    ctx: &mut Ctx,
+    lines: Range<usize>,
+    top: f32,
+    kind: WidgetKind,
+    error: &str,
+    source: &str,
+) -> Widget {
+    let label = format!(
+        "{} error: {}",
+        if kind == WidgetKind::Mermaid { MERMAID_LABEL } else { MATH_LABEL },
+        error
+    );
+    let shown = if source.is_empty() { " ".to_string() } else { source.to_string() };
     let x0 = ctx.col_left;
     let inner = ctx.col_w - 2.0 * CARD_PAD;
-    let label_para = shape_plain(ctx, label, ctx.body.clone(), CAPTION_SIZE, CARD_LABEL_LH, ctx.theme.muted, Some(inner));
-    let code = shape_plain(ctx, &shown, ctx.mono.clone(), CODE_SIZE, CODE_LH, ctx.theme.code, Some(inner));
+    let label_para = shape_plain(
+        ctx,
+        &label,
+        ctx.body.clone(),
+        CAPTION_SIZE,
+        CARD_LABEL_LH,
+        ctx.theme.danger,
+        Some(inner),
+    );
+    let code = shape_plain(
+        ctx,
+        &shown,
+        ctx.mono.clone(),
+        CODE_SIZE,
+        CODE_LH,
+        ctx.theme.code,
+        Some(inner),
+    );
     let rect_y = top + CARD_TOP;
     let code_y = rect_y + 10.0 + CARD_LABEL_LH + 6.0;
     let rect_h = code_y + code.height() + 12.0 - rect_y;
-    let rect = Rect { x: x0, y: rect_y, w: ctx.col_w, h: rect_h };
+    let rect = Rect {
+        x: x0,
+        y: rect_y,
+        w: ctx.col_w,
+        h: rect_h,
+    };
     Widget {
         kind,
         lines: lines.clone(),
-        rect: Rect { x: x0, y: top, w: ctx.col_w, h: CARD_TOP + rect_h + WIDGET_GAP },
+        rect: Rect {
+            x: x0,
+            y: top,
+            w: ctx.col_w,
+            h: CARD_TOP + rect_h + WIDGET_GAP,
+        },
         enter: ctx.lines[lines.start].range.start,
         body: Body::Card {
             rect,
             labels: vec![
-                Label { para: label_para, x: x0 + CARD_PAD, y: rect_y + 10.0 },
-                Label { para: code, x: x0 + CARD_PAD, y: code_y },
+                Label {
+                    para: label_para,
+                    x: x0 + CARD_PAD,
+                    y: rect_y + 10.0,
+                },
+                Label {
+                    para: code,
+                    x: x0 + CARD_PAD,
+                    y: code_y,
+                },
             ],
         },
         buttons: Vec::new(),
@@ -995,7 +1128,7 @@ pub fn paint_widget(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut 
                 l.para.paint(window, cx, at(bounds, l.x, l.y));
             }
         }
-        Body::Chart { .. } => {}
+        Body::Chart { .. } | Body::Diagram { .. } => {}
     }
     for b in &w.buttons {
         let r = abs(bounds, b.rect);
@@ -1075,6 +1208,29 @@ pub fn embed(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut Window,
                         .px(px(10.0))
                         .pt(px(8.0))
                         .child(shown.clone())
+                        .into_any_element()
+                });
+            (*rect, el.into_any_element())
+        }
+        Body::Diagram { rect, path } => {
+            let (rw, rh) = (rect.w, rect.h);
+            let fallback_colour = t.surface;
+            let muted = t.muted;
+            let el = img(path.clone())
+                .w(px(rw))
+                .h(px(rh))
+                .rounded(px(6.0))
+                .with_fallback(move || {
+                    div()
+                        .w(px(rw))
+                        .h(px(rh))
+                        .rounded(px(6.0))
+                        .bg(fallback_colour)
+                        .text_color(muted)
+                        .text_size(px(12.0))
+                        .px(px(10.0))
+                        .pt(px(8.0))
+                        .child("[diagram]")
                         .into_any_element()
                 });
             (*rect, el.into_any_element())
@@ -1178,7 +1334,9 @@ mod tests {
 
     #[test]
     fn widget_spans_follow_block_kinds_and_the_chart_flag() {
-        let src = "text\n\n| a |\n| - |\n| 1 |\n\n```chart\n{}\n```\n\n```mermaid\nflowchart\n```\n\n```rust\nfn x() {}\n```\n\n![pic](a.png)\n";
+        set_mermaid_enabled(true);
+        set_katex_enabled(true);
+        let src = "text\n\n| a |\n| - |\n| 1 |\n\n```chart\n{}\n```\n\n```mermaid\nflowchart\n```\n\n```latex\ne=1\n```\n\n```math\nx=1\n```\n\n```tex\ny=1\n```\n\n```rust\nfn x() {}\n```\n\n![pic](a.png)\n";
         let (m, blocks, block_of) = lines_of(src);
         let at_line = |needle: &str| {
             m.lines
@@ -1192,11 +1350,38 @@ mod tests {
         assert_eq!(chart_on.map(|(_, k)| k), Some(WidgetKind::Chart));
         let chart_off = widget_span(&m, &blocks, &block_of, src, false, at_line("```chart"));
         assert!(chart_off.is_none(), "chart fence is a plain code block without the extension");
+
+        // Mermaid enabled vs disabled
+        set_mermaid_enabled(true);
         let mermaid = widget_span(&m, &blocks, &block_of, src, false, at_line("flowchart") - 1);
         assert_eq!(mermaid.map(|(r, k)| (r.len(), k)), Some((3, WidgetKind::Mermaid)));
+        set_mermaid_enabled(false);
+        assert!(widget_span(&m, &blocks, &block_of, src, false, at_line("flowchart") - 1).is_none());
+        set_mermaid_enabled(true);
+
+        // Math variants enabled vs disabled
+        set_katex_enabled(true);
+        let latex = widget_span(&m, &blocks, &block_of, src, false, at_line("```latex"));
+        assert_eq!(latex.map(|(r, k)| (r.len(), k)), Some((3, WidgetKind::Math)));
+        let math = widget_span(&m, &blocks, &block_of, src, false, at_line("```math"));
+        assert_eq!(math.map(|(r, k)| (r.len(), k)), Some((3, WidgetKind::Math)));
+        let tex = widget_span(&m, &blocks, &block_of, src, false, at_line("```tex"));
+        assert_eq!(tex.map(|(r, k)| (r.len(), k)), Some((3, WidgetKind::Math)));
+        set_katex_enabled(false);
+        assert!(widget_span(&m, &blocks, &block_of, src, false, at_line("```latex")).is_none());
+        assert!(widget_span(&m, &blocks, &block_of, src, false, at_line("```math")).is_none());
+        assert!(widget_span(&m, &blocks, &block_of, src, false, at_line("```tex")).is_none());
+        set_katex_enabled(true);
+
         assert!(widget_span(&m, &blocks, &block_of, src, true, at_line("fn x")).is_none());
         let img = widget_span(&m, &blocks, &block_of, src, true, at_line("![pic]"));
         assert_eq!(img.map(|(r, k)| (r, k)), Some((at_line("![pic]")..at_line("![pic]") + 1, WidgetKind::Image)));
+    }
+
+    #[test]
+    fn labels_are_not_stale() {
+        assert_eq!(MERMAID_LABEL, "Mermaid Diagram");
+        assert_eq!(MATH_LABEL, "LaTeX Math");
     }
 
     #[test]

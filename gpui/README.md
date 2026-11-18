@@ -103,9 +103,9 @@ Settings, LaunchServices needs Zyplus in `/Applications`.
 | File associations, Open With, single instance, menu bar, Cmd-Q | Ported (macOS; see File types above) |
 | Update check and download | Ported |
 | Update install (replace the running `.app`, relaunch) | Ported, macOS only |
-| Mermaid diagrams | Not rendered. Mermaid fences show as source with a note. `src/mermaid.rs` renders them with `mermaid-svg`, but it is not wired into the views yet |
-| KaTeX math | Not rendered. Math fences show as source with a note. `src/math.rs` renders them with RaTeX, but it is not wired into the views yet |
-| Extensions installed as JavaScript bundles | Not ported. The built-in extensions (CSV, JSON, Charts, Code & Config Files) are native. Mermaid and KaTeX are listed as unavailable |
+| Mermaid diagrams | Ported. Rendered with `mermaid-svg` in rich edit and preview modes, enabled via Settings → Extensions |
+| KaTeX math | Ported. Rendered with RaTeX in rich edit and preview modes, enabled via Settings → Extensions |
+| Extensions installed as JavaScript bundles | Not ported. The built-in extensions (CSV, JSON, Charts, Mermaid Diagrams, LaTeX Math (KaTeX), Code & Config Files) are native |
 
 Check the table against the merged source before a release: the viewers, PDF export
 and updater were integrated in parallel, and their status changes as they land.
