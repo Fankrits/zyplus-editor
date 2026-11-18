@@ -18,7 +18,8 @@
 
 use super::*;
 
-use gpui::{AnyElement, ClickEvent, Div, SharedString, Stateful, Subscription};
+use std::path::Path;
+use gpui::{AnyElement, ClickEvent, Div, PathPromptOptions, SharedString, Stateful, Subscription};
 
 use crate::editor::Editor;
 use crate::rich_model::Inline;
@@ -59,6 +60,8 @@ pub enum SlashAction {
     Image,
     Callout(CalloutKind),
     Chart,
+    Mermaid,
+    Math,
 }
 
 pub struct SlashItem {
@@ -70,7 +73,7 @@ pub struct SlashItem {
     pub action: SlashAction,
 }
 
-pub const SLASH_ITEMS: [SlashItem; 18] = [
+pub const SLASH_ITEMS: [SlashItem; 20] = [
     SlashItem { label: "Text", icon: "text-font", keys: "text paragraph plain normal p", action: SlashAction::Paragraph },
     SlashItem { label: "Heading 1", icon: "heading01", keys: "heading h1 title big", action: SlashAction::Heading(1) },
     SlashItem { label: "Heading 2", icon: "heading02", keys: "heading h2 subtitle", action: SlashAction::Heading(2) },
@@ -82,13 +85,15 @@ pub const SLASH_ITEMS: [SlashItem; 18] = [
     SlashItem { label: "Code block", icon: "source-code", keys: "code block fence snippet pre", action: SlashAction::CodeBlock },
     SlashItem { label: "Table", icon: "table01", keys: "table grid 3x3", action: SlashAction::Table },
     SlashItem { label: "Divider", icon: "minus-sign", keys: "divider rule hr line separator ---", action: SlashAction::Rule },
-    SlashItem { label: "Image", icon: "image01", keys: "image img picture photo", action: SlashAction::Image },
+    SlashItem { label: "Image", icon: "image01", keys: "image img picture pic photo", action: SlashAction::Image },
     SlashItem { label: "Callout: Note", icon: "information-circle", keys: "callout note alert admonition info", action: SlashAction::Callout(CalloutKind::Note) },
     SlashItem { label: "Callout: Tip", icon: "information-circle", keys: "callout tip hint", action: SlashAction::Callout(CalloutKind::Tip) },
     SlashItem { label: "Callout: Important", icon: "alert-circle", keys: "callout important", action: SlashAction::Callout(CalloutKind::Important) },
     SlashItem { label: "Callout: Warning", icon: "alert01", keys: "callout warning caution alert", action: SlashAction::Callout(CalloutKind::Warning) },
     SlashItem { label: "Callout: Caution", icon: "alert01", keys: "callout caution danger", action: SlashAction::Callout(CalloutKind::Caution) },
     SlashItem { label: "Chart", icon: "chart01", keys: "chart graph bar line pie data", action: SlashAction::Chart },
+    SlashItem { label: "Mermaid diagram", icon: "list-tree", keys: "mermaid diagram flowchart graph sequence", action: SlashAction::Mermaid },
+    SlashItem { label: "Math block", icon: "multiplication-sign", keys: "math latex katex equation formula tex", action: SlashAction::Math },
 ];
 
 /// Indices into `SLASH_ITEMS` that match `query`, best first. An empty query
@@ -171,6 +176,10 @@ pub fn slash_span(model: &Model, text: &str, caret: usize) -> Option<usize> {
     if caret - p - 1 > SLASH_QUERY_MAX {
         return None;
     }
+    // Don't open inside inline code or link destination / autolink.
+    if line.inlines.iter().any(|inl| inl.range.contains(&p) && matches!(inl.kind, InlineKind::Code | InlineKind::Link { .. } | InlineKind::AutoLink)) {
+        return None;
+    }
     let at_word_start = p == line.range.start
         || p == line.content_start
         || text[line.range.start..p]
@@ -185,53 +194,185 @@ pub fn slash_query(text: &str, start: usize, caret: usize) -> &str {
     text.get(start + 1..caret).unwrap_or("")
 }
 
+/// Destination for an image: relative to `doc_path`'s parent folder when under it,
+/// otherwise absolute. Escaped with `<>` via `link_dest` when containing spaces or parentheses.
+pub fn image_dest_path(image_path: &Path, doc_path: Option<&Path>) -> String {
+    let rel = doc_path
+        .and_then(|doc| doc.parent())
+        .and_then(|parent| image_path.strip_prefix(parent).ok());
+    let path_str = match rel {
+        Some(r) => r.to_string_lossy(),
+        None => image_path.to_string_lossy(),
+    };
+    link_dest(&path_str)
+}
+
+/// Applies an image path to `content`: if `sel` is currently selecting "url" in `![image](url)`
+/// (as left by slash 'Image'), replaces "url" with the destination and positions the caret
+/// right after the closing ')'. Otherwise inserts `![image](<dest>)` at `sel`.
+pub fn apply_image_path_edit(
+    content: &str,
+    sel: Range<usize>,
+    image_path: &Path,
+    doc_path: Option<&Path>,
+) -> Edit {
+    let dest = image_dest_path(image_path, doc_path);
+    if sel.end <= content.len() && content.get(sel.clone()) == Some("url") {
+        let after = &content[sel.end..];
+        let caret = if after.starts_with(')') {
+            sel.start + dest.len() + 1
+        } else {
+            sel.start + dest.len()
+        };
+        Edit {
+            range: sel,
+            insert: dest,
+            selection: caret..caret,
+        }
+    } else {
+        let body = format!("![image]({dest})");
+        let n = body.len();
+        rich_ops::block_edit(content, sel.start, sel.end, &body, n)
+    }
+}
+
 /// The whole document after running `action` on the line with `/query` at
 /// `start..caret`. The query is removed first, so the result is one edit and
 /// one undo step.
 pub fn slash_edit(text: &str, start: usize, caret: usize, action: SlashAction) -> Edit {
     let caret = caret.clamp(start, text.len());
-    let stripped = format!("{}{}", &text[..start], &text[caret..]);
-    let s = start;
-    let op: Edit = match action {
-        SlashAction::Paragraph => rich_ops::set_paragraph(&stripped, s..s),
-        SlashAction::Heading(n) => rich_ops::set_heading(&stripped, s..s, Some(n)),
-        SlashAction::List(kind) => rich_ops::toggle_list(&stripped, s..s, kind),
-        SlashAction::Quote => rich_ops::toggle_quote(&stripped, s..s),
-        SlashAction::CodeBlock => rich_ops::insert_code_block(&stripped, s..s, ""),
-        SlashAction::Table => rich_ops::insert_table(&stripped, s..s, 3, 3),
-        SlashAction::Rule => rich_ops::insert_rule(&stripped, s..s),
-        SlashAction::Image => {
-            // `url` is selected so typing replaces it.
-            let body = "![image](url)";
-            let e = rich_ops::block_edit(&stripped, s, s, body, 9);
-            let c = e.selection.start;
-            Some(Edit {
-                selection: c..c + 3,
-                ..e
-            })
+    let (ls, le) = rich_ops::line_bounds(text, start);
+    let p = rich_ops::line_prefix(text, start);
+
+    // If the line consists only of block markers (> , - , # ) before the slash
+    // and nothing but whitespace after the query, the action replaces the whole
+    // line so no empty list bullets, quotes or headings are left dangling.
+    let prefix_only = start == p.content_start
+        || (start > p.content_start && text[p.content_start..start].trim().is_empty());
+    let rest_empty = text[caret..le].trim().is_empty();
+    let empty_line_query = prefix_only && rest_empty;
+
+    let is_block = matches!(
+        action,
+        SlashAction::CodeBlock
+            | SlashAction::Table
+            | SlashAction::Rule
+            | SlashAction::Image
+            | SlashAction::Callout(_)
+            | SlashAction::Chart
+            | SlashAction::Mermaid
+            | SlashAction::Math
+    );
+
+    if is_block {
+        let (s, e) = if empty_line_query {
+            (ls, le)
+        } else {
+            // Trim trailing spaces/tabs on the text before '/' so the block has clean spacing.
+            let before = &text[..start];
+            let trimmed = before.trim_end_matches([' ', '\t']);
+            let s = if trimmed.len() >= ls { trimmed.len() } else { start };
+            (s, caret)
+        };
+        match action {
+            SlashAction::CodeBlock => {
+                let head = "```\n";
+                let body = format!("{head}\n```");
+                rich_ops::block_edit(text, s, e, &body, head.len())
+            }
+            SlashAction::Table => {
+                let (rendered, pos) = rich_ops::table_template(3, 3);
+                rich_ops::block_edit(text, s, e, &rendered, pos[0][0])
+            }
+            SlashAction::Rule => rich_ops::block_edit(text, s, e, "---", 4),
+            SlashAction::Image => {
+                // `url` is selected so typing replaces it.
+                let body = "![image](url)";
+                let ed = rich_ops::block_edit(text, s, e, body, 9);
+                let c = ed.selection.start;
+                Edit {
+                    selection: c..c + 3,
+                    ..ed
+                }
+            }
+            SlashAction::Callout(kind) => {
+                let body = format!("> [!{}]\n> ", callout_name(kind));
+                let n = body.len();
+                rich_ops::block_edit(text, s, e, &body, n)
+            }
+            SlashAction::Chart => {
+                let head = "```chart\n";
+                let starter = "{\n  \"type\": \"bar\",\n  \"data\": {\n    \"labels\": [\"A\", \"B\", \"C\"],\n    \"datasets\": [{ \"label\": \"Series 1\", \"data\": [3, 5, 2] }]\n  }\n}";
+                let body = format!("{head}{starter}\n```");
+                let ed = rich_ops::block_edit(text, s, e, &body, head.len());
+                let c = ed.selection.start;
+                Edit {
+                    selection: c..c + starter.len(),
+                    ..ed
+                }
+            }
+            SlashAction::Mermaid => {
+                let head = "```mermaid\n";
+                let starter = "flowchart LR\n  A[Start] --> B[End]";
+                let body = format!("{head}{starter}\n```");
+                let ed = rich_ops::block_edit(text, s, e, &body, head.len());
+                let c = ed.selection.start;
+                Edit {
+                    selection: c..c + starter.len(),
+                    ..ed
+                }
+            }
+            SlashAction::Math => {
+                let head = "```math\n";
+                let starter = "E = mc^2";
+                let body = format!("{head}{starter}\n```");
+                let ed = rich_ops::block_edit(text, s, e, &body, head.len());
+                let c = ed.selection.start;
+                Edit {
+                    selection: c..c + starter.len(),
+                    ..ed
+                }
+            }
+            _ => unreachable!(),
         }
-        SlashAction::Callout(kind) => {
-            let body = format!("> [!{}]\n> ", callout_name(kind));
-            let n = body.len();
-            Some(rich_ops::block_edit(&stripped, s, s, &body, n))
+    } else {
+        if empty_line_query {
+            let (insert, caret_offset) = match action {
+                SlashAction::Heading(n) => (format!("{} ", "#".repeat(n.clamp(1, 6) as usize)), n as usize + 1),
+                SlashAction::List(ListType::Bullet) => ("- ".to_string(), 2),
+                SlashAction::List(ListType::Ordered) => ("1. ".to_string(), 3),
+                SlashAction::List(ListType::Task) => ("- [ ] ".to_string(), 6),
+                SlashAction::Quote => ("> ".to_string(), 2),
+                SlashAction::Paragraph => (String::new(), 0),
+                _ => unreachable!(),
+            };
+            let sel = ls + caret_offset;
+            Edit {
+                range: ls..le,
+                insert,
+                selection: sel..sel,
+            }
+        } else {
+            let stripped = format!("{}{}", &text[..start], &text[caret..]);
+            let s = start;
+            let op: Edit = match action {
+                SlashAction::Paragraph => rich_ops::set_paragraph(&stripped, s..s),
+                SlashAction::Heading(n) => rich_ops::set_heading(&stripped, s..s, Some(n)),
+                SlashAction::List(kind) => rich_ops::toggle_list(&stripped, s..s, kind),
+                SlashAction::Quote => rich_ops::toggle_quote(&stripped, s..s),
+                _ => unreachable!(),
+            }
+            .unwrap_or(Edit {
+                range: s..s,
+                insert: String::new(),
+                selection: s..s,
+            });
+            Edit {
+                range: 0..text.len(),
+                insert: op.apply(&stripped),
+                selection: op.selection,
+            }
         }
-        SlashAction::Chart => {
-            let head = "```chart\n";
-            let body = format!(
-                "{head}{{\n  \"type\": \"bar\",\n  \"data\": {{\n    \"labels\": [\"A\", \"B\", \"C\"],\n    \"datasets\": [{{ \"label\": \"Series 1\", \"data\": [3, 5, 2] }}]\n  }}\n}}\n```"
-            );
-            Some(rich_ops::block_edit(&stripped, s, s, &body, head.len()))
-        }
-    }
-    .unwrap_or(Edit {
-        range: s..s,
-        insert: String::new(),
-        selection: s..s,
-    });
-    Edit {
-        range: 0..text.len(),
-        insert: op.apply(&stripped),
-        selection: op.selection,
     }
 }
 
@@ -656,6 +797,7 @@ impl RichEditor {
         if typing && edit.range.is_empty() && edit.insert == "/" {
             self.overlays.slash_pending = Some(edit.selection.end);
         }
+        self.overlay_sync_slash();
     }
 
     /// Scrolling closes the popovers and hides the toolbar and tooltip until
@@ -668,6 +810,7 @@ impl RichEditor {
 
     /// Handles a key the overlays claim. Returns `true` when it was consumed.
     pub(super) fn overlay_key(&mut self, key: OverlayKey, cx: &mut Context<Self>) -> bool {
+        self.overlay_sync_slash();
         if let Some(menu) = self.overlays.slash {
             let ranked = self.slash_ranked();
             let n = ranked.len();
@@ -718,8 +861,42 @@ impl RichEditor {
         let Some(item) = SLASH_ITEMS.get(index) else {
             return;
         };
-        let edit = slash_edit(&self.content, menu.start, self.cursor(), item.action);
+        let action = item.action;
+        let edit = slash_edit(&self.content, menu.start, self.cursor(), action);
         self.apply_edit(edit, cx);
+        if action == SlashAction::Image {
+            self.prompt_for_image(cx);
+        }
+    }
+
+    /// Replaces the image url with `image_path` (relative to the active document if possible).
+    pub fn apply_image_path(&mut self, image_path: &Path, cx: &mut Context<Self>) {
+        let doc_path = self.widgets.file_path.as_deref();
+        let edit = apply_image_path_edit(&self.content, self.selection.clone(), image_path, doc_path);
+        self.apply_edit(edit, cx);
+    }
+
+    /// Prompts for an image using the native file picker, falling back to leaving `url` selected.
+    pub fn prompt_for_image(&mut self, cx: &mut Context<Self>) {
+        if std::env::var_os("ZYPLUS_TEST_SCRIPT").is_some() {
+            return;
+        }
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose an image".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                if let Some(path) = paths.into_iter().next() {
+                    let _ = this.update(cx, |editor, cx| {
+                        editor.apply_image_path(&path, cx);
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     /// Runs the slash-menu or popover logic that depends on the state after an
@@ -1331,6 +1508,31 @@ mod tests {
         assert_eq!(labels("code"), vec!["Code block"]);
         assert!(labels("zzz").is_empty());
         assert_eq!(labels("heading 1"), vec!["Heading 1"], "every term must match");
+
+        // Natural queries required by brief:
+        assert_eq!(labels("code").first(), Some(&"Code block"));
+        assert_eq!(labels("img").first(), Some(&"Image"));
+        assert_eq!(labels("table").first(), Some(&"Table"));
+        assert_eq!(labels("pic").first(), Some(&"Image"));
+        assert_eq!(labels("fence").first(), Some(&"Code block"));
+        assert_eq!(labels("snippet").first(), Some(&"Code block"));
+        assert_eq!(labels("grid").first(), Some(&"Table"));
+        assert_eq!(labels("photo").first(), Some(&"Image"));
+
+        // Step 3 new items queries:
+        assert_eq!(labels("mermaid"), vec!["Mermaid diagram"]);
+        assert_eq!(labels("flowchart"), vec!["Mermaid diagram"]);
+        assert!(labels("diagram").contains(&"Mermaid diagram"));
+        assert!(labels("graph").contains(&"Mermaid diagram"));
+        assert!(labels("graph").contains(&"Chart"));
+        assert_eq!(labels("sequence"), vec!["Mermaid diagram"]);
+
+        assert_eq!(labels("math"), vec!["Math block"]);
+        assert_eq!(labels("latex"), vec!["Math block"]);
+        assert_eq!(labels("katex"), vec!["Math block"]);
+        assert_eq!(labels("equation"), vec!["Math block"]);
+        assert_eq!(labels("formula"), vec!["Math block"]);
+        assert!(labels("tex").contains(&"Math block"));
     }
 
     #[test]
@@ -1355,6 +1557,8 @@ mod tests {
         assert_eq!(span("/a/b", 4), None, "a second slash ends the query");
         assert_eq!(span("- /", 3), Some(2), "after a list marker");
         assert_eq!(span("# /hi", 5), Some(2), "after a heading marker");
+        assert_eq!(span("` /`", 2), None, "inside inline code");
+        assert_eq!(span("[link](http://x)", 10), None, "inside link destination");
     }
 
     #[test]
@@ -1415,6 +1619,20 @@ mod tests {
         assert!(out.contains("\"datasets\""));
         assert!(out.trim_end().ends_with("```"));
         assert_eq!(e.selection.start, "```chart\n".len());
+        assert!(&out[e.selection.clone()].starts_with("{\n"));
+    }
+
+    #[test]
+    fn slash_mermaid_and_math_templates() {
+        let e = slash_edit("/mermaid", 0, 8, SlashAction::Mermaid);
+        let out = e.apply("/mermaid");
+        assert!(out.starts_with("```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```"), "{out:?}");
+        assert_eq!(&out[e.selection.clone()], "flowchart LR\n  A[Start] --> B[End]");
+
+        let e = slash_edit("/math", 0, 5, SlashAction::Math);
+        let out = e.apply("/math");
+        assert!(out.starts_with("```math\nE = mc^2\n```"), "{out:?}");
+        assert_eq!(&out[e.selection.clone()], "E = mc^2");
     }
 
     #[test]
@@ -1423,6 +1641,122 @@ mod tests {
         let out = e.apply("/img");
         assert_eq!(out.trim_end(), "![image](url)");
         assert_eq!(&out[e.selection.clone()], "url");
+    }
+
+    #[test]
+    fn slash_image_picker_path_logic() {
+        use std::path::PathBuf;
+        let doc = PathBuf::from("/Users/test/notes/my_note.md");
+
+        // 1. Relative under folder
+        let img1 = PathBuf::from("/Users/test/notes/photo.png");
+        assert_eq!(image_dest_path(&img1, Some(&doc)), "photo.png");
+
+        let img2 = PathBuf::from("/Users/test/notes/sub/pic.png");
+        assert_eq!(image_dest_path(&img2, Some(&doc)), "sub/pic.png");
+
+        // 2. Spaces and parens escaped via link_dest
+        let img_spaces = PathBuf::from("/Users/test/notes/my photo (1).png");
+        assert_eq!(image_dest_path(&img_spaces, Some(&doc)), "<my photo (1).png>");
+
+        // 3. Outside folder: absolute
+        let img_other = PathBuf::from("/Users/test/other/outside.png");
+        assert_eq!(image_dest_path(&img_other, Some(&doc)), "/Users/test/other/outside.png");
+
+        // 4. Replacing "url" in ![image](url) and placing caret after ')'
+        let text = "![image](url)\n";
+        let edit = apply_image_path_edit(text, 9..12, &img1, Some(&doc));
+        let out = edit.apply(text);
+        assert_eq!(out, "![image](photo.png)\n");
+        // Caret right after ')'
+        assert_eq!(edit.selection, 19..19);
+        assert_eq!(&out[..edit.selection.start], "![image](photo.png)");
+    }
+
+    #[test]
+    fn slash_edit_contexts_a_through_g() {
+        // (a) an empty document
+        let e = slash_edit("/code", 0, 5, SlashAction::CodeBlock);
+        let out = e.apply("/code");
+        assert_eq!(out, "```\n\n```\n");
+        assert_eq!(e.selection, 4..4);
+
+        // (b) an empty line between paragraphs
+        let text = "para 1\n\n/code\n\npara 2";
+        let e = slash_edit(text, 8, 13, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "para 1\n\n```\n\n```\n\npara 2");
+
+        // (c) end of a non-empty paragraph line after a space
+        let text = "hello /code";
+        let e = slash_edit(text, 6, 11, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "hello\n\n```\n\n```\n");
+
+        // (d1) inside an empty list item: replaces list marker cleanly without dangling '- '
+        let text = "- /code";
+        let e = slash_edit(text, 2, 7, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "```\n\n```\n");
+
+        // (d2) inside a list item with text: inserts block after text
+        let text = "- item /code";
+        let e = slash_edit(text, 7, 12, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "- item\n\n```\n\n```\n");
+
+        // (e1) inside an empty quote: replaces quote marker cleanly without dangling '> '
+        let text = "> /code";
+        let e = slash_edit(text, 2, 7, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "```\n\n```\n");
+
+        // (e2) inside a quote with text: inserts block after text
+        let text = "> quote /code";
+        let e = slash_edit(text, 8, 13, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "> quote\n\n```\n\n```\n");
+
+        // (f) last line of the file with no trailing newline
+        let text = "first line\n/code";
+        let e = slash_edit(text, 11, 16, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "first line\n\n```\n\n```\n");
+
+        // (g) document start
+        let text = "/code\nsecond line";
+        let e = slash_edit(text, 0, 5, SlashAction::CodeBlock);
+        let out = e.apply(text);
+        assert_eq!(out, "```\n\n```\n\nsecond line");
+    }
+
+    #[test]
+    fn slash_edit_table_and_image_contexts() {
+        // Table in empty list item
+        let e = slash_edit("- /table", 2, 8, SlashAction::Table);
+        let out = e.apply("- /table");
+        assert!(out.starts_with('|'), "{out:?}");
+        assert!(out.contains("| --- |"), "{out:?}");
+        assert!(!out.starts_with("- "), "{out:?}");
+        assert!(!out.contains("- \n"), "{out:?}");
+
+        // Image in empty quote
+        let e = slash_edit("> /img", 2, 6, SlashAction::Image);
+        let out = e.apply("> /img");
+        assert_eq!(out.trim_end(), "![image](url)");
+        assert_eq!(&out[e.selection.clone()], "url");
+
+        // Mermaid in empty line between paragraphs
+        let text = "p1\n\n/mermaid\n\np2";
+        let e = slash_edit(text, 4, 12, SlashAction::Mermaid);
+        let out = e.apply(text);
+        assert!(out.contains("```mermaid\nflowchart LR"));
+
+        // Math at document start
+        let text = "/math\nrest";
+        let e = slash_edit(text, 0, 5, SlashAction::Math);
+        let out = e.apply(text);
+        assert!(out.starts_with("```math\nE = mc^2\n```\n\nrest"));
     }
 
     #[test]

@@ -193,7 +193,7 @@ fn norm(text: &str, sel: Range<usize>) -> (usize, usize) {
 }
 
 /// Start and end (exclusive of `\n`) of the line containing byte `pos`.
-fn line_bounds(text: &str, pos: usize) -> (usize, usize) {
+pub fn line_bounds(text: &str, pos: usize) -> (usize, usize) {
     let pos = pos.min(text.len());
     let ls = text[..pos].rfind('\n').map_or(0, |i| i + 1);
     let le = text[pos..].find('\n').map_or(text.len(), |i| pos + i);
@@ -1691,7 +1691,7 @@ pub fn set_paragraph(text: &str, sel: Range<usize>) -> Option<Edit> {
 /// Block insertion at the caret. A non-empty selection (`s..e`) is replaced.
 /// Blank lines separate the block from neighbouring text. `caret_in_body` is
 /// the caret offset inside `body`.
-pub(crate) fn block_edit(text: &str, s: usize, e: usize, body: &str, caret_in_body: usize) -> Edit {
+pub fn block_edit(text: &str, s: usize, e: usize, body: &str, caret_in_body: usize) -> Edit {
     let before = &text[..s];
     let lead = if before.is_empty() || before.ends_with("\n\n") {
         ""
@@ -1733,18 +1733,23 @@ pub fn insert_rule(text: &str, sel: Range<usize>) -> Option<Edit> {
     Some(block_edit(text, s, e, "---", 4))
 }
 
+/// Renders a template GFM table with `rows` rows and `cols` columns.
+pub fn table_template(rows: usize, cols: usize) -> (String, Vec<Vec<usize>>) {
+    let t = Table {
+        header: vec![String::new(); cols],
+        align: vec![Align::Default; cols],
+        body: vec![vec![String::new(); cols]; rows.saturating_sub(1)],
+    };
+    render(&t)
+}
+
 /// GFM table with `rows` rows (header included) and `cols` columns, empty cells,
 /// caret in the first header cell.
 pub fn insert_table(text: &str, sel: Range<usize>, rows: usize, cols: usize) -> Option<Edit> {
     if rows == 0 || cols == 0 {
         return None;
     }
-    let t = Table {
-        header: vec![String::new(); cols],
-        align: vec![Align::Default; cols],
-        body: vec![vec![String::new(); cols]; rows - 1],
-    };
-    let (rendered, pos) = render(&t);
+    let (rendered, pos) = table_template(rows, cols);
     let (s, e) = norm(text, sel);
     Some(block_edit(text, s, e, &rendered, pos[0][0]))
 }

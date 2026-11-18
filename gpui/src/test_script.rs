@@ -30,6 +30,8 @@
 //! state <file>              writes key=value lines: path, mode, focus, rich state
 //! echo <text>               logs a marker line
 //! focus <editor|query|replace|tree>  moves keyboard focus (find bar fields, sidebar tree)
+//! rich-action <name>        runs a rich overlay command (bold, slash-N, etc.)
+//! image-path <path>         applies an image path to the active rich editor
 //! click-row <path>          a single click on a sidebar row (select, then open or toggle)
 //! menu-run <label>          runs an item of the open context menu (disabled items do nothing)
 //! replace-all               runs the find bar's Replace All (same call as its button)
@@ -94,6 +96,8 @@ enum Cmd {
     Focus(String),
     /// Runs an overlay command by name (see `rich_overlay::OverlayCmd::from_name`).
     RichAction(String),
+    /// Replaces the active image url or inserts an image with the given path.
+    ImagePath(String),
     /// Opens a context menu by name (`actions`, `tab <path>`, `row <path>`).
     Menu(String),
     ClickRow(String),
@@ -187,6 +191,7 @@ fn parse(text: &str) -> Result<Vec<(usize, Cmd)>, String> {
             "echo" => Cmd::Echo(rest.to_string()),
             "focus" => Cmd::Focus(rest.trim().to_string()),
             "rich-action" => Cmd::RichAction(rest.trim().to_string()),
+            "image-path" => Cmd::ImagePath(rest.trim().to_string()),
             "menu" => Cmd::Menu(rest.trim().to_string()),
             "click-row" => Cmd::ClickRow(rest.trim().to_string()),
             "menu-run" => Cmd::MenuRun(rest.trim().to_string()),
@@ -416,6 +421,20 @@ async fn execute(cmd: &Cmd, handle: WindowHandle<Zyplus>, cx: &mut AsyncApp) {
                         if !editor.overlay_action(&name, window, cx) {
                             eprintln!("[script] unknown rich action {name:?}");
                         }
+                    });
+                }
+            });
+        }
+        Cmd::ImagePath(path_str) => {
+            let path = std::path::PathBuf::from(path_str);
+            let _ = cx.update_window(handle.into(), |view, _window, cx| {
+                let rich = view
+                    .downcast::<Zyplus>()
+                    .ok()
+                    .and_then(|root| root.read(cx).test_rich());
+                if let Some(rich) = rich {
+                    rich.update(cx, |editor, cx| {
+                        editor.apply_image_path(&path, cx);
                     });
                 }
             });

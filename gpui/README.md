@@ -95,7 +95,7 @@ Settings, LaunchServices needs Zyplus in `/Applications`.
 | --- | --- |
 | Markdown editing (plain mode with highlighting and soft wrap) | Ported |
 | Rich/Plain toggle (⌘E) | Ported |
-| WYSIWYG rich editing: live preview over the markdown source, tables, images, charts, selection toolbar, `/` menu, link popover | Ported (no block drag handle) |
+| WYSIWYG rich editing: live preview over the markdown source, tables, images, code blocks, callouts, charts, mermaid diagrams, math blocks, selection toolbar, `/` menu, link popover | Ported (no block drag handle) |
 | Tabs, project folders, session restore, find/replace, autosave | Ported |
 | Settings (General, Theme, Extensions, Shortcuts, About), shortcuts sheet, ten palettes | Ported. Theme cards and base colours follow the web's HeroUI tokens |
 | CSV and JSON views, `chart` fences | Ported |
