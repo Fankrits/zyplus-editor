@@ -998,9 +998,10 @@ pub fn paint_widget(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut 
         Body::Chart { .. } => {}
     }
     for b in &w.buttons {
+        let r = abs(bounds, b.rect);
         window.paint_quad(quad(
-            abs(bounds, b.rect),
-            px(4.0),
+            r,
+            r.size.width.min(r.size.height) / 2.0,
             t.surface,
             px(1.0),
             t.border,
@@ -1028,9 +1029,10 @@ fn paint_button_face(b: &Button, bounds: Bounds<Pixels>, t: &Theme, window: &mut
 
 /// Paints a code fence's copy button.
 pub fn paint_button(b: &Button, bounds: Bounds<Pixels>, t: &Theme, window: &mut Window, cx: &mut App) {
+    let r = abs(bounds, b.rect);
     window.paint_quad(quad(
-        abs(bounds, b.rect),
-        px(4.0),
+        r,
+        r.size.width.min(r.size.height) / 2.0,
         t.surface,
         px(1.0),
         t.border,

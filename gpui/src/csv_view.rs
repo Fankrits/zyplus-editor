@@ -1034,7 +1034,7 @@ impl CsvView {
             .items_center()
             .h(px(24.0))
             .px_2()
-            .rounded_md()
+            .rounded_full()
             .text_size(px(12.0))
             .font_family(MONO_FONT);
         if active {
