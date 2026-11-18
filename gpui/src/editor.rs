@@ -24,11 +24,13 @@ use gpui::{
     actions, div, fill, point, px, relative, rgba, size, App, Bounds, ClipboardItem, Context,
     CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, Font,
     FontStyle, FontWeight, FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ScrollWheelEvent, SharedString, Style, TextRun, UTF16Selection, Window, WindowTextSystem,
+    KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    Pixels, Point, ScrollWheelEvent, SharedString, Style, TextRun, UTF16Selection, Window,
+    WindowTextSystem,
 };
 
 use crate::highlight::{self, LineCache, TokenKind};
+use crate::rich_ops;
 use crate::theme::Theme;
 use crate::wrap_layout::{ShapeCache, WrappedText};
 
@@ -59,12 +61,16 @@ actions!(
         Down,
         Home,
         End,
+        DocStart,
+        DocEnd,
         SelectLeft,
         SelectRight,
         SelectUp,
         SelectDown,
         SelectHome,
         SelectEnd,
+        SelectDocStart,
+        SelectDocEnd,
         WordLeft,
         WordRight,
         SelectWordLeft,
@@ -78,6 +84,25 @@ actions!(
         Cancel,
     ]
 );
+
+/// Key bindings for the navigation keys both editors share: Cmd-Up/Down move
+/// to the document start/end, and Cmd-Left/Right to the visual row's start/end
+/// (the Home/End actions). Single-line inputs get the Cmd-Left/Right pair only.
+pub fn bind_nav_keys(cx: &mut App) {
+    for context in ["Editor", "RichEditor"] {
+        let c = Some(context);
+        cx.bind_keys([
+            KeyBinding::new("cmd-up", DocStart, c),
+            KeyBinding::new("cmd-down", DocEnd, c),
+            KeyBinding::new("shift-cmd-up", SelectDocStart, c),
+            KeyBinding::new("shift-cmd-down", SelectDocEnd, c),
+            KeyBinding::new("cmd-left", Home, c),
+            KeyBinding::new("cmd-right", End, c),
+            KeyBinding::new("shift-cmd-left", SelectHome, c),
+            KeyBinding::new("shift-cmd-right", SelectEnd, c),
+        ]);
+    }
+}
 
 type Snapshot = (String, Range<usize>);
 type Tokens = Vec<Vec<(Range<usize>, TokenKind)>>;
@@ -100,13 +125,16 @@ pub struct Editor {
     view_height: f32,
     /// The width text wrapped to at the last paint. None in single-line mode and before the first paint.
     wrap_width: Option<f32>,
+    /// The font and size the last paint shaped with. Key handlers run outside
+    /// paint, so they must shape with these, not the window's default style.
+    paint_style: Option<(Font, Pixels)>,
     /// Row-local x the Up/Down run keeps, in px.
     desired_x: Option<f32>,
     /// The caret sits at the end of the row above a soft wrap, not the start of the next.
     at_row_end: bool,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
-    last_edit: Option<Instant>,
+    last_edit: Option<(Instant, EditKind)>,
     last_bounds: Option<Bounds<Pixels>>,
     /// The lines the last paint laid out, top to bottom, for hit-testing and IME.
     last_lines: Vec<VisibleLine>,
@@ -131,6 +159,22 @@ pub struct Editor {
     /// Called with the whole buffer after every edit, so the tab it belongs to
     /// can track whether it differs from what is on disk.
     pub on_change: Option<Box<dyn Fn(&str, &mut App)>>,
+}
+
+/// Whether an edit inserts text or only removes it. Quick edits of one kind
+/// fold into one undo step; switching kind starts a new step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditKind {
+    Insert,
+    Delete,
+}
+
+/// Whether an edit of `kind` at `now` folds into the undo step opened by `last`.
+fn folds_into_undo(last: Option<(Instant, EditKind)>, now: Instant, kind: EditKind) -> bool {
+    match last {
+        Some((at, prev)) => prev == kind && now.duration_since(at) < Duration::from_millis(650),
+        None => false,
+    }
 }
 
 /// Layout state kept across paints. Edits clear what depends on line indices;
@@ -236,6 +280,7 @@ impl Editor {
             scroll_px: 0.0,
             view_height: 0.0,
             wrap_width: None,
+            paint_style: None,
             desired_x: None,
             at_row_end: false,
             undo: Vec::new(),
@@ -322,6 +367,11 @@ impl Editor {
         &self.content
     }
 
+    /// The selected byte range (the caret when empty). Find steps from it.
+    pub fn selection(&self) -> Range<usize> {
+        self.selection.clone()
+    }
+
     pub fn set_search(
         &mut self,
         mut ranges: Vec<Range<usize>>,
@@ -386,7 +436,7 @@ impl Editor {
         if ranges.is_empty() {
             return 0;
         }
-        self.push_undo();
+        self.push_undo(EditKind::Insert);
         let mut next = String::with_capacity(self.content.len());
         let mut last = 0;
         for range in &ranges {
@@ -455,19 +505,11 @@ impl Editor {
     }
 
     fn prev_boundary(&self, offset: usize) -> usize {
-        self.content[..offset]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+        rich_ops::prev_grapheme(&self.content, offset)
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
-        self.content[offset..]
-            .chars()
-            .next()
-            .map(|c| offset + c.len_utf8())
-            .unwrap_or(self.content.len())
+        rich_ops::next_grapheme(&self.content, offset)
     }
 
     /// Rebuilds everything derived from the text. Call after every content change.
@@ -477,22 +519,19 @@ impl Editor {
         self.layout.fences.clear();
     }
 
-    /// Records a restore point, folding quick consecutive edits into one step so
-    /// typing a sentence is a single undo.
-    fn push_undo(&mut self) {
+    /// Records a restore point, folding quick consecutive edits of the same kind
+    /// into one step so typing a sentence is a single undo. Switching between
+    /// inserting and deleting starts a new step.
+    fn push_undo(&mut self, kind: EditKind) {
         let now = Instant::now();
-        let coalesce = match self.last_edit {
-            Some(last) => now.duration_since(last) < Duration::from_millis(650),
-            None => false,
-        };
-        if !coalesce {
+        if !folds_into_undo(self.last_edit, now, kind) {
             self.undo.push((self.content.clone(), self.selection.clone()));
             if self.undo.len() > 250 {
                 self.undo.remove(0);
             }
             self.redo.clear();
         }
-        self.last_edit = Some(now);
+        self.last_edit = Some((now, kind));
     }
 
     fn notify_changed(&mut self, cx: &mut Context<Self>) {
@@ -507,7 +546,11 @@ impl Editor {
         } else {
             new_text.to_string()
         };
-        self.push_undo();
+        self.push_undo(if new_text.is_empty() {
+            EditKind::Delete
+        } else {
+            EditKind::Insert
+        });
         self.content.replace_range(range.clone(), &new_text);
         let caret = range.start + new_text.len();
         self.selection = caret..caret;
@@ -581,10 +624,37 @@ impl Editor {
     // ---- layout --------------------------------------------------------
 
     /// The per-pass style: font, colours, wrap width, and the token window.
+    /// Layout runs in prepaint, where the window's text style is the editor's.
     fn frame(&mut self, window: &Window, view_height: f32, wrap: Option<f32>) -> Frame {
         let style = window.text_style();
         let font = style.font();
         let font_size = style.font_size.to_pixels(window.rem_size());
+        self.frame_with(window, (font, font_size), view_height, wrap)
+    }
+
+    /// The frame for caret movement. Key handlers run outside paint, where the
+    /// window's text style is the default (system font, 16px), not the editor's
+    /// (Menlo 14px). Shaping with that breaks rows where the screen does not
+    /// show them, so reuse the style of the last paint.
+    fn navigation_frame(&mut self, window: &Window) -> Frame {
+        let style = match self.paint_style.clone() {
+            Some(style) => style,
+            None => {
+                let style = window.text_style();
+                (style.font(), style.font_size.to_pixels(window.rem_size()))
+            }
+        };
+        let (view_height, wrap) = (self.view_height, self.wrap_width);
+        self.frame_with(window, style, view_height, wrap)
+    }
+
+    fn frame_with(
+        &mut self,
+        window: &Window,
+        (font, font_size): (Font, Pixels),
+        view_height: f32,
+        wrap: Option<f32>,
+    ) -> Frame {
         let theme = Theme::for_name(&self.theme_name, window.appearance());
         let highlighting = self.highlighting();
         let tokens_first = self.scroll.line;
@@ -746,6 +816,7 @@ impl Editor {
         };
         self.wrap_width = wrap;
         let mut frame = self.frame(window, view_height, wrap);
+        self.paint_style = Some((frame.font.clone(), frame.font_size));
 
 
         let key = self.style_key(&frame);
@@ -874,7 +945,7 @@ impl Editor {
         let cursor = self.cursor();
         let line = self.line_index_of(cursor);
         let start = self.line_starts[line];
-        let mut frame = self.frame(window, self.view_height, self.wrap_width);
+        let mut frame = self.navigation_frame(window);
         let para = self.paragraph(&mut frame, line);
         let (row, x) = para.caret_row_x(cursor - start, self.at_row_end);
         let x = *self.desired_x.get_or_insert(x);
@@ -920,7 +991,7 @@ impl Editor {
         let cursor = self.cursor();
         let line = self.line_index_of(cursor);
         let start = self.line_starts[line];
-        let mut frame = self.frame(window, self.view_height, self.wrap_width);
+        let mut frame = self.navigation_frame(window);
         let para = self.paragraph(&mut frame, line);
         let (row, _) = para.caret_row_x(cursor - start, self.at_row_end);
         let (target, at_row_end) = if !end {
@@ -937,8 +1008,8 @@ impl Editor {
 
     fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_empty() {
-            let prev = self.prev_boundary(self.cursor());
-            self.selection = prev..self.cursor();
+            let start = rich_ops::backspace_start(&self.content, self.cursor());
+            self.selection = start..self.cursor();
         }
         self.replace_range(self.selection.clone(), "", cx);
     }
@@ -1046,6 +1117,31 @@ impl Editor {
 
     fn select_end(&mut self, _: &SelectEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.visual_edge(window, true, true, cx);
+    }
+
+    /// Cmd-Up/Down. Multi-line only: single-line inputs keep their own keys.
+    fn doc_start(&mut self, _: &DocStart, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.single_line {
+            self.place(0, false, false, false, cx);
+        }
+    }
+
+    fn doc_end(&mut self, _: &DocEnd, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.single_line {
+            self.place(self.content.len(), false, false, false, cx);
+        }
+    }
+
+    fn select_doc_start(&mut self, _: &SelectDocStart, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.single_line {
+            self.place(0, false, true, false, cx);
+        }
+    }
+
+    fn select_doc_end(&mut self, _: &SelectDocEnd, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.single_line {
+            self.place(self.content.len(), false, true, false, cx);
+        }
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -1444,7 +1540,7 @@ pub fn prev_word(text: &str, offset: usize) -> usize {
             }
         }
     }
-    i
+    rich_ops::cluster_floor(text, i)
 }
 
 /// Where Alt-Right lands: the end of the word after `offset`. Spaces are
@@ -1469,7 +1565,7 @@ pub fn next_word(text: &str, offset: usize) -> usize {
             }
         }
     }
-    i
+    rich_ops::cluster_ceil(text, i)
 }
 
 /// Which colour a line is painted in, from the line's own Markdown shape. This
@@ -1733,6 +1829,10 @@ impl Render for Editor {
             .on_action(cx.listener(Self::end))
             .on_action(cx.listener(Self::select_home))
             .on_action(cx.listener(Self::select_end))
+            .on_action(cx.listener(Self::doc_start))
+            .on_action(cx.listener(Self::doc_end))
+            .on_action(cx.listener(Self::select_doc_start))
+            .on_action(cx.listener(Self::select_doc_end))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::copy))
@@ -1752,6 +1852,18 @@ impl Render for Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undo_steps_fold_only_quick_edits_of_one_kind() {
+        let t0 = Instant::now();
+        let soon = t0 + Duration::from_millis(100);
+        let late = t0 + Duration::from_millis(900);
+        assert!(folds_into_undo(Some((t0, EditKind::Insert)), soon, EditKind::Insert));
+        assert!(!folds_into_undo(Some((t0, EditKind::Insert)), soon, EditKind::Delete));
+        assert!(!folds_into_undo(Some((t0, EditKind::Delete)), soon, EditKind::Insert));
+        assert!(!folds_into_undo(Some((t0, EditKind::Insert)), late, EditKind::Insert));
+        assert!(!folds_into_undo(None, soon, EditKind::Insert));
+    }
 
     #[test]
     fn scroll_down_moves_through_line_heights() {

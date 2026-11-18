@@ -82,23 +82,20 @@ pub fn strip_verbatim_prefix(s: &str) -> String {
     }
 }
 
-/// Resolves a file argument to an absolute path string, or `None` if it is not
-/// an existing regular file. Relative arguments are joined onto `cwd` first.
-/// Directories are rejected: a folder on the command line is not a document.
-pub fn resolve_file_arg(arg: &Path, cwd: Option<&Path>) -> Option<String> {
+/// Resolves a command-line path to an absolute path string. Relative paths are
+/// joined onto `cwd`. Nothing is checked on disk: the caller sorts folders,
+/// files and missing paths, so a bad name is reported instead of dropped.
+pub fn resolve_arg(arg: &Path, cwd: Option<&Path>) -> String {
     let candidate = match cwd {
         Some(cwd) if !arg.is_absolute() => cwd.join(arg),
         _ => arg.to_path_buf(),
     };
-    if !candidate.is_file() {
-        return None;
-    }
-    Some(display_path(candidate.canonicalize().unwrap_or(candidate)))
+    display_path(candidate.canonicalize().unwrap_or(candidate))
 }
 
-/// Files passed on the command line, resolved against the working directory.
-/// Flags such as `-psn_0_12345` (sent by Finder) and anything that is not an
-/// existing regular file are dropped.
+/// Paths passed on the command line (files and folders, existing or not),
+/// resolved against the working directory. Flags such as `-psn_0_12345` (sent
+/// by Finder) are dropped.
 ///
 /// `args_os`, not `args`: `args` panics on an argument that is not valid
 /// Unicode. On Unix that is any filename the filesystem happens to hold, and
@@ -108,7 +105,7 @@ pub fn cli_file_args() -> Vec<String> {
     std::env::args_os()
         .skip(1)
         .filter(|a| !a.to_string_lossy().starts_with('-'))
-        .filter_map(|a| resolve_file_arg(Path::new(&a), cwd.as_deref()))
+        .map(|a| resolve_arg(Path::new(&a), cwd.as_deref()))
         .collect()
 }
 
@@ -529,7 +526,7 @@ mod launch_services {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{file_url_to_path, resolve_file_arg, strip_verbatim_prefix, urls_to_paths};
+    use super::{file_url_to_path, resolve_arg, strip_verbatim_prefix, urls_to_paths};
     use std::path::{Path, PathBuf};
 
     /// A fresh directory per test, under the temp dir. Keep the names short:
@@ -562,18 +559,23 @@ mod path_tests {
         let file = dir.join("note.md");
         std::fs::write(&file, "# hi").unwrap();
 
-        let resolved = resolve_file_arg(Path::new("note.md"), Some(&dir))
-            .expect("a file that exists should resolve");
+        let resolved = resolve_arg(Path::new("note.md"), Some(&dir));
         assert!(resolved.ends_with("note.md"), "got {resolved}");
         assert!(
             !resolved.starts_with(r"\\?\"),
             "verbatim prefix leaked: {resolved}"
         );
 
-        // A path that is not on disk is not a file to open.
-        assert!(resolve_file_arg(Path::new("nope.md"), Some(&dir)).is_none());
-        // Nor is a directory: a folder on the command line is not a document.
-        assert!(resolve_file_arg(Path::new("."), Some(&dir)).is_none());
+        // A path that is not on disk still comes back, so it can be reported
+        // as missing rather than vanishing.
+        let missing = resolve_arg(Path::new("nope.md"), Some(&dir));
+        assert!(missing.ends_with("nope.md"), "got {missing}");
+        // A folder resolves too: it is added as a project root.
+        let folder = resolve_arg(Path::new("."), Some(&dir));
+        assert_eq!(
+            std::fs::canonicalize(&folder).ok(),
+            std::fs::canonicalize(&dir).ok()
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

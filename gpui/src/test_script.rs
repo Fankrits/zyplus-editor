@@ -29,14 +29,18 @@
 //! dumpclip <file>           writes the clipboard text
 //! state <file>              writes key=value lines: path, mode, focus, rich state
 //! echo <text>               logs a marker line
-//! focus <editor|query|replace>  moves keyboard focus (find bar fields)
+//! focus <editor|query|replace|tree>  moves keyboard focus (find bar fields, sidebar tree)
+//! click-row <path>          a single click on a sidebar row (select, then open or toggle)
+//! menu-run <label>          runs an item of the open context menu (disabled items do nothing)
 //! replace-all               runs the find bar's Replace All (same call as its button)
 //! menu <x> <y> actions      opens the tab bar's ⋯ menu at x, y
 //! menu <x> <y> tab <path>   opens a tab's right-click menu
 //! menu <x> <y> row <path>   opens a sidebar row's right-click menu
+//! menu <x> <y> tree         opens the empty-tree-area menu
 //! settings <section>        opens Settings on general|appearance|extensions|shortcuts|about
 //! dialog delete <path>      opens the delete confirmation for a path
 //! dialog unsaved <path>     opens the unsaved-changes dialog for a tab
+//! update check|download|action  the About update button's calls (action presses the shown button)
 //! quit                      exits the app
 //! ```
 //!
@@ -92,8 +96,11 @@ enum Cmd {
     RichAction(String),
     /// Opens a context menu by name (`actions`, `tab <path>`, `row <path>`).
     Menu(String),
+    ClickRow(String),
+    MenuRun(String),
     Settings(String),
     Dialog(String),
+    Update(String),
     ReplaceAll,
     Quit,
 }
@@ -181,8 +188,11 @@ fn parse(text: &str) -> Result<Vec<(usize, Cmd)>, String> {
             "focus" => Cmd::Focus(rest.trim().to_string()),
             "rich-action" => Cmd::RichAction(rest.trim().to_string()),
             "menu" => Cmd::Menu(rest.trim().to_string()),
+            "click-row" => Cmd::ClickRow(rest.trim().to_string()),
+            "menu-run" => Cmd::MenuRun(rest.trim().to_string()),
             "settings" => Cmd::Settings(rest.trim().to_string()),
             "dialog" => Cmd::Dialog(rest.trim().to_string()),
+            "update" => Cmd::Update(rest.trim().to_string()),
             "replace-all" => Cmd::ReplaceAll,
             "quit" => Cmd::Quit,
             other => return Err(format!("line {line_no}: unknown command {other:?}")),
@@ -366,6 +376,22 @@ async fn execute(cmd: &Cmd, handle: WindowHandle<Zyplus>, cx: &mut AsyncApp) {
             let spec = spec.clone();
             let _ = handle.update(cx, |root, _, cx| root.test_menu(&spec, cx));
         }
+        Cmd::ClickRow(path) => {
+            let path = path.clone();
+            let _ = cx.update_window(handle.into(), |view, window, cx| {
+                if let Ok(root) = view.downcast::<Zyplus>() {
+                    root.update(cx, |root, cx| root.test_click_row(&path, window, cx));
+                }
+            });
+        }
+        Cmd::MenuRun(label) => {
+            let label = label.clone();
+            let _ = cx.update_window(handle.into(), |view, window, cx| {
+                if let Ok(root) = view.downcast::<Zyplus>() {
+                    root.update(cx, |root, cx| root.test_menu_run(&label, window, cx));
+                }
+            });
+        }
         Cmd::Settings(name) => {
             let name = name.clone();
             let _ = handle.update(cx, |root, _, cx| root.test_settings(&name, cx));
@@ -373,6 +399,10 @@ async fn execute(cmd: &Cmd, handle: WindowHandle<Zyplus>, cx: &mut AsyncApp) {
         Cmd::Dialog(spec) => {
             let spec = spec.clone();
             let _ = handle.update(cx, |root, _, cx| root.test_dialog(&spec, cx));
+        }
+        Cmd::Update(sub) => {
+            let sub = sub.clone();
+            let _ = handle.update(cx, |root, _, cx| root.test_update(&sub, cx));
         }
         Cmd::RichAction(name) => {
             let name = name.clone();
@@ -527,6 +557,7 @@ impl Zyplus {
         let items = match kind {
             "actions" => self.actions_menu(),
             "tab" => self.tab_menu(&rest),
+            "tree" => self.tree_area_menu(),
             "row" => {
                 let is_folder = std::path::Path::new(&rest).is_dir();
                 let is_root = self.roots.iter().any(|root| root == &rest);
@@ -538,6 +569,44 @@ impl Zyplus {
             }
         };
         self.open_menu(x, y, items, cx);
+    }
+
+    /// A single left click on a sidebar row: focus the tree, select the row, then
+    /// open a file (when the tree opens that type) or toggle a folder.
+    fn test_click_row(&mut self, path: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let Some(row) = crate::tree::visible_rows(&self.tree, &self.open_folders)
+            .into_iter()
+            .find(|row| row.id == path)
+        else {
+            eprintln!("[script] click-row: no visible row {path:?}");
+            return;
+        };
+        window.focus(&self.tree_focus);
+        self.select_row(path, &gpui::Modifiers::default(), cx);
+        if row.is_folder {
+            self.toggle_folder(path, cx);
+        } else if crate::nav::tree_opens(&row.name, |id| self.extension_enabled(id)) {
+            self.open_document(path, Some(window), cx);
+        }
+        cx.notify();
+    }
+
+    /// Runs the open context menu's item with this label, like a click on it.
+    /// Disabled items do nothing, as they do on screen.
+    fn test_menu_run(&mut self, label: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        let Some(item) = self
+            .menu
+            .as_ref()
+            .and_then(|menu| menu.items.iter().find(|item| item.label == label).cloned())
+        else {
+            eprintln!("[script] menu-run: no open menu item {label:?}");
+            return;
+        };
+        if item.disabled {
+            eprintln!("[script] menu-run: {label:?} is disabled");
+            return;
+        }
+        self.run_menu(item.action, window, cx);
     }
 
     /// Opens a confirmation dialog: `delete <path>` or `unsaved <path>`.
@@ -576,6 +645,17 @@ impl Zyplus {
         self.open_settings(section, cx);
     }
 
+    /// `update check|download|action`: the same calls the About panel makes.
+    /// `action` presses whatever single button the panel shows now.
+    fn test_update(&mut self, sub: &str, cx: &mut Context<Self>) {
+        match sub {
+            "check" => self.check_for_updates(cx),
+            "download" => self.download_update(cx),
+            "action" => self.update_action(cx),
+            other => eprintln!("[script] unknown update command {other:?}"),
+        }
+    }
+
     /// The rich editor of the active tab, when that tab is in Rich mode.
     pub(crate) fn test_rich(&self) -> Option<Entity<RichEditor>> {
         let tab = self.active_tab()?;
@@ -603,6 +683,7 @@ impl Zyplus {
         let field = match (target, &self.find) {
             ("replace", Some(find)) => Some(find.replace.read(cx).focus_handle(cx)),
             ("query", Some(find)) => Some(find.query.read(cx).focus_handle(cx)),
+            ("tree", _) => Some(self.tree_focus.clone()),
             _ => None,
         };
         match field {
@@ -627,6 +708,85 @@ impl Zyplus {
             }
         }
         out.push_str(&format!("find_open={}\n", self.find.is_some()));
+        out.push_str(&format!(
+            "modal={}\n",
+            match &self.modal {
+                None => "none",
+                Some(Modal::Rename { .. }) => "rename",
+                Some(Modal::NewFolder { .. }) => "new-folder",
+                Some(Modal::Delete { .. }) => "delete",
+                Some(Modal::Unsaved { .. }) => "unsaved",
+                Some(Modal::Settings { .. }) => "settings",
+            }
+        ));
+        out.push_str(&format!("menu_open={}\n", self.menu.is_some()));
+        out.push_str(&format!("welcome={}\n", self.welcome));
+        out.push_str(&format!("quitting={}\n", self.quitting));
+        out.push_str(&format!("roots={}\n", self.roots.len()));
+        out.push_str(&format!(
+            "error={}\n",
+            self.error.as_ref().map_or(String::new(), |e| e.to_string().replace('\n', " "))
+        ));
+        out.push_str(&format!(
+            "focus_on_shell={}\n",
+            self.focus.is_focused(window)
+        ));
+        if let Some(find) = &self.find {
+            out.push_str(&format!("find_query={}\n", find.query_text));
+            out.push_str(&format!("find_index={}\n", find.index));
+            out.push_str(&format!("find_total={}\n", find.matches.len()));
+            out.push_str(&format!(
+                "find_query_focused={}\n",
+                find.query.read(cx).focus_handle(cx).is_focused(window)
+            ));
+            out.push_str(&format!(
+                "find_replace_focused={}\n",
+                find.replace.read(cx).focus_handle(cx).is_focused(window)
+            ));
+        }
+        if let Some(searchable) = self.active_searchable(cx) {
+            let sel = searchable.selection(cx);
+            out.push_str(&format!("selection={}..{}\n", sel.start, sel.end));
+        }
+        out.push_str(&format!(
+            "tab_focused={}\n",
+            tab.is_some_and(|t| t.focus_handle(cx).is_focused(window))
+        ));
+        out.push_str(&format!("tree_focused={}\n", self.tree_focus.is_focused(window)));
+        out.push_str(&format!(
+            "tree_cursor={}\n",
+            self.selection_anchor.clone().unwrap_or_default()
+        ));
+        out.push_str(&format!("tree_selected={}\n", self.selected.join("|")));
+        let menu: Vec<String> = self
+            .menu
+            .as_ref()
+            .map(|menu| {
+                menu.items
+                    .iter()
+                    .map(|item| format!("{}{}", item.label, if item.disabled { "!" } else { "" }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.push_str(&format!("menu={}\n", menu.join("|")));
+        out.push_str(&format!("sidebar_collapsed={}\n", self.sidebar_collapsed));
+        let modal = match &self.modal {
+            Some(Modal::Rename { .. }) => "rename",
+            Some(Modal::NewFolder { .. }) => "new-folder",
+            Some(Modal::Delete { .. }) => "delete",
+            Some(Modal::Unsaved { .. }) => "unsaved",
+            Some(Modal::Settings { .. }) => "settings",
+            None => "",
+        };
+        out.push_str(&format!("modal={modal}\n"));
+        let panel = self.update_status.panel_view();
+        out.push_str(&format!("update={}\n", self.update_status.kind()));
+        out.push_str(&format!("update_button={}\n", panel.button));
+        out.push_str(&format!("update_text={}\n", panel.text.replace('\n', " ")));
+        out.push_str(&format!(
+            "update_pill={}\n",
+            self.update_status.pill_label().unwrap_or_default()
+        ));
         out
     }
 }

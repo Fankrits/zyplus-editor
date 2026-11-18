@@ -8,7 +8,9 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::paths::{basename_of, display_join, invalid_name_reason, is_under, free_path};
 
@@ -191,7 +193,93 @@ pub fn read_text_file(path: &str) -> Result<String, String> {
 }
 
 pub fn write_text_file(path: &str, content: &str) -> Result<(), String> {
-    fs::write(path, content).map_err(|e| io_err(e, path))
+    write_atomic(Path::new(path), content.as_bytes()).map_err(|e| io_err(e, path))
+}
+
+/// Errno for a rename that crossed filesystems (`EXDEV`; `ERROR_NOT_SAME_DEVICE` on Windows).
+fn is_cross_device(err: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    const EXDEV: i32 = 17;
+    #[cfg(not(windows))]
+    const EXDEV: i32 = 18;
+    err.raw_os_error() == Some(EXDEV)
+}
+
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Replaces the file at `path` with `bytes` so that a crash, a full disk or a
+/// failed write leaves either the old file or the new one, never a truncated mix.
+///
+/// The bytes go to a hidden temp file in the same directory (the sidebar skips
+/// dotfiles, so a leftover never shows up as a note), are fsynced, and are then
+/// renamed over the target. The existing file's permission bits are copied to
+/// the temp file first. A symlink is followed, so the link keeps pointing at the
+/// same file. A read-only existing file is refused, as `fs::write` would refuse
+/// it. The temp file is removed on every error path.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let target = match fs::canonicalize(path) {
+        Ok(real) => real,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+        Err(err) => return Err(err),
+    };
+    let permissions = match fs::metadata(&target) {
+        Ok(meta) if meta.permissions().readonly() => {
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
+        Ok(meta) => Some(meta.permissions()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err),
+    };
+
+    let dir = match target.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string());
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
+
+    let staged = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        if let Some(permissions) = permissions {
+            file.set_permissions(permissions)?;
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&tmp, &target)
+    })();
+
+    match staged {
+        Ok(()) => {
+            sync_dir(dir);
+            Ok(())
+        }
+        Err(err) if is_cross_device(&err) => {
+            // Only reachable if the temp file somehow landed on another
+            // filesystem. A direct write is the best that is left.
+            let _ = fs::remove_file(&tmp);
+            fs::write(&target, bytes)
+        }
+        Err(err) => {
+            let _ = fs::remove_file(&tmp);
+            Err(err)
+        }
+    }
+}
+
+/// Makes a completed rename durable. Best effort: not every platform lets a
+/// directory be opened and synced, and the rename has already happened.
+fn sync_dir(dir: &Path) {
+    if let Ok(handle) = fs::File::open(dir) {
+        let _ = handle.sync_all();
+    }
 }
 
 pub fn create_file(path: &str) -> Result<(), String> {
@@ -260,6 +348,90 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn atomic_overwrite_replaces_the_content_and_leaves_no_temp_file() {
+        let dir = scratch("atomic-overwrite");
+        let path = format!("{dir}/note.md");
+        write_text_file(&path, "first version, quite a bit longer than the second").unwrap();
+        write_text_file(&path, "second").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["note.md".to_string()],
+            "no temp file may be left behind"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_failed_write_keeps_the_old_file_and_removes_its_temp_file() {
+        let dir = scratch("atomic-missing");
+        let missing = format!("{dir}/gone/note.md");
+        let err = write_text_file(&missing, "x").unwrap_err();
+        assert!(!err.is_empty(), "the error should say what went wrong");
+        assert!(!Path::new(&format!("{dir}/gone")).exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_read_only_file_is_refused_and_left_alone() {
+        let dir = scratch("atomic-readonly");
+        let path = format!("{dir}/locked.md");
+        fs::write(&path, "keep me").unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&path, perms).unwrap();
+
+        assert!(write_text_file(&path, "replaced").is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "keep me");
+
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_readonly(false);
+        fs::set_permissions(&path, perms).unwrap();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_overwrite_keeps_the_permission_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("atomic-perms");
+        let path = format!("{dir}/shared.md");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        write_text_file(&path, "new").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_is_followed_and_stays_a_symlink() {
+        let dir = scratch("atomic-symlink");
+        let real = format!("{dir}/real.md");
+        let link = format!("{dir}/link.md");
+        fs::write(&real, "old").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        write_text_file(&link, "new").unwrap();
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

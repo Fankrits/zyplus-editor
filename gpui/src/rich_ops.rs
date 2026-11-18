@@ -23,8 +23,10 @@
 //!   stays put. Code lines insert/remove up to 2 spaces. Tables and paragraphs
 //!   return `None`.
 //! - `toggle_inline`: Bold/Italic/Strike/Code. Wraps selection; unwraps when the
-//!   markers sit just outside the selection or the selection includes them; a
-//!   caret inside a word expands to the word; a caret elsewhere inserts a pair.
+//!   markers sit just outside the selection or the selection includes them.
+//!   A caret strictly inside a word wraps the word and keeps the caret in place;
+//!   any other caret inserts a marker pair with the caret between. Wrapping a
+//!   selection strips inner markers of the same kind first (no `****`).
 //!   Run-aware: `***x***` is bold+italic, italic toggles the odd layer.
 //! - `insert_link` / `paste_url_over_selection`: `[sel](url)`; without url the
 //!   caret goes into the `()`. `smart_paste`: URL over selection becomes a link;
@@ -48,6 +50,8 @@
 #![allow(dead_code)]
 
 use std::ops::Range;
+
+use unicode_segmentation::UnicodeSegmentation;
 
 // ---------------------------------------------------------------- public types
 
@@ -319,6 +323,86 @@ fn word_bounds(text: &str, pos: usize) -> (usize, usize) {
         }
     }
     (ws, we)
+}
+
+// ---------------------------------------------------------------- graphemes
+
+/// Start of the line containing byte `pos` (the grapheme window never crosses a newline).
+fn window_start(text: &str, pos: usize) -> usize {
+    text[..pos].rfind('\n').map_or(0, |i| i + 1)
+}
+
+/// Start of the extended grapheme cluster before `pos` (0 at the text start).
+/// Emoji ZWJ sequences, flags and Thai marks are one cluster.
+pub fn prev_grapheme(text: &str, pos: usize) -> usize {
+    let pos = norm(text, pos..pos).0;
+    let ws = window_start(text, pos);
+    if ws == pos {
+        // Just after a newline: the newline is the cluster before the caret.
+        return text[..pos].char_indices().next_back().map_or(0, |(i, _)| i);
+    }
+    text[ws..pos]
+        .grapheme_indices(true)
+        .next_back()
+        .map_or(ws, |(i, _)| ws + i)
+}
+
+/// End of the extended grapheme cluster after `pos` (text end at the end).
+pub fn next_grapheme(text: &str, pos: usize) -> usize {
+    let pos = norm(text, pos..pos).0;
+    let we = text[pos..].find('\n').map_or(text.len(), |i| pos + i + 1);
+    text[pos..we]
+        .graphemes(true)
+        .next()
+        .map_or(pos, |g| pos + g.len())
+}
+
+/// The grapheme boundary at or before `pos`: `pos` itself when it is a boundary,
+/// else the start of the cluster it falls inside.
+pub fn cluster_floor(text: &str, pos: usize) -> usize {
+    let pos = norm(text, pos..pos).0;
+    if pos == text.len() {
+        return pos;
+    }
+    let ws = window_start(text, pos);
+    let mut best = ws;
+    for (i, _) in text[ws..].grapheme_indices(true) {
+        if ws + i > pos {
+            break;
+        }
+        best = ws + i;
+    }
+    best
+}
+
+/// The grapheme boundary at or after `pos` (the end of the cluster `pos` is in).
+pub fn cluster_ceil(text: &str, pos: usize) -> usize {
+    let pos = norm(text, pos..pos).0;
+    let floor = cluster_floor(text, pos);
+    if floor == pos {
+        pos
+    } else {
+        next_grapheme(text, floor)
+    }
+}
+
+/// Where Backspace starts deleting from `pos`. Emoji and other clusters go
+/// whole; Thai removes one code point at a time, the way macOS text fields do
+/// (`กิ` then `ก`).
+pub fn backspace_start(text: &str, pos: usize) -> usize {
+    let start = prev_grapheme(text, pos);
+    let pos = norm(text, pos..pos).0;
+    let cluster = &text[start..pos];
+    if cluster.chars().any(is_thai) {
+        if let Some(last) = cluster.chars().next_back() {
+            return pos - last.len_utf8();
+        }
+    }
+    start
+}
+
+fn is_thai(c: char) -> bool {
+    ('\u{0E00}'..='\u{0E7F}').contains(&c)
 }
 
 /// Terminal column width of one char: 0 for combining/zero-width, 2 for CJK,
@@ -804,6 +888,20 @@ fn enter_core(base: &str, c: usize) -> Option<(String, usize)> {
         if c < p.content_start {
             return None;
         }
+        // Enter at the end of an opening fence with no closing fence after it:
+        // create the empty block with its closing fence, caret inside.
+        if p.fence && base[c..le].trim().is_empty() {
+            let fence_state = step_fence(fence_before(base, ls), &base[ls..le]);
+            if !closed_after(base, le, fence_state) {
+                if let Some((fc, fnum, _)) = fence_run(&base[p.inner_start..le]) {
+                    let lead = base[ls..p.inner_start].to_string();
+                    let closing = (fc as char).to_string().repeat(fnum);
+                    let seg = format!("{}\n{}\n{}{}", &base[ls..c], lead, lead, closing);
+                    let caret = ls + (c - ls) + 1 + lead.len();
+                    return Some((replace_line(base, ls, le, &seg), caret));
+                }
+            }
+        }
         let lead = base[ls..p.content_start].to_string();
         let seg = format!("{}\n{}{}", &base[ls..c], lead, &base[c..le]);
         let caret = ls + (c - ls) + 1 + lead.len();
@@ -814,8 +912,18 @@ fn enter_core(base: &str, c: usize) -> Option<(String, usize)> {
             return None;
         }
         let last = ls + base[ls..p.quote_end].rfind('>')?;
-        let seg = base[ls..last].to_string();
-        return Some((replace_line(base, ls, le, &seg), last));
+        let prefix = &base[ls..last];
+        if prefix.trim().is_empty() && ls > 0 {
+            // Enter inside a quote leaves a bare `>` separator above the new
+            // line. Exiting drops it too, so the quote ends with one blank line.
+            let (pls, ple) = line_bounds(base, ls - 1);
+            if base[pls..ple].trim() == ">" {
+                let seg = if le == base.len() { "\n" } else { "" };
+                let new = format!("{}{}{}", &base[..pls], seg, &base[le..]);
+                return Some((new, pls + seg.len()));
+            }
+        }
+        return Some(exit_block(base, ls, le, prefix));
     }
     if p.heading.is_some() {
         if c < p.content_start {
@@ -838,27 +946,76 @@ fn enter_core(base: &str, c: usize) -> Option<(String, usize)> {
         }
         let qp = &base[ls..p.quote_end];
         if p.content_empty {
-            let seg = if it.indent > 0 {
+            if it.indent > 0 {
                 let ni = parent_indent(base, ls, it.indent);
-                format!("{}{}{}", qp, " ".repeat(ni), marker_text(&it))
-            } else {
-                qp.to_string()
-            };
-            let caret = ls + seg.len();
-            return Some((replace_line(base, ls, le, &seg), caret));
+                let seg = format!("{}{}{}", qp, " ".repeat(ni), marker_text(&it));
+                let caret = ls + seg.len();
+                return Some((replace_line(base, ls, le, &seg), caret));
+            }
+            return Some(exit_block(base, ls, le, qp));
         }
         let before = &base[ls..c];
         let after = base[c..le].trim_start();
         let cont = format!("{}{}{}", qp, " ".repeat(it.indent), next_marker(&it));
         let seg = format!("{}\n{}{}", before, cont, after);
         let caret = ls + before.len() + 1 + cont.len();
-        return Some((replace_line(base, ls, le, &seg), caret));
+        // Ordered siblings below shift up by one: renumber them so the list stays 1, 2, 3.
+        let mut edits = vec![LineEdit {
+            at: ls,
+            old_len: le - ls,
+            new_prefix: seg,
+        }];
+        if it.ordered {
+            edits.extend(renumber_edits(base, le, qp, it.indent, it.delim, it.number + 2));
+        }
+        let (new, _) = apply_edits(base, (c, c), &edits);
+        return Some((new, caret));
     }
     if p.content_empty && p.quote_depth == 0 && p.indent == 0 {
         // Empty plain line: just open another line.
         return Some((replace_line(base, ls, le, "\n"), ls + 1));
     }
     Some(split_block(base, ls, le, c, &p, p.indent))
+}
+
+/// Whether the line before the one starting at `ls` has text. A block that
+/// starts right after text would be read as its lazy continuation, so it needs
+/// a blank line between them.
+fn needs_blank_above(text: &str, ls: usize) -> bool {
+    if ls == 0 {
+        return false;
+    }
+    let (pls, ple) = line_bounds(text, ls - 1);
+    !text[pls..ple].trim().is_empty()
+}
+
+/// Whether the fence opened with `state` (the state after its opening line)
+/// is closed by some line after `le`.
+fn closed_after(text: &str, le: usize, mut state: Fence) -> bool {
+    let mut cur = le;
+    while cur < text.len() {
+        let (ls, nle) = line_bounds(text, cur + 1);
+        state = step_fence(state, &text[ls..nle]);
+        if state.is_none() {
+            return true;
+        }
+        cur = nle;
+    }
+    false
+}
+
+/// Replaces the empty line `ls..le` with `prefix` (the container left after
+/// an exit: a paragraph, or a quote line). At the end of the document, a
+/// paragraph that follows text gets a blank line first. Without the blank
+/// line, typing the next paragraph would continue the list or quote above.
+fn exit_block(base: &str, ls: usize, le: usize, prefix: &str) -> (String, usize) {
+    let seg = if le == base.len() && needs_blank_above(base, ls) {
+        format!("{}\n{}", prefix.trim_end(), prefix)
+    } else {
+        prefix.to_string()
+    };
+    let caret = ls + seg.len();
+    (replace_line(base, ls, le, &seg), caret)
 }
 
 /// Splits a paragraph-like line at `c` into two blocks separated by a blank
@@ -873,6 +1030,48 @@ fn split_block(base: &str, ls: usize, le: usize, c: usize, p: &Prefix, cont_inde
     let seg = format!("{}\n{}\n{}{}", before, blank, cont, after);
     let caret = ls + before.len() + 1 + blank.len() + 1 + cont.len();
     (replace_line(base, ls, le, &seg), caret)
+}
+
+/// Numbers of the ordered siblings below the item whose line ends at `le`.
+/// They must follow `next`, `next + 1`, ... Only items of the same list (same
+/// quote, indent and delimiter) are renumbered; nested content is skipped and
+/// the first line that leaves the list ends the scan.
+fn renumber_edits(text: &str, le: usize, qp: &str, indent: usize, delim: char, mut next: u64) -> Vec<LineEdit> {
+    let mut out = Vec::new();
+    let mut cur = le;
+    while cur < text.len() {
+        let (ls, nle) = line_bounds(text, cur + 1);
+        cur = nle;
+        if text[ls..nle].trim().is_empty() {
+            continue;
+        }
+        let (qe, ind) = line_indent(text, ls, nle);
+        if text[ls..qe] != *qp {
+            break;
+        }
+        if ind > indent {
+            continue;
+        }
+        if ind < indent {
+            break;
+        }
+        let pos = qe + ind;
+        match parse_item(text, pos, nle) {
+            Some(it) if it.ordered && it.delim == delim => {
+                if it.number != next {
+                    let digits = text[pos..nle].bytes().take_while(u8::is_ascii_digit).count();
+                    out.push(LineEdit {
+                        at: pos,
+                        old_len: digits,
+                        new_prefix: next.to_string(),
+                    });
+                }
+                next += 1;
+            }
+            _ => break,
+        }
+    }
+    out
 }
 
 /// Enter inside a GFM table: move to the same column of the next row, or
@@ -908,6 +1107,19 @@ pub fn backspace_at_line_start(text: &str, sel: Range<usize>) -> Option<Edit> {
         return None;
     }
     let p = line_prefix(text, s);
+    if p.in_code && !p.fence && s == p.quote_end && p.line_start > 0 {
+        // First body line of a fence: joining it onto the opening line would
+        // corrupt the info string (```` ```js ````). Stay at the info line's end.
+        let (pls, ple) = line_bounds(text, p.line_start - 1);
+        let above = analyze(text, pls, ple, fence_before(text, pls));
+        if above.fence && above.in_code {
+            return Some(Edit {
+                range: s..s,
+                insert: String::new(),
+                selection: ple..ple,
+            });
+        }
+    }
     if p.in_code || p.fence || p.table || p.rule {
         return None;
     }
@@ -925,6 +1137,14 @@ pub fn backspace_at_line_start(text: &str, sel: Range<usize>) -> Option<Edit> {
             return None;
         }
         let qp = &text[ls..p.quote_end];
+        if it.indent == 0 && needs_blank_above(text, ls) {
+            // Lifting the item to a paragraph (or quote line) right after text:
+            // keep a blank line so it does not continue the list above.
+            let blank = qp.trim_end();
+            let seg = format!("{}\n{}{}", blank, qp, &text[p.content_start..le]);
+            let c = ls + blank.len() + 1 + qp.len();
+            return Some(finish(text, replace_line(text, ls, le, &seg), c..c));
+        }
         let lead = if it.indent > 0 {
             format!("{}{}{}", qp, " ".repeat(parent_indent(text, ls, it.indent)), marker_text(it))
         } else {
@@ -936,11 +1156,18 @@ pub fn backspace_at_line_start(text: &str, sel: Range<usize>) -> Option<Edit> {
     }
     if p.quote_depth > 0 && s == p.quote_end {
         let last = ls + text[ls..p.quote_end].rfind('>')?;
-        let seg = format!("{}{}", &text[ls..last], &text[p.quote_end..le]);
+        let prefix = &text[ls..last];
+        if prefix.trim().is_empty() && needs_blank_above(text, ls) {
+            let seg = format!("\n{}", &text[p.quote_end..le]);
+            let c = ls + 1;
+            return Some(finish(text, replace_line(text, ls, le, &seg), c..c));
+        }
+        let seg = format!("{}{}", prefix, &text[p.quote_end..le]);
         return Some(finish(text, replace_line(text, ls, le, &seg), last..last));
     }
     None
 }
+
 
 /// Tab (indent) or Shift-Tab (outdent). See the module docs for the contract.
 pub fn tab(text: &str, sel: Range<usize>, shift: bool) -> Option<Edit> {
@@ -1025,15 +1252,39 @@ pub fn tab(text: &str, sel: Range<usize>, shift: bool) -> Option<Edit> {
 // ---------------------------------------------------------------- inline marks
 
 /// Toggles an inline mark on the selection (or the word at the caret).
+///
+/// A caret strictly inside a word (word characters on both sides) wraps that
+/// word and keeps the caret where it was. A caret anywhere else inserts an
+/// empty marker pair with the caret between the markers. Wrapping a selection
+/// that already holds the same mark strips the inner markers first, so the
+/// result never nests `****`.
 pub fn toggle_inline(text: &str, sel: Range<usize>, mark: InlineMark) -> Option<Edit> {
     let (mut s, mut e) = norm(text, sel);
     let m = mark.marker();
     let l = mark.layer();
     let ch = mark.ch();
     let b = text.as_bytes();
+    let mut caret_in_word: Option<usize> = None;
     if s == e {
-        let (ws, we) = word_bounds(text, s);
-        if ws < we {
+        if let Some((o, c)) = caret_pair(text, s, mark) {
+            // The caret sits in, or right against, an existing span: toggle it off.
+            let new = format!("{}{}{}", &text[..o], &text[o + l..c], &text[c + l..]);
+            let mut caret = s;
+            if s > o {
+                caret -= l;
+            }
+            if s > c {
+                caret -= l;
+            }
+            return Some(finish(text, new, caret..caret));
+        }
+        let inside = match (text[..s].chars().next_back(), text[s..].chars().next()) {
+            (Some(before), Some(after)) => is_word_char(before) && is_word_char(after),
+            _ => false,
+        };
+        if inside {
+            let (ws, we) = word_bounds(text, s);
+            caret_in_word = Some(s - ws);
             s = ws;
             e = we;
         } else {
@@ -1044,22 +1295,169 @@ pub fn toggle_inline(text: &str, sel: Range<usize>, mark: InlineMark) -> Option<
     }
     let before = b[..s].iter().rev().take_while(|&&x| x == ch).count();
     let after = b[e..].iter().take_while(|&&x| x == ch).count();
-    if mark.active(before.min(after)) {
+    let mut edit = if mark.active(before.min(after)) {
         let new = format!("{}{}{}", &text[..s - l], &text[s..e], &text[e + l..]);
-        return Some(finish(text, new, s - l..e - l));
+        finish(text, new, s - l..e - l)
+    } else {
+        let lead = b[s..e].iter().take_while(|&&x| x == ch).count();
+        let trail = b[s..e].iter().rev().take_while(|&&x| x == ch).count();
+        if e - s > 2 * l && mark.active(lead.min(trail)) {
+            let new = format!("{}{}{}", &text[..s], &text[s + l..e - l], &text[e..]);
+            finish(text, new, s..e - 2 * l)
+        } else {
+            let inner = strip_inner_marks(mark, &text[s..e]);
+            let new = format!("{}{}{}{}{}", &text[..s], m, inner, m, &text[e..]);
+            let start = s + l;
+            finish(text, new, start..start + inner.len())
+        }
+    };
+    if let Some(rel) = caret_in_word {
+        let c = edit.selection.start + rel;
+        edit.selection = c..c;
     }
-    let lead = b[s..e].iter().take_while(|&&x| x == ch).count();
-    let trail = b[s..e].iter().rev().take_while(|&&x| x == ch).count();
-    if e - s > 2 * l && mark.active(lead.min(trail)) {
-        let new = format!("{}{}{}", &text[..s], &text[s + l..e - l], &text[e..]);
-        return Some(finish(text, new, s..e - 2 * l));
-    }
-    let new = format!("{}{}{}{}{}", &text[..s], m, &text[s..e], m, &text[e..]);
-    Some(finish(text, new, s + l..e + l))
+    Some(edit)
 }
+
+/// Inner markers of the same kind, removed before wrapping a selection. Only
+/// an even count is stripped (they pair up as old formatting); a lone marker
+/// is literal text and stays. Italic only strips single `*` runs, so bold
+/// inside italic text nests as `***x***`.
+fn strip_inner_marks(mark: InlineMark, inner: &str) -> String {
+    match mark {
+        InlineMark::Italic => {
+            let singles: Vec<usize> = {
+                let b = inner.as_bytes();
+                let mut out = Vec::new();
+                let mut i = 0;
+                while i < b.len() {
+                    if b[i] == b'*' {
+                        let run_start = i;
+                        while i < b.len() && b[i] == b'*' {
+                            i += 1;
+                        }
+                        if i - run_start == 1 {
+                            out.push(run_start);
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                out
+            };
+            if singles.len() < 2 || singles.len() % 2 != 0 {
+                return inner.to_string();
+            }
+            let mut out = String::with_capacity(inner.len());
+            let mut last = 0;
+            for at in singles {
+                out.push_str(&inner[last..at]);
+                last = at + 1;
+            }
+            out.push_str(&inner[last..]);
+            out
+        }
+        _ => {
+            let m = mark.marker();
+            let count = inner.matches(m).count();
+            if count >= 2 && count % 2 == 0 {
+                inner.replace(m, "")
+            } else {
+                inner.to_string()
+            }
+        }
+    }
+}
+
 
 fn escape_label(s: &str) -> String {
     s.replace('[', "\\[").replace(']', "\\]")
+}
+
+/// The marker pair of `mark` on the caret's line that contains the caret
+/// (or touches it: directly after the closing or before the opening marker).
+/// Markers are runs of exactly the mark's length, paired left to right.
+fn caret_pair(text: &str, s: usize, mark: InlineMark) -> Option<(usize, usize)> {
+    let (ls, le) = line_bounds(text, s);
+    let l = mark.layer();
+    let ch = mark.ch();
+    let b = text.as_bytes();
+    let mut runs = Vec::new();
+    let mut i = ls;
+    while i < le {
+        if b[i] == ch {
+            let st = i;
+            while i < le && b[i] == ch {
+                i += 1;
+            }
+            if i - st == l {
+                runs.push(st);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    runs.chunks_exact(2)
+        .map(|pair| (pair[0], pair[1]))
+        .find(|&(o, c)| o <= s && s <= c + l)
+}
+
+/// Joins a paragraph with the paragraph after one blank line when the caret
+/// is at the end of the first (forward Delete). Both newlines go, as in
+/// ProseMirror, so `ab⏎⏎cd` becomes `abcd`. Other blocks keep the default.
+pub fn join_paragraphs_forward(text: &str, sel: Range<usize>) -> Option<Edit> {
+    let (s, e) = norm(text, sel);
+    if s != e {
+        return None;
+    }
+    let (_, le) = line_bounds(text, s);
+    if s != le || !text[le..].starts_with("\n\n") {
+        return None;
+    }
+    let next = le + 2;
+    let (nls, nle) = line_bounds(text, next);
+    if nls != next || nle == nls {
+        return None;
+    }
+    if !is_plain_paragraph(&line_prefix(text, s)) || !is_plain_paragraph(&line_prefix(text, next)) {
+        return None;
+    }
+    let new = format!("{}{}", &text[..le], &text[le + 2..]);
+    Some(finish(text, new, le..le))
+}
+
+fn is_plain_paragraph(p: &Prefix) -> bool {
+    p.quote_depth == 0
+        && p.item.is_none()
+        && p.heading.is_none()
+        && !(p.in_code || p.fence || p.rule || p.table)
+        && p.indent == 0
+        && !p.content_empty
+}
+
+/// When the document ends with a closing fence, a rule or a table, appends a
+/// newline so a line after the block exists for the caret. `None` otherwise.
+pub fn ensure_trailing_line(text: &str) -> Option<Edit> {
+    if text.is_empty() || text.ends_with('\n') {
+        return None;
+    }
+    let p = line_prefix(text, text.len());
+    let closing_fence = p.fence && !p.in_code;
+    if !(closing_fence || p.rule || p.table) {
+        return None;
+    }
+    let end = text.len();
+    Some(Edit {
+        range: end..end,
+        insert: "\n".to_string(),
+        selection: end + 1..end + 1,
+    })
+}
+
+/// End of the line at `pos` when that line is a closing fence or a rule. Text
+/// typed on such a line must go on a new line after it, never onto the fence.
+pub fn block_guard_line_end(text: &str, pos: usize) -> Option<usize> {
+    let p = line_prefix(text, pos);
+    ((p.fence && !p.in_code) || p.rule).then_some(p.line_end)
 }
 
 fn link_dest(u: &str) -> String {
@@ -1073,9 +1471,22 @@ fn link_dest(u: &str) -> String {
 /// `[sel](url)`. With `url == None` the caret goes into the empty `()`.
 /// With a selection and a url, the link text is selected afterwards.
 pub fn insert_link(text: &str, sel: Range<usize>, url: Option<&str>) -> Option<Edit> {
-    let (s, e) = norm(text, sel);
-    let label = escape_label(&text[s..e]);
-    match url.map(str::trim).filter(|u| !u.is_empty()) {
+    let (mut s, mut e) = norm(text, sel);
+    // Whitespace at the edges of the selection stays outside the link text.
+    let inner = &text[s..e];
+    if !inner.trim().is_empty() {
+        let lead = inner.len() - inner.trim_start().len();
+        let trail = inner.len() - inner.trim_end().len();
+        s += lead;
+        e -= trail;
+    }
+    let url = url.map(str::trim).filter(|u| !u.is_empty());
+    // With no selection the URL itself is the link text.
+    let label = match url {
+        Some(u) if s == e => escape_label(u),
+        _ => escape_label(&text[s..e]),
+    };
+    match url {
         Some(u) => {
             let new = format!("{}[{}]({}){}", &text[..s], label, link_dest(u), &text[e..]);
             Some(finish(text, new, s + 1..s + 1 + label.len()))
@@ -1315,10 +1726,11 @@ pub fn insert_code_block(text: &str, sel: Range<usize>, lang: &str) -> Option<Ed
     Some(block_edit(text, s, e, &body, head.len()))
 }
 
-/// Thematic break `---` as its own block.
+/// Thematic break `---` as its own block. The caret goes to the line after
+/// it, so typing does not land on the rule.
 pub fn insert_rule(text: &str, sel: Range<usize>) -> Option<Edit> {
     let (s, e) = norm(text, sel);
-    Some(block_edit(text, s, e, "---", 3))
+    Some(block_edit(text, s, e, "---", 4))
 }
 
 /// GFM table with `rows` rows (header included) and `cols` columns, empty cells,
@@ -1618,6 +2030,56 @@ fn rebuild(start: usize, end: usize, t: &Table, target: Option<usize>, col: usiz
         insert: rendered,
         selection: start + cell_start + off_a.min(len)..start + cell_start + off_b.min(len),
     }
+}
+
+/// Where Up/Down lands when the visual target `target` is inside a GFM table.
+/// The delimiter row is skipped, and the caret goes into a cell's content:
+/// the cell of `cursor` (the column is kept), or the cell under `target`
+/// when the caret came from outside the table. Never before the first `|` or
+/// after the last one. Targets outside tables are returned unchanged.
+pub fn table_vertical_target(text: &str, target: usize, cursor: usize, delta: isize) -> usize {
+    let target = norm(text, target..target).0;
+    let (mut ls, mut le) = line_bounds(text, target);
+    let p = analyze(text, ls, le, fence_before(text, ls));
+    if !p.table {
+        return target;
+    }
+    let mut rel = target - ls;
+    if p.table_delim {
+        // The delimiter row is not cell content: step over it.
+        let (nls, nle) = if delta > 0 {
+            if le >= text.len() {
+                return target;
+            }
+            line_bounds(text, le + 1)
+        } else {
+            if ls == 0 {
+                return target;
+            }
+            line_bounds(text, ls - 1)
+        };
+        let np = analyze(text, nls, nle, fence_before(text, nls));
+        if !np.table || np.table_delim {
+            return target;
+        }
+        ls = nls;
+        le = nle;
+        rel = rel.min(le - ls);
+    }
+    let line = &text[ls..le];
+    let spans = cell_spans_rel(line);
+    if spans.is_empty() {
+        return target;
+    }
+    let col = match table_ctx(text, cursor) {
+        Some(ctx) => ctx.raw_col,
+        None => spans
+            .iter()
+            .position(|&(a, b)| rel >= a && rel <= b)
+            .unwrap_or(if rel < spans[0].0 { 0 } else { spans.len() - 1 }),
+    };
+    let (a, b) = trim_span(line, spans[col.min(spans.len() - 1)]);
+    ls + rel.clamp(a, b)
 }
 
 /// Moves to the next (or previous with `shift`) cell and selects its contents.
@@ -1935,7 +2397,7 @@ mod tests {
 
     #[test]
     fn enter_on_fence_opener_starts_code_line() {
-        check("```‸", "```\n‸", enter_f);
+        check("```‸", "```\n‸\n```", enter_f);
     }
 
     #[test]
@@ -1982,7 +2444,7 @@ mod tests {
 
     #[test]
     fn enter_selection_across_list_items() {
-        check("- one\n- «two»", "- one\n‸", enter_f);
+        check("- one\n- «two»", "- one\n\n‸", enter_f);
     }
 
     #[test]
@@ -2146,7 +2608,7 @@ mod tests {
 
     #[test]
     fn bold_caret_in_word_wraps_word() {
-        check("hel‸lo", "**«hello»**", bold);
+        check("hel‸lo", "**hel‸lo**", bold);
     }
 
     #[test]
@@ -2156,7 +2618,7 @@ mod tests {
 
     #[test]
     fn bold_caret_inside_bold_word_unwraps_it() {
-        check("**hel‸lo**", "«hello»", bold);
+        check("**hel‸lo**", "hel‸lo", bold);
     }
 
     #[test]
@@ -2203,7 +2665,7 @@ mod tests {
 
     #[test]
     fn thai_word_expansion_bold() {
-        check("สวัสดี‸ครับ", "**«สวัสดีครับ»**", bold);
+        check("สวัสดี‸ครับ", "**สวัสดี‸ครับ**", bold);
     }
 
     #[test]
@@ -2396,7 +2858,7 @@ mod tests {
 
     #[test]
     fn rule_block_between_paragraphs() {
-        check("a‸\nb", "a\n\n---‸\n\nb", |t, s| insert_rule(t, s));
+        check("a‸\nb", "a\n\n---\n‸\nb", |t, s| insert_rule(t, s));
     }
 
     #[test]
@@ -2732,5 +3194,480 @@ mod tests {
         let out = e.apply("ab");
         assert_eq!(out, "ab\n\n");
         assert_eq!(e.range, 2..2);
+    }
+}
+
+/// Regression tests for the verified editor bugs: inline toggles, list/quote/
+/// fence Enter and Backspace semantics, link text whitespace, grapheme clusters.
+#[cfg(test)]
+mod regression {
+    use super::*;
+
+    fn unmark(input: &str) -> (String, Range<usize>) {
+        let mut text = String::new();
+        let mut s = None;
+        let mut e = None;
+        for ch in input.chars() {
+            match ch {
+                '‸' => {
+                    s = Some(text.len());
+                    e = s;
+                }
+                '«' => s = Some(text.len()),
+                '»' => e = Some(text.len()),
+                c => text.push(c),
+            }
+        }
+        let s = s.unwrap_or(0);
+        let e = e.unwrap_or(s);
+        (text, s.min(e)..s.max(e))
+    }
+
+    fn mark(text: &str, sel: Range<usize>) -> String {
+        let mut out = String::new();
+        out.push_str(&text[..sel.start]);
+        if sel.start == sel.end {
+            out.push('‸');
+        } else {
+            out.push('«');
+            out.push_str(&text[sel.start..sel.end]);
+            out.push('»');
+        }
+        out.push_str(&text[sel.end..]);
+        out
+    }
+
+    fn check(input: &str, expect: &str, f: impl Fn(&str, Range<usize>) -> Option<Edit>) {
+        let (t, sel) = unmark(input);
+        let e = f(&t, sel).unwrap_or_else(|| panic!("expected Some for {input:?}"));
+        let out = e.apply(&t);
+        assert_eq!(mark(&out, e.selection.clone()), expect, "input {input:?}");
+    }
+
+    fn enter_f(t: &str, s: Range<usize>) -> Option<Edit> {
+        enter(t, s)
+    }
+
+    fn back_f(t: &str, s: Range<usize>) -> Option<Edit> {
+        backspace_at_line_start(t, s)
+    }
+
+    // ---- inline toggles (bug 1: caret-only is never a selection; bug 4: no nesting)
+
+    #[test]
+    fn caret_after_word_inserts_pair_and_typing_follows() {
+        check("a‸", "a**‸**", |t, s| toggle_inline(t, s, InlineMark::Bold));
+        // The typed text lands between the markers, not over the word.
+        let (t, s) = unmark("a‸");
+        let e = toggle_inline(&t, s, InlineMark::Bold).unwrap();
+        let typed = format!("{}b{}", &e.apply(&t)[..e.selection.start], &e.apply(&t)[e.selection.start..]);
+        assert_eq!(typed, "a**b**");
+    }
+
+    #[test]
+    fn caret_at_word_start_or_space_inserts_pair() {
+        check("‸abc", "**‸**abc", |t, s| toggle_inline(t, s, InlineMark::Bold));
+        check("a ‸b", "a **‸**b", |t, s| toggle_inline(t, s, InlineMark::Bold));
+    }
+
+    #[test]
+    fn caret_inside_word_keeps_caret_relative() {
+        check("hel‸lo", "**hel‸lo**", |t, s| toggle_inline(t, s, InlineMark::Bold));
+        check("a‸bc", "*a‸bc*", |t, s| toggle_inline(t, s, InlineMark::Italic));
+    }
+
+    #[test]
+    fn bold_over_range_with_bold_strips_inner_markers() {
+        check("«**hello** world»", "**«hello world»**", |t, s| toggle_inline(t, s, InlineMark::Bold));
+    }
+
+    #[test]
+    fn bold_toggled_twice_round_trips() {
+        check("**«hello world»**", "«hello world»", |t, s| toggle_inline(t, s, InlineMark::Bold));
+    }
+
+    #[test]
+    fn strike_and_code_over_marked_range_strip_inner() {
+        check("«~~a~~ b»", "~~«a b»~~", |t, s| toggle_inline(t, s, InlineMark::Strike));
+        check("«`x` y»", "`«x y»`", |t, s| toggle_inline(t, s, InlineMark::Code));
+    }
+
+    #[test]
+    fn italic_over_italic_range_strips_inner_single_stars() {
+        check("«*a* b»", "*«a b»*", |t, s| toggle_inline(t, s, InlineMark::Italic));
+    }
+
+    #[test]
+    fn lone_marker_in_selection_is_literal_text() {
+        check("«a ** b»", "**«a ** b»**", |t, s| toggle_inline(t, s, InlineMark::Bold));
+    }
+
+    // ---- list / quote exits (bug 2: a blank line separates the exited block)
+
+    #[test]
+    fn exit_bullet_at_end_of_doc_gets_blank_line() {
+        check("- a\n- b\n- ‸", "- a\n- b\n\n‸", enter_f);
+    }
+
+    #[test]
+    fn enter_before_space_keeps_the_word_and_drops_only_the_gap() {
+        check("Hello‸ world", "Hello\n\n‸world", enter_f);
+    }
+
+    #[test]
+    fn exit_ordered_and_task_at_end_of_doc_get_blank_line() {
+        check("1. a\n2. ‸", "1. a\n\n‸", enter_f);
+        check("- [ ] a\n- [ ] ‸", "- [ ] a\n\n‸", enter_f);
+    }
+
+    #[test]
+    fn exit_quote_at_end_of_doc_gets_blank_line() {
+        check("> a\n> ‸", "> a\n\n‸", enter_f);
+    }
+
+    #[test]
+    fn exit_item_before_more_text_is_already_separated() {
+        check("- a\n- ‸\nafter", "- a\n‸\nafter", enter_f);
+    }
+
+    #[test]
+    fn exit_first_item_of_doc_needs_no_blank() {
+        check("- ‸", "‸", enter_f);
+    }
+
+    #[test]
+    fn backspace_lifts_item_after_text_with_blank_line() {
+        check("- a\n- ‸b", "- a\n\n‸b", back_f);
+    }
+
+    #[test]
+    fn backspace_drops_last_quote_marker_after_text_with_blank_line() {
+        check("> a\n> ‸b", "> a\n\n‸b", back_f);
+    }
+
+    #[test]
+    fn backspace_lifted_item_inside_quote_keeps_quote_separator() {
+        check("> x\n> - ‸b", "> x\n>\n> ‸b", back_f);
+    }
+
+    // ---- fenced code (bug 3: Enter after an opening fence creates the block)
+
+    #[test]
+    fn enter_after_bare_fence_creates_empty_block() {
+        check("```‸", "```\n‸\n```", enter_f);
+    }
+
+    #[test]
+    fn enter_after_fence_with_language_creates_empty_block() {
+        check("```rust‸", "```rust\n‸\n```", enter_f);
+    }
+
+    #[test]
+    fn enter_after_fence_inside_quote_keeps_marker() {
+        check("> ```‸", "> ```\n> ‸\n> ```", enter_f);
+    }
+
+    #[test]
+    fn enter_after_fence_with_existing_closer_only_adds_a_line() {
+        check("```‸\nx\n```", "```\n‸\nx\n```", enter_f);
+    }
+
+    // ---- link text (bug 8: whitespace stays outside the link)
+
+    #[test]
+    fn link_selection_trailing_newline_stays_outside() {
+        check("«word\n»", "[«word»](https://x.y)\n", |t, s| {
+            insert_link(t, s, Some("https://x.y"))
+        });
+    }
+
+    #[test]
+    fn link_selection_leading_space_stays_outside() {
+        check(" «word»", " [«word»](https://x.y)", |t, s| {
+            insert_link(t, s, Some("https://x.y"))
+        });
+    }
+
+    // ---- grapheme clusters (bug 6)
+
+    #[test]
+    fn thai_marks_are_stepped_by_cluster_and_backspace_by_code_point() {
+        let t = "กิจ"; // ก + ิ (U+0E34) + จ
+        assert_eq!(next_grapheme(t, 0), 6, "ก+ิ is one cluster");
+        assert_eq!(next_grapheme(t, 6), 9);
+        assert_eq!(prev_grapheme(t, 9), 6);
+        assert_eq!(prev_grapheme(t, 6), 0);
+        assert_eq!(backspace_start(t, 9), 6, "จ alone");
+        assert_eq!(backspace_start(t, 6), 3, "Thai backspace removes only the mark");
+    }
+
+    #[test]
+    fn zwj_family_and_flag_are_single_clusters() {
+        let family = "👨\u{200d}👩\u{200d}👧";
+        assert_eq!(next_grapheme(family, 0), family.len());
+        assert_eq!(prev_grapheme(family, family.len()), 0);
+        assert_eq!(backspace_start(family, family.len()), 0);
+        let flag = "🇹🇭";
+        assert_eq!(next_grapheme(flag, 0), flag.len());
+        assert_eq!(backspace_start(flag, flag.len()), 0);
+    }
+
+    #[test]
+    fn cluster_floor_snaps_into_a_cluster_start() {
+        let t = "a👨\u{200d}👩b";
+        let b_start = t.len() - 1;
+        assert_eq!(cluster_floor(t, 5), 1);
+        assert_eq!(cluster_floor(t, b_start), b_start);
+    }
+
+    #[test]
+    fn grapheme_steps_never_cross_a_newline() {
+        assert_eq!(next_grapheme("a\nb", 1), 2);
+        assert_eq!(prev_grapheme("a\nb", 2), 1);
+        assert_eq!(next_grapheme("ab", 2), 2);
+        assert_eq!(prev_grapheme("ab", 0), 0);
+    }
+
+    #[test]
+    fn word_motion_lands_on_cluster_boundaries() {
+        let text = "ab 👨\u{200d}👩\u{200d}👧 cd กิจ 🇹🇭x";
+        for p in 0..=text.len() {
+            if !text.is_char_boundary(p) {
+                continue;
+            }
+            for stop in [crate::editor::next_word(text, p), crate::editor::prev_word(text, p)] {
+                assert_eq!(cluster_floor(text, stop), stop, "word stop {stop} splits a cluster (from {p})");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fixes {
+    use super::*;
+
+    fn unmark(input: &str) -> (String, Range<usize>) {
+        let mut text = String::new();
+        let mut s = None;
+        let mut e = None;
+        for ch in input.chars() {
+            match ch {
+                '‸' => {
+                    s = Some(text.len());
+                    e = s;
+                }
+                '«' => s = Some(text.len()),
+                '»' => e = Some(text.len()),
+                c => text.push(c),
+            }
+        }
+        let s = s.unwrap_or(0);
+        let e = e.unwrap_or(s);
+        (text, s.min(e)..s.max(e))
+    }
+
+    fn mark(text: &str, sel: Range<usize>) -> String {
+        let mut out = String::new();
+        out.push_str(&text[..sel.start]);
+        if sel.start == sel.end {
+            out.push('‸');
+        } else {
+            out.push('«');
+            out.push_str(&text[sel.start..sel.end]);
+            out.push('»');
+        }
+        out.push_str(&text[sel.end..]);
+        out
+    }
+
+    fn check(input: &str, expect: &str, f: impl Fn(&str, Range<usize>) -> Option<Edit>) {
+        let (t, sel) = unmark(input);
+        let e = f(&t, sel).unwrap_or_else(|| panic!("expected Some for {input:?}"));
+        let out = e.apply(&t);
+        assert_eq!(mark(&out, e.selection.clone()), expect, "input {input:?}");
+    }
+
+    fn check_none(input: &str, f: impl Fn(&str, Range<usize>) -> Option<Edit>) {
+        let (t, sel) = unmark(input);
+        assert!(f(&t, sel).is_none(), "expected None for {input:?}");
+    }
+
+    fn enter_f(t: &str, s: Range<usize>) -> Option<Edit> {
+        enter(t, s)
+    }
+
+    fn back_f(t: &str, s: Range<usize>) -> Option<Edit> {
+        backspace_at_line_start(t, s)
+    }
+
+    fn bold(t: &str, s: Range<usize>) -> Option<Edit> {
+        toggle_inline(t, s, InlineMark::Bold)
+    }
+
+    // ---- quote exit: the separator `>` line goes with the exit
+
+    #[test]
+    fn enter_twice_in_quote_leaves_one_blank_line() {
+        check("> a‸", "> a\n>\n> ‸", enter_f);
+        check("> a\n>\n> ‸", "> a\n\n‸", enter_f);
+    }
+
+    #[test]
+    fn enter_exit_keeps_text_after_the_quote() {
+        check("> a\n>\n> ‸\nafter", "> a\n‸\nafter", enter_f);
+    }
+
+    // ---- ordered lists renumber their following siblings
+
+    #[test]
+    fn enter_mid_ordered_list_renumbers_following_items() {
+        check("1. a\n2. b‸\n3. c", "1. a\n2. b\n3. ‸\n4. c", enter_f);
+    }
+
+    #[test]
+    fn renumber_skips_nested_items() {
+        check(
+            "1. a\n   - x\n2. b‸\n3. c",
+            "1. a\n   - x\n2. b\n3. ‸\n4. c",
+            enter_f,
+        );
+    }
+
+    #[test]
+    fn renumber_stops_at_a_paragraph() {
+        check("1. a‸\n\ntext\n2. z", "1. a\n2. ‸\n\ntext\n2. z", enter_f);
+    }
+
+    #[test]
+    fn renumber_keeps_bullets_out_of_the_count() {
+        check("1. a‸\n- b\n2. c", "1. a\n2. ‸\n- b\n2. c", enter_f);
+    }
+
+    // ---- backspace at the first body line of a fence
+
+    #[test]
+    fn backspace_at_code_body_start_does_not_join_the_fence() {
+        check("```\n‸ab", "```‸\nab", back_f);
+    }
+
+    #[test]
+    fn backspace_at_code_body_start_keeps_info_string() {
+        check("```js\n‸x", "```js‸\nx", back_f);
+    }
+
+    #[test]
+    fn backspace_inside_code_body_is_default() {
+        check_none("```\nab\n‸cd\n```", back_f);
+        check("```\n‸", "```‸\n", back_f);
+    }
+
+    // ---- bold toggles off around the caret
+
+    #[test]
+    fn bold_caret_after_closing_marker_unwraps() {
+        check("abc**X**‸", "abcX‸", bold);
+    }
+
+    #[test]
+    fn bold_caret_before_opening_marker_unwraps() {
+        check("abc‸**X**", "abc‸X", bold);
+    }
+
+    #[test]
+    fn bold_caret_inside_span_with_spaces_unwraps() {
+        check("**a ‸b**", "a ‸b", bold);
+        check("**a** c‸ **d**", "**a** c**‸** **d**", bold);
+    }
+
+    #[test]
+    fn bold_caret_inside_second_span_unwraps_only_that_span() {
+        check("**a** **b ‸c**", "**a** b ‸c", bold);
+    }
+
+    // ---- link with no selection: the URL is the label
+
+    #[test]
+    fn link_without_selection_uses_url_as_label() {
+        check("‸", "[«https://a.io»](https://a.io)", |t, s| {
+            insert_link(t, s, Some("https://a.io"))
+        });
+    }
+
+    // ---- forward delete joins paragraphs across a blank line
+
+    #[test]
+    fn delete_at_paragraph_end_joins_next_paragraph() {
+        check("ab‸\n\ncd", "ab‸cd", |t, s| join_paragraphs_forward(t, s));
+    }
+
+    #[test]
+    fn delete_join_needs_plain_paragraphs_on_both_sides() {
+        check_none("- a‸\n\ncd", |t, s| join_paragraphs_forward(t, s));
+        check_none("ab‸\n\n- cd", |t, s| join_paragraphs_forward(t, s));
+        check_none("# h‸\n\ncd", |t, s| join_paragraphs_forward(t, s));
+        check_none("ab‸\ncd", |t, s| join_paragraphs_forward(t, s));
+        check_none("ab‸\n\n", |t, s| join_paragraphs_forward(t, s));
+    }
+
+    // ---- trailing blocks
+
+    #[test]
+    fn rule_insertion_puts_caret_on_the_line_after_it() {
+        check("a‸", "a\n\n---\n‸", |t, s| insert_rule(t, s));
+    }
+
+    #[test]
+    fn typing_on_a_closing_fence_is_guarded_by_line_end() {
+        let t = "```js\nx\n```";
+        assert_eq!(block_guard_line_end(t, t.len()), Some(t.len()));
+        assert_eq!(block_guard_line_end(t, 0), None, "opening fence is not guarded");
+        assert_eq!(block_guard_line_end("a\n---", 4), Some(5));
+        assert_eq!(block_guard_line_end("a\nb", 2), None);
+    }
+
+    #[test]
+    fn trailing_line_added_after_a_closing_fence_or_rule() {
+        let t = "```js\nx\n```";
+        let e = ensure_trailing_line(t).expect("fence at end");
+        assert_eq!(e.apply(t), "```js\nx\n```\n");
+        assert_eq!(e.selection, t.len() + 1..t.len() + 1);
+        assert_eq!(ensure_trailing_line("a\n---").unwrap().apply("a\n---"), "a\n---\n");
+        assert!(ensure_trailing_line("```js\nx\n```\n").is_none());
+        assert!(ensure_trailing_line("a\nb").is_none());
+        assert!(ensure_trailing_line("```js\nx").is_none(), "open code keeps its text");
+    }
+
+    // ---- table navigation
+
+    #[test]
+    fn table_vertical_skips_delimiter_and_stays_inside_the_cell() {
+        let t = "| a | b |\n| - | - |\n| c | d |\n";
+        // Down from the header's first `|` lands in the first body cell.
+        assert_eq!(table_vertical_target(t, 10, 0, 1), 22);
+        assert_eq!(&t[22..23], "c");
+    }
+
+    #[test]
+    fn table_vertical_keeps_the_column_going_up() {
+        let t = "| a | b |\n| - | - |\n| c | d |";
+        let cursor = 26; // the `d`
+        let target = table_vertical_target(t, 13, cursor, -1);
+        assert_eq!(target, 6, "the `b` in the header");
+        assert_eq!(&t[target..target + 1], "b");
+    }
+
+    #[test]
+    fn table_vertical_never_lands_before_the_first_pipe_or_after_the_last() {
+        let t = "| a | b |\n| - | - |\n| c | d |";
+        assert_eq!(table_vertical_target(t, 0, 0, 1), 2, "before the first pipe clamps into the cell");
+        // Past the end of the `d` cell's content (the ` |` after it is not content).
+        assert_eq!(table_vertical_target(t, t.len(), 26, 1), 27);
+        assert_eq!(&t[26..27], "d");
+    }
+
+    #[test]
+    fn table_vertical_outside_table_is_identity() {
+        let t = "text\n| a | b |\n| - | - |";
+        assert_eq!(table_vertical_target(t, 2, 0, 1), 2);
     }
 }

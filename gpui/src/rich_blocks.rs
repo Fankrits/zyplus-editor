@@ -373,6 +373,11 @@ pub struct Button {
     /// Element-local origin of the label.
     pub at: (f32, f32),
     pub action: Action,
+    /// A Hugeicons id drawn at `icon_rect` (element-local) next to or instead of the label.
+    pub icon: Option<&'static str>,
+    pub icon_rect: Rect,
+    /// The label is not drawn (the icon says it all).
+    pub icon_only: bool,
 }
 
 /// What a control does. Line numbers are the first source line of the widget.
@@ -586,11 +591,23 @@ fn button(
 ) -> Button {
     let para = shape_plain(ctx, label, ctx.body.clone(), size_px, rect.h, ctx.theme.fg, None);
     let tw = text_width(&para);
+    // Table controls are glyphs, like the web editor's.
+    let icon = match action {
+        Action::Table(_, TableOp::AddCol) => Some("column-insert"),
+        Action::Table(_, TableOp::AddRow) => Some("row-insert"),
+        Action::Table(_, TableOp::DelRow(_)) => Some("row-delete"),
+        Action::Table(_, TableOp::DelCol(_)) => Some("column-delete"),
+        _ => None,
+    };
+    let g = (rect.w.min(rect.h) - 6.0).max(10.0);
     Button {
         rect,
         label: para,
         at: (rect.x + (rect.w - tw) / 2.0, rect.y + (rect.h - size_px * 1.2) / 2.0),
         action,
+        icon,
+        icon_rect: Rect { x: rect.x + (rect.w - g) / 2.0, y: rect.y + (rect.h - g) / 2.0, w: g, h: g },
+        icon_only: icon.is_some(),
     }
 }
 
@@ -865,14 +882,18 @@ pub fn copy_button(ctx: &mut Ctx, line: usize, top: f32) -> Button {
     let copied = ctx.copied == Some(line);
     let label = if copied { "Copied" } else { "Copy" };
     let para = shape_plain(ctx, label, ctx.body.clone(), CAPTION_SIZE, CAPTION_LH, ctx.theme.muted, None);
-    let w = text_width(&para) + 16.0;
+    const GLYPH: f32 = 12.0;
+    let w = text_width(&para) + 16.0 + GLYPH + 4.0;
     let right = ctx.col_left + ctx.col_w - 8.0;
     let rect = Rect { x: right - w, y: top + 3.0, w, h: FENCE_BUTTON_H };
     Button {
         rect,
         label: para,
-        at: (rect.x + 8.0, rect.y + (FENCE_BUTTON_H - CAPTION_LH) / 2.0),
+        at: (rect.x + 8.0 + GLYPH + 4.0, rect.y + (FENCE_BUTTON_H - CAPTION_LH) / 2.0),
         action: Action::CopyCode(line),
+        icon: Some(if copied { "tick02" } else { "copy01" }),
+        icon_rect: Rect { x: rect.x + 8.0, y: rect.y + (FENCE_BUTTON_H - GLYPH) / 2.0, w: GLYPH, h: GLYPH },
+        icon_only: false,
     }
 }
 
@@ -985,7 +1006,23 @@ pub fn paint_widget(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut 
             t.border,
             BorderStyle::default(),
         ));
+        paint_button_face(b, bounds, t, window, cx);
+    }
+}
+
+/// The glyph and label of a control, on top of its already painted frame.
+fn paint_button_face(b: &Button, bounds: Bounds<Pixels>, t: &Theme, window: &mut Window, cx: &mut App) {
+    if !b.icon_only {
         b.label.paint(window, cx, at(bounds, b.at.0, b.at.1));
+    }
+    if let Some(name) = b.icon {
+        let _ = window.paint_svg(
+            abs(bounds, b.icon_rect),
+            SharedString::from(format!("icons/{name}.svg")),
+            gpui::TransformationMatrix::default(),
+            t.muted.into(),
+            cx,
+        );
     }
 }
 
@@ -999,7 +1036,7 @@ pub fn paint_button(b: &Button, bounds: Bounds<Pixels>, t: &Theme, window: &mut 
         t.border,
         BorderStyle::default(),
     ));
-    b.label.paint(window, cx, at(bounds, b.at.0, b.at.1));
+    paint_button_face(b, bounds, t, window, cx);
 }
 
 /// The element a widget draws with (a chart, a picture), laid out and

@@ -4,21 +4,34 @@
 //! Tauri `latest.json` manifest (`includeUpdaterJson: true`), so this reads the
 //! same file: `version`, `notes`, and `platforms.<os>-<arch>.url`.
 //!
-//! Everything here blocks. Call `check` and `download` from a background thread.
-//! The manifest's `signature` fields (minisign, key in tauri.conf.json) are not
-//! verified: downloads are only checked for completeness.
+//! Everything here blocks. Call `check` and `start_update` from background
+//! threads. A download is only used after its minisign signature (the manifest's
+//! `signature`, checked against the Tauri updater key) verifies. On macOS, a
+//! verified `.app.tar.gz` is installed over the running bundle and relaunched.
 
 use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::{mpsc, Arc};
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
+
+use base64::Engine;
 
 const REPO_URL: &str = "https://github.com/Fankrits/zyplus-editor";
 const MANIFEST_URL: &str =
     "https://github.com/Fankrits/zyplus-editor/releases/latest/download/latest.json";
+/// Tauri updater public key: base64 of the minisign public key file. Copied from
+/// `plugins.updater.pubkey` in src-tauri/tauri.conf.json. Keep the two in sync
+/// when the signing key rotates.
+const PUBKEY_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNEMDQzOThGREZGNDA0RDAKUldUUUJQVGZqemtFUFRkbnYxMVpwZllBY0dhT2pjN1lCVXlBcjB6Z2tHOVlGdlN3akJJQ3lXcG4K";
+/// Bundle identifier the update must carry (tauri.conf.json `identifier`).
+const BUNDLE_ID: &str = "com.fankrits.zyplus-editor";
+const APP_BUNDLE_NAME: &str = "Zyplus.app";
+/// Debug-build overrides for testing against a local fixture release.
+const DEV_URL_ENV: &str = "ZYPLUS_UPDATE_URL";
+const DEV_PUBKEY_ENV: &str = "ZYPLUS_UPDATE_PUBKEY";
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 const FALLBACK_FILE_NAME: &str = "zyplus-update";
 
@@ -32,6 +45,8 @@ pub struct UpdateInfo {
     pub download_url: String,
     /// Human-facing release page for this version.
     pub page_url: String,
+    /// The manifest's `signature` for this platform: base64 of a minisign `.sig` file.
+    pub signature: String,
 }
 
 type Triple = (u64, u64, u64);
@@ -178,20 +193,23 @@ pub fn parse_manifest(
     let platforms = manifest.get("platforms");
     // The bare windows keys point at the MSI, but install.ps1 installs the NSIS
     // setup.exe. Taking the MSI would leave two installs side by side. Keep the
-    // install.ps1 order, including its arm64 -> x64 fallback.
-    let url = manifest_keys(key)
+    // install.ps1 order, including its arm64 -> x64 fallback. The signature must
+    // come from the same entry as the URL.
+    let entry = manifest_keys(key)
         .into_iter()
-        .find_map(|k| {
-            platforms
-                .and_then(|p| p.get(k))
-                .and_then(|e| e.get("url"))
-                .and_then(|u| u.as_str())
-                .filter(|u| !u.is_empty())
-        })
+        .filter_map(|k| platforms.and_then(|p| p.get(k)))
+        .find(|e| e.get("url").and_then(|u| u.as_str()).is_some_and(|u| !u.is_empty()))
         .ok_or_else(|| format!("No Zyplus {version} build for {key}. See {REPO_URL}/releases"))?;
-    if !url.starts_with("https://") {
+    let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or_default();
+    if !url_allowed(url) {
         return Err(format!("Update URL is not HTTPS: {url}"));
     }
+    let signature = entry
+        .get("signature")
+        .and_then(|s| s.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("The update manifest has no signature for {key}, so the update is refused"))?;
 
     let notes = manifest
         .get("notes")
@@ -204,7 +222,368 @@ pub fn parse_manifest(
         version,
         notes,
         download_url: url.to_string(),
+        signature: signature.to_string(),
     }))
+}
+
+/// `https://` always. Plain `http://` only for loopback URLs, and only in a debug
+/// build with `ZYPLUS_UPDATE_URL` set (the local fixture release).
+fn url_allowed(url: &str) -> bool {
+    url.starts_with("https://")
+        || (dev_env(DEV_URL_ENV).is_some()
+            && (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")))
+}
+
+/// Reads a debug-only override. Release builds never read the environment here,
+/// so a user's shell cannot redirect or re-key updates.
+fn dev_env(name: &str) -> Option<String> {
+    if cfg!(debug_assertions) {
+        std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+    } else {
+        None
+    }
+}
+
+fn manifest_url() -> String {
+    dev_env(DEV_URL_ENV).unwrap_or_else(|| MANIFEST_URL.to_string())
+}
+
+fn pubkey_b64() -> String {
+    dev_env(DEV_PUBKEY_ENV).unwrap_or_else(|| PUBKEY_B64.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Signature verification (minisign, Tauri's key and signature encoding)
+// ---------------------------------------------------------------------------
+
+fn decode_b64_text(b64: &str) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| e.to_string())?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/// Checks `bytes` against a manifest `signature`. Both arguments use Tauri's
+/// encoding: base64 of the minisign file text. The check covers the artifact
+/// bytes and the signed trusted comment (the global signature). Only pre-hashed
+/// (`ED`) signatures are accepted; the legacy `Ed` form is refused.
+pub fn verify_signature(bytes: &[u8], signature_b64: &str, pubkey_b64: &str) -> Result<(), String> {
+    let key = decode_b64_text(pubkey_b64)
+        .map_err(|e| format!("The update public key is invalid: {e}"))
+        .and_then(|text| {
+            minisign_verify::PublicKey::decode(&text)
+                .map_err(|e| format!("The update public key is invalid: {e}"))
+        })?;
+    let sig = decode_b64_text(signature_b64)
+        .map_err(|e| format!("The update signature is invalid: {e}"))
+        .and_then(|text| {
+            minisign_verify::Signature::decode(&text)
+                .map_err(|e| format!("The update signature is invalid: {e}"))
+        })?;
+    key.verify(bytes, &sig, false)
+        .map_err(|e| format!("the signature does not match this release ({e})"))
+}
+
+/// The archive listing must hold only entries under `Zyplus.app/`, with no
+/// absolute paths and no `..` parts. Checked before anything is extracted.
+pub fn check_archive_entries(entries: &[&str]) -> Result<(), String> {
+    if entries.is_empty() {
+        return Err("The update archive is empty".to_string());
+    }
+    for entry in entries {
+        let name = entry.trim_start_matches("./").trim_end_matches('/');
+        let inside = name == APP_BUNDLE_NAME || name.starts_with(&format!("{APP_BUNDLE_NAME}/"));
+        let unsafe_part = name.starts_with('/') || name.split('/').any(|part| part == "..");
+        if !inside || unsafe_part {
+            return Err(format!("The update archive has an unexpected entry: {entry}"));
+        }
+    }
+    Ok(())
+}
+
+/// Rejects symlinks that are absolute or contain `..`. Every other symlink then
+/// resolves inside the bundle, because no path can climb out of it.
+fn check_links_stay_inside(dir: &Path) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("Could not read {}: {e}", dir.display()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        let meta = fs::symlink_metadata(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+        if meta.file_type().is_symlink() {
+            let target = fs::read_link(&path).map_err(|e| e.to_string())?;
+            let climbs = target.components().any(|c| matches!(c, Component::ParentDir));
+            if target.is_absolute() || climbs {
+                return Err(format!("The update contains a link that leaves the app: {}", path.display()));
+            }
+        } else if meta.is_dir() {
+            check_links_stay_inside(&path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Facts from a bundle's Info.plist that the update relies on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundleFacts {
+    pub identifier: String,
+    pub version: String,
+    pub executable: String,
+}
+
+/// The text of `<key>name</key><string>value</string>` in an XML plist. Only
+/// top-level string values are read; that covers everything the update needs.
+pub fn plist_string(xml: &str, key: &str) -> Option<String> {
+    let (_, after) = xml.split_once(&format!("<key>{key}</key>"))?;
+    let rest = after.trim_start().strip_prefix("<string>")?;
+    let (value, _) = rest.split_once("</string>")?;
+    Some(value.trim().to_string())
+}
+
+/// Checks the new bundle's Info.plist: same bundle id, a version newer than
+/// `current`, and the same executable name as the running build. The executable
+/// check stops a different app (for example a Tauri build) from replacing this one.
+pub fn validate_bundle_plist(xml: &str, current: &str, running_exe: &str) -> Result<BundleFacts, String> {
+    let identifier = plist_string(xml, "CFBundleIdentifier")
+        .ok_or("The update's Info.plist has no CFBundleIdentifier")?;
+    if identifier != BUNDLE_ID {
+        return Err(format!("The update is for {identifier}, not {BUNDLE_ID}"));
+    }
+    let version = plist_string(xml, "CFBundleShortVersionString")
+        .or_else(|| plist_string(xml, "CFBundleVersion"))
+        .filter(|v| !v.is_empty())
+        .ok_or("The update's Info.plist has no version")?;
+    if !is_newer(current, &version) {
+        return Err(format!("The update is version {version}, which is not newer than {current}"));
+    }
+    let executable = plist_string(xml, "CFBundleExecutable")
+        .filter(|e| !e.is_empty() && !e.contains('/'))
+        .ok_or("The update's Info.plist has no CFBundleExecutable")?;
+    if executable != running_exe {
+        return Err(format!(
+            "The update contains a different app ({executable}), so it was not installed"
+        ));
+    }
+    Ok(BundleFacts {
+        identifier,
+        version,
+        executable,
+    })
+}
+
+/// `<X>.app` when `exe` is `<X>.app/Contents/MacOS/<bin>`, otherwise `None`
+/// (cargo builds and any other location).
+pub fn bundle_for_exe(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent()?;
+    let contents = macos.parent()?;
+    let app = contents.parent()?;
+    let is_macos_dir = macos.file_name()? == "MacOS";
+    let is_contents_dir = contents.file_name()? == "Contents";
+    let is_app = app.extension().is_some_and(|e| e == "app");
+    (is_macos_dir && is_contents_dir && is_app).then(|| app.to_path_buf())
+}
+
+/// The running `.app` bundle, when this process was started from one. Only
+/// macOS installs; other platforms download and reveal.
+pub fn installable_bundle() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    std::env::current_exe().ok().and_then(|exe| bundle_for_exe(&exe))
+}
+
+fn running_exe_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+}
+
+/// Why an install stopped. `reveal` means the user has to move the new app into
+/// place by hand; the downloaded archive is kept so it can be revealed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallError {
+    pub message: String,
+    pub reveal: bool,
+}
+
+fn plain(message: String) -> InstallError {
+    InstallError {
+        message,
+        reveal: false,
+    }
+}
+
+fn is_permission(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::PermissionDenied || matches!(e.raw_os_error(), Some(1 | 13 | 30))
+}
+
+/// Renames `app` to `backup`, moves `new_app` into its place, and restores
+/// `app` from `backup` if the second move fails. Both moves stay inside one
+/// directory, so each is a rename and nothing is copied.
+pub fn replace_bundle(app: &Path, new_app: &Path, backup: &Path) -> Result<(), InstallError> {
+    if backup.exists() {
+        return Err(plain(format!("{} already exists", backup.display())));
+    }
+    if let Err(e) = fs::rename(app, backup) {
+        return Err(InstallError {
+            message: move_by_hand_message(app, &e),
+            reveal: is_permission(&e),
+        });
+    }
+    if let Err(e) = fs::rename(new_app, app) {
+        let restored = fs::rename(backup, app);
+        let message = match restored {
+            Ok(()) => format!("Could not put the new version in place ({e}). The previous version was restored."),
+            Err(r) => format!(
+                "Could not put the new version in place ({e}), and the previous version could not be restored ({r}). It is at {}.",
+                backup.display()
+            ),
+        };
+        return Err(plain(message));
+    }
+    Ok(())
+}
+
+fn move_by_hand_message(app: &Path, e: &io::Error) -> String {
+    if is_permission(e) {
+        format!(
+            "Zyplus cannot replace {} ({e}). Open the downloaded file and move the new Zyplus.app into place by hand.",
+            app.display()
+        )
+    } else {
+        format!("Could not move {} aside ({e}). Nothing was changed.", app.display())
+    }
+}
+
+fn run_tar(args: &[&str], archive: &Path, dest: Option<&Path>) -> Result<String, InstallError> {
+    let mut cmd = Command::new("/usr/bin/tar");
+    cmd.args(args).arg(archive);
+    if let Some(dest) = dest {
+        cmd.arg("-C").arg(dest);
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| plain(format!("Could not run tar: {e}")))?;
+    if !out.status.success() {
+        return Err(plain(format!(
+            "The update archive could not be unpacked: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Reads an Info.plist as XML text. `plutil` also accepts binary plists.
+fn read_plist_xml(plist: &Path) -> Result<String, String> {
+    let out = Command::new("/usr/bin/plutil")
+        .args(["-convert", "xml1", "-o", "-"])
+        .arg(plist)
+        .output()
+        .map_err(|e| format!("Could not run plutil: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("The update's Info.plist could not be read: {}", plist.display()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Unpacks a verified archive next to the app, validates it, and replaces the
+/// running bundle. Only ever call this after `verify_signature` has passed.
+pub fn install_archive(
+    archive: &Path,
+    app: &Path,
+    current: &str,
+    running_exe: &str,
+) -> Result<(), InstallError> {
+    let parent = app
+        .parent()
+        .ok_or_else(|| plain(format!("{} has no parent folder", app.display())))?;
+    let app_name = app
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| APP_BUNDLE_NAME.to_string());
+    let staging = parent.join(format!(".zyplus-update-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir(&staging).map_err(|e| InstallError {
+        message: format!(
+            "Could not prepare the update in {} ({e}). Open the downloaded file and move the new Zyplus.app into place by hand.",
+            parent.display()
+        ),
+        reveal: is_permission(&e),
+    })?;
+
+    let result = unpack_and_replace(archive, app, &app_name, &staging, current, running_exe);
+    let _ = fs::remove_dir_all(&staging);
+    result
+}
+
+fn unpack_and_replace(
+    archive: &Path,
+    app: &Path,
+    app_name: &str,
+    staging: &Path,
+    current: &str,
+    running_exe: &str,
+) -> Result<(), InstallError> {
+    let listing = run_tar(&["-tzf"], archive, None)?;
+    let entries: Vec<&str> = listing.lines().filter(|l| !l.is_empty()).collect();
+    check_archive_entries(&entries).map_err(plain)?;
+    run_tar(&["-xzf"], archive, Some(staging))?;
+
+    let new_app = staging.join(APP_BUNDLE_NAME);
+    if !new_app.is_dir() {
+        return Err(plain(format!("The update archive does not contain {APP_BUNDLE_NAME}")));
+    }
+    check_links_stay_inside(&new_app).map_err(plain)?;
+    let xml = read_plist_xml(&new_app.join("Contents/Info.plist")).map_err(plain)?;
+    let facts = validate_bundle_plist(&xml, current, running_exe).map_err(plain)?;
+    if !new_app.join("Contents/MacOS").join(&facts.executable).is_file() {
+        return Err(plain(format!("The update has no {} executable", facts.executable)));
+    }
+
+    // Next to the app, so the rename stays on one volume.
+    let backup = app.with_file_name(format!("{app_name}.old-{}", std::process::id()));
+    replace_bundle(app, &new_app, &backup)?;
+    // The old bundle is no longer needed. Failing to delete it leaves a stray
+    // folder, not a broken install, so the error is ignored.
+    let _ = fs::remove_dir_all(&backup);
+    Ok(())
+}
+
+/// Starts a detached helper that waits for `pid` to exit, then opens `app` as a
+/// new instance. The app quits right after, so the old process is gone by then.
+pub fn spawn_relaunch(app: &Path, pid: u32) -> io::Result<()> {
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#"i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.2; i=$((i+1)); done; sleep 0.3; exec open -n "$2""#)
+        .arg("zyplus-relaunch")
+        .arg(pid.to_string())
+        .arg(app)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(drop)
+}
+
+/// The app to relaunch once the process quits. Set by the Restart button and
+/// cleared if the quit is cancelled.
+static PENDING_RELAUNCH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+pub fn request_relaunch(app: PathBuf) {
+    *PENDING_RELAUNCH.lock().unwrap_or_else(|e| e.into_inner()) = Some(app);
+}
+
+pub fn cancel_relaunch() {
+    *PENDING_RELAUNCH.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Called right before the process exits. Starts the helper when a relaunch was requested.
+pub fn relaunch_on_exit() {
+    let app = PENDING_RELAUNCH.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(app) = app {
+        if let Err(e) = spawn_relaunch(&app, std::process::id()) {
+            eprintln!("zyplus: could not restart the app: {e}");
+        }
+    }
 }
 
 fn user_agent() -> String {
@@ -233,7 +612,7 @@ fn agent_builder() -> Result<ureq::AgentBuilder, String> {
 pub fn check(current: &str) -> Result<Option<UpdateInfo>, String> {
     let agent = agent_builder()?.timeout(Duration::from_secs(10)).build();
     let resp = agent
-        .get(MANIFEST_URL)
+        .get(&manifest_url())
         .set("User-Agent", &user_agent())
         .set("Accept", "application/json")
         .call()
@@ -272,19 +651,13 @@ fn file_name_from_url(url: &str) -> String {
     }
 }
 
-/// Blocking. Streams the artifact into `~/Downloads` (or the temp dir).
-/// `progress(bytes_done, total)` is called on start and after each chunk.
-pub fn download(info: &UpdateInfo, progress: &dyn Fn(u64, Option<u64>)) -> Result<PathBuf, String> {
-    download_into(&downloads_dir(), info, progress)
-}
-
 /// Same as `download`, into an explicit directory.
 pub fn download_into(
     dir: &Path,
     info: &UpdateInfo,
     progress: &dyn Fn(u64, Option<u64>),
 ) -> Result<PathBuf, String> {
-    if !info.download_url.starts_with("https://") {
+    if !url_allowed(&info.download_url) {
         return Err(format!("Update URL is not HTTPS: {}", info.download_url));
     }
     fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
@@ -406,11 +779,11 @@ pub fn reveal_or_open(path: &Path) -> Result<(), String> {
 // Update state for the UI (sidebar pill, Settings → About)
 // ---------------------------------------------------------------------------
 
-/// Where the update check and download stand. Transitions are plain methods
-/// so the window code only has to forward results into them.
+/// Where the check, download, verification and install stand. Transitions are
+/// plain methods, so the window code only forwards results into them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Status {
-    /// No check has run, or a silent check found nothing to report.
+    /// No check has run yet.
     #[default]
     Idle,
     Checking,
@@ -421,21 +794,102 @@ pub enum Status {
         done: u64,
         total: Option<u64>,
     },
-    Downloaded {
-        info: UpdateInfo,
-        path: PathBuf,
-    },
+    /// The download is being checked against the release signature.
+    Verifying { info: UpdateInfo },
+    /// The verified bundle is being moved into place (macOS app bundles only).
+    Installing { info: UpdateInfo },
+    /// Verified and saved, but not installed by Zyplus (Windows, Linux, cargo builds).
+    Downloaded { info: UpdateInfo, path: PathBuf },
+    /// Installed over the running bundle. Restart relaunches `app`.
+    ReadyToRestart { info: UpdateInfo, app: PathBuf },
     /// `info` is kept after a failed download so the offer can be retried.
+    /// `file` is set when the user has to move the new app into place by hand.
     Failed {
         message: String,
         info: Option<UpdateInfo>,
+        file: Option<PathBuf>,
     },
 }
 
-/// Messages from the download thread to the UI.
-pub enum DownloadEvent {
+/// Intermediate steps reported by a running update.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Phase {
     Progress(u64, Option<u64>),
-    Finished(Result<PathBuf, String>),
+    Verifying,
+    Installing,
+}
+
+/// What a successful update left behind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Finished {
+    /// Verified and saved at this path.
+    Downloaded(PathBuf),
+    /// Verified and installed over this app bundle.
+    Installed(PathBuf),
+}
+
+/// A failed update. `file` is set when the user must move the new app by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failure {
+    pub message: String,
+    pub file: Option<PathBuf>,
+}
+
+/// Messages from the update thread to the UI.
+pub enum DownloadEvent {
+    Phase(Phase),
+    Finished(Result<Finished, Failure>),
+}
+
+/// What the About panel's single button does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Check,
+    Download,
+    Restart,
+    Reveal,
+}
+
+/// What the About panel shows: a line of text, an optional progress bar, and one button.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PanelView {
+    pub text: String,
+    pub danger: bool,
+    /// 0.0..=1.0 while the download size is known.
+    pub progress: Option<f32>,
+    pub button: String,
+    /// `None` when the button is shown disabled.
+    pub action: Option<Action>,
+}
+
+/// Fraction of `total` that `done` covers, or `None` when the total is unknown or zero.
+pub fn fraction(done: u64, total: Option<u64>) -> Option<f32> {
+    match total {
+        Some(total) if total > 0 => Some((done as f32 / total as f32).clamp(0.0, 1.0)),
+        _ => None,
+    }
+}
+
+fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in Explorer"
+    } else {
+        "Show in folder"
+    }
+}
+
+fn finish(info: UpdateInfo, result: Result<Finished, Failure>) -> Status {
+    match result {
+        Ok(Finished::Downloaded(path)) => Status::Downloaded { info, path },
+        Ok(Finished::Installed(app)) => Status::ReadyToRestart { info, app },
+        Err(failure) => Status::Failed {
+            message: failure.message,
+            info: Some(info),
+            file: failure.file,
+        },
+    }
 }
 
 impl Status {
@@ -444,39 +898,75 @@ impl Status {
         match self {
             Status::Available(info)
             | Status::Downloading { info, .. }
-            | Status::Downloaded { info, .. } => Some(info),
+            | Status::Verifying { info }
+            | Status::Installing { info }
+            | Status::Downloaded { info, .. }
+            | Status::ReadyToRestart { info, .. } => Some(info),
             Status::Failed { info, .. } => info.as_ref(),
             Status::Idle | Status::Checking | Status::UpToDate => None,
         }
     }
 
-    /// True while a check or download is running; the UI disables its buttons.
+    /// True while a check or an update runs; the button is disabled then.
     pub fn busy(&self) -> bool {
-        matches!(self, Status::Checking | Status::Downloading { .. })
+        matches!(
+            self,
+            Status::Checking
+                | Status::Downloading { .. }
+                | Status::Verifying { .. }
+                | Status::Installing { .. }
+        )
     }
 
-    /// Applies a check result. A silent check (the one run at startup) reports
-    /// nothing when it fails or finds no update.
-    pub fn after_check(&mut self, result: Result<Option<UpdateInfo>, String>, silent: bool) {
+    /// The installed app waiting for a restart, if any.
+    pub fn installed_app(&self) -> Option<&Path> {
+        match self {
+            Status::ReadyToRestart { app, .. } => Some(app),
+            _ => None,
+        }
+    }
+
+    /// Short name for the test script's `state` output.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Status::Idle => "idle",
+            Status::Checking => "checking",
+            Status::UpToDate => "uptodate",
+            Status::Available(_) => "available",
+            Status::Downloading { .. } => "downloading",
+            Status::Verifying { .. } => "verifying",
+            Status::Installing { .. } => "installing",
+            Status::Downloaded { .. } => "downloaded",
+            Status::ReadyToRestart { .. } => "ready",
+            Status::Failed { .. } => "failed",
+        }
+    }
+
+    /// Applies a check result.
+    pub fn after_check(&mut self, result: Result<Option<UpdateInfo>, String>) {
         *self = match result {
             Ok(Some(info)) => Status::Available(info),
-            Ok(None) if silent => Status::Idle,
             Ok(None) => Status::UpToDate,
-            Err(_) if silent => Status::Idle,
             Err(message) => Status::Failed {
                 message,
                 info: None,
+                file: None,
             },
         };
     }
 
-    /// Starts downloading the release on offer. Returns it, or `None` when
-    /// there is no offer or a download is already running.
+    /// Starts an update for the release on offer, or retries a failed download.
+    /// Returns the release, or `None` when there is nothing to start.
     pub fn begin_download(&mut self) -> Option<UpdateInfo> {
-        if matches!(self, Status::Downloading { .. }) {
-            return None;
-        }
-        let info = self.info()?.clone();
+        let info = match self {
+            Status::Available(info) => info.clone(),
+            Status::Failed {
+                info: Some(info),
+                file: None,
+                ..
+            } => info.clone(),
+            _ => return None,
+        };
         *self = Status::Downloading {
             info: info.clone(),
             done: 0,
@@ -485,30 +975,107 @@ impl Status {
         Some(info)
     }
 
-    /// Records download progress; ignored unless a download is running.
-    pub fn on_progress(&mut self, done: u64, total: Option<u64>) {
-        if let Status::Downloading {
-            done: current,
-            total: current_total,
-            ..
-        } = self
-        {
-            *current = done;
-            *current_total = total;
+    /// Applies one event from the update thread. Events that do not fit the
+    /// current state are ignored.
+    pub fn apply(&mut self, event: DownloadEvent) {
+        let current = std::mem::take(self);
+        *self = match (current, event) {
+            (Status::Downloading { info, .. }, DownloadEvent::Phase(Phase::Progress(done, total))) => {
+                Status::Downloading { info, done, total }
+            }
+            (Status::Downloading { info, .. }, DownloadEvent::Phase(Phase::Verifying)) => {
+                Status::Verifying { info }
+            }
+            (Status::Verifying { info }, DownloadEvent::Phase(Phase::Installing)) => {
+                Status::Installing { info }
+            }
+            (
+                Status::Downloading { info, .. } | Status::Verifying { info } | Status::Installing { info },
+                DownloadEvent::Finished(result),
+            ) => finish(info, result),
+            (other, _) => other,
+        };
+    }
+
+    /// What the About panel shows right now. Exactly one button in every state.
+    pub fn panel_view(&self) -> PanelView {
+        let plain = |text: String, button: &str, action: Option<Action>| PanelView {
+            text,
+            danger: false,
+            progress: None,
+            button: button.to_string(),
+            action,
+        };
+        match self {
+            Status::Idle => plain(String::new(), "Check for updates", Some(Action::Check)),
+            Status::Checking => plain("Checking for updates…".into(), "Checking…", None),
+            Status::UpToDate => plain("You are up to date.".into(), "Check for updates", Some(Action::Check)),
+            Status::Available(info) => plain(
+                format!("Version {} is available.", info.version),
+                "Download & install",
+                Some(Action::Download),
+            ),
+            Status::Downloading { info, done, total } => PanelView {
+                text: format!("Downloading {}… {}", info.version, progress_text(*done, *total)),
+                danger: false,
+                progress: fraction(*done, *total),
+                button: "Downloading…".into(),
+                action: None,
+            },
+            Status::Verifying { info } => plain(
+                format!("Verifying the signature of {}…", info.version),
+                "Verifying…",
+                None,
+            ),
+            Status::Installing { info } => plain(format!("Installing {}…", info.version), "Installing…", None),
+            Status::Downloaded { info, path } => plain(
+                format!(
+                    "Version {} was downloaded to {} and its signature is verified. Open it to install.",
+                    info.version,
+                    path.display()
+                ),
+                reveal_label(),
+                Some(Action::Reveal),
+            ),
+            Status::ReadyToRestart { info, .. } => plain(
+                format!("Version {} is installed. Restart Zyplus to finish updating.", info.version),
+                "Restart to update",
+                Some(Action::Restart),
+            ),
+            Status::Failed { message, info, file } => {
+                let (button, action) = if file.is_some() {
+                    (reveal_label(), Action::Reveal)
+                } else if info.is_some() {
+                    ("Retry", Action::Download)
+                } else {
+                    ("Retry", Action::Check)
+                };
+                PanelView {
+                    text: message.clone(),
+                    danger: true,
+                    progress: None,
+                    button: button.to_string(),
+                    action: Some(action),
+                }
+            }
         }
     }
 
-    /// Applies the download result. Ignored unless a download is running.
-    pub fn on_download_finished(&mut self, result: Result<PathBuf, String>) {
-        let current = std::mem::take(self);
-        *self = match (current, result) {
-            (Status::Downloading { info, .. }, Ok(path)) => Status::Downloaded { info, path },
-            (Status::Downloading { info, .. }, Err(message)) => Status::Failed {
-                message,
-                info: Some(info),
+    /// Label for the sidebar pill, or `None` when no update needs attention.
+    /// The header has room for about six characters, so labels stay short;
+    /// the About panel has the full wording.
+    pub fn pill_label(&self) -> Option<String> {
+        Some(match self {
+            Status::Available(_) | Status::Downloaded { .. } => "Update".to_string(),
+            Status::Downloading { done, total, .. } => match fraction(*done, *total) {
+                Some(f) => format!("{}%", (f * 100.0).round() as u32),
+                None => "…".to_string(),
             },
-            (other, _) => other,
-        };
+            Status::Verifying { .. } | Status::Installing { .. } => "…".to_string(),
+            Status::ReadyToRestart { .. } => "Restart".to_string(),
+            Status::Failed { info: Some(_), .. } => "Failed".to_string(),
+            _ => return None,
+        })
     }
 }
 
@@ -532,14 +1099,54 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-/// Runs `download` on its own thread. Progress and the final result arrive on
+/// Blocking. Downloads the release, checks its signature, then either installs
+/// it over `install` (a macOS `.app` bundle) or leaves it in the downloads
+/// folder. A download that fails the signature check is deleted, never opened.
+pub fn run_update(
+    info: &UpdateInfo,
+    current: &str,
+    install: Option<&Path>,
+    report: &dyn Fn(Phase),
+) -> Result<Finished, Failure> {
+    let path = download_into(&downloads_dir(), info, &|done, total| {
+        report(Phase::Progress(done, total))
+    })
+    .map_err(|message| Failure { message, file: None })?;
+
+    report(Phase::Verifying);
+    let checked = fs::read(&path)
+        .map_err(|e| format!("Could not read the download: {e}"))
+        .and_then(|bytes| verify_signature(&bytes, &info.signature, &pubkey_b64()));
+    if let Err(reason) = checked {
+        let _ = fs::remove_file(&path);
+        return Err(Failure {
+            message: format!("The download was discarded: {reason}. Nothing was installed."),
+            file: None,
+        });
+    }
+
+    let Some(app) = install else {
+        return Ok(Finished::Downloaded(path));
+    };
+    report(Phase::Installing);
+    match install_archive(&path, app, current, &running_exe_name()) {
+        Ok(()) => Ok(Finished::Installed(app.to_path_buf())),
+        Err(e) => Err(Failure {
+            message: e.message,
+            file: e.reveal.then_some(path),
+        }),
+    }
+}
+
+/// Runs `run_update` on its own thread. Phases and the final result arrive on
 /// the returned channel, so the UI can poll it without blocking.
-pub fn start_download(info: UpdateInfo) -> mpsc::Receiver<DownloadEvent> {
+pub fn start_update(info: UpdateInfo, current: &'static str) -> mpsc::Receiver<DownloadEvent> {
     let (tx, rx) = mpsc::channel();
+    let install = installable_bundle();
     std::thread::spawn(move || {
-        let progress_tx = tx.clone();
-        let result = download(&info, &move |done, total| {
-            let _ = progress_tx.send(DownloadEvent::Progress(done, total));
+        let phase_tx = tx.clone();
+        let result = run_update(&info, current, install.as_deref(), &move |phase| {
+            let _ = phase_tx.send(DownloadEvent::Phase(phase));
         });
         let _ = tx.send(DownloadEvent::Finished(result));
     });
@@ -665,9 +1272,9 @@ mod tests {
         let body = manifest(
             "0.3.0",
             r#"{
-  "windows-x86_64": { "url": "https://github.com/x/releases/download/v0.3.0/Zyplus_0.3.0_x64_en-US.msi" },
-  "windows-x86_64-msi": { "url": "https://github.com/x/releases/download/v0.3.0/Zyplus_0.3.0_x64_en-US.msi" },
-  "windows-x86_64-nsis": { "url": "https://github.com/x/releases/download/v0.3.0/Zyplus_0.3.0_x64-setup.exe" }
+  "windows-x86_64": { "signature": "sig", "url": "https://github.com/x/releases/download/v0.3.0/Zyplus_0.3.0_x64_en-US.msi" },
+  "windows-x86_64-msi": { "signature": "sig", "url": "https://github.com/x/releases/download/v0.3.0/Zyplus_0.3.0_x64_en-US.msi" },
+  "windows-x86_64-nsis": { "signature": "sig", "url": "https://github.com/x/releases/download/v0.3.0/Zyplus_0.3.0_x64-setup.exe" }
 }"#,
         );
         let info = parse_manifest(&body, CURRENT, Some("windows-x86_64"))
@@ -680,7 +1287,7 @@ mod tests {
     fn windows_msi_only_manifest_still_offers_msi() {
         let body = manifest(
             "0.3.0",
-            r#"{ "windows-x86_64": { "url": "https://x/Zyplus_0.3.0_x64_en-US.msi" } }"#,
+            r#"{ "windows-x86_64": { "signature": "sig", "url": "https://x/Zyplus_0.3.0_x64_en-US.msi" } }"#,
         );
         let info = parse_manifest(&body, CURRENT, Some("windows-x86_64")).unwrap().unwrap();
         assert!(info.download_url.ends_with(".msi"));
@@ -766,9 +1373,30 @@ mod tests {
 
     #[test]
     fn missing_notes_become_empty() {
-        let body = r#"{ "version": "0.2.4", "platforms": { "darwin-aarch64": { "url": "https://x/y.tar.gz" } } }"#;
+        let body = r#"{ "version": "0.2.4", "platforms": { "darwin-aarch64": { "url": "https://x/y.tar.gz", "signature": "sig" } } }"#;
         let info = parse_manifest(body, CURRENT, Some("darwin-aarch64")).unwrap().unwrap();
         assert_eq!(info.notes, "");
+    }
+
+    #[test]
+    fn offer_without_signature_is_refused() {
+        let body = manifest("0.2.4", r#"{ "darwin-aarch64": { "url": "https://x/y.tar.gz" } }"#);
+        let err = parse_manifest(&body, CURRENT, Some("darwin-aarch64")).unwrap_err();
+        assert!(err.contains("no signature"), "{err}");
+        let blank = manifest("0.2.4", r#"{ "darwin-aarch64": { "url": "https://x/y.tar.gz", "signature": "  " } }"#);
+        assert!(parse_manifest(&blank, CURRENT, Some("darwin-aarch64")).is_err());
+    }
+
+    #[test]
+    fn signature_comes_from_the_same_entry_as_the_url() {
+        let body = manifest(
+            "0.2.4",
+            r#"{ "darwin-aarch64": { "url": "https://x/a.tar.gz", "signature": "from-a" },
+                 "darwin-x86_64": { "url": "https://x/b.tar.gz", "signature": "from-b" } }"#,
+        );
+        let info = parse_manifest(&body, CURRENT, Some("darwin-x86_64")).unwrap().unwrap();
+        assert_eq!(info.download_url, "https://x/b.tar.gz");
+        assert_eq!(info.signature, "from-b");
     }
 
     #[test]
@@ -797,6 +1425,7 @@ mod tests {
             notes: String::new(),
             download_url: "http://example.com/a.dmg".into(),
             page_url: String::new(),
+            signature: "sig".into(),
         };
         let dir = std::env::temp_dir().join("zyplus-updater-test-never-created");
         let err = download_into(&dir, &info, &|_, _| {}).unwrap_err();
@@ -841,50 +1470,44 @@ mod state_tests {
         UpdateInfo {
             version: version.to_string(),
             notes: String::new(),
-            download_url: "https://example.com/Zyplus.dmg".to_string(),
+            download_url: "https://example.com/Zyplus.app.tar.gz".to_string(),
             page_url: "https://example.com/release".to_string(),
+            signature: "sig".to_string(),
         }
     }
 
     #[test]
     fn check_result_maps_to_status() {
         let mut status = Status::Checking;
-        status.after_check(Ok(Some(info("0.3.0"))), false);
+        status.after_check(Ok(Some(info("0.3.0"))));
         assert_eq!(status.info().map(|i| i.version.as_str()), Some("0.3.0"));
 
         let mut status = Status::Checking;
-        status.after_check(Ok(None), false);
+        status.after_check(Ok(None));
         assert_eq!(status, Status::UpToDate);
         assert!(status.info().is_none());
 
-        // A silent check reports nothing, neither "up to date" nor errors.
-        let mut status = Status::Idle;
-        status.after_check(Ok(None), true);
-        assert_eq!(status, Status::Idle);
-        status.after_check(Err("offline".into()), true);
-        assert_eq!(status, Status::Idle);
-
         let mut status = Status::Checking;
-        status.after_check(Err("offline".into()), false);
+        status.after_check(Err("offline".into()));
         assert_eq!(
             status,
             Status::Failed {
                 message: "offline".into(),
-                info: None
+                info: None,
+                file: None
             }
         );
     }
 
     #[test]
-    fn download_success_path() {
+    fn install_path_runs_through_every_phase() {
         let mut status = Status::Available(info("0.3.0"));
         let started = status.begin_download().expect("offer exists");
         assert_eq!(started.version, "0.3.0");
         assert!(status.busy());
-        // A second click while downloading does nothing.
-        assert!(status.begin_download().is_none());
+        assert!(status.begin_download().is_none(), "a second click does nothing");
 
-        status.on_progress(512, Some(2048));
+        status.apply(DownloadEvent::Phase(Phase::Progress(512, Some(2048))));
         assert_eq!(
             status,
             Status::Downloading {
@@ -893,39 +1516,80 @@ mod state_tests {
                 total: Some(2048)
             }
         );
-
-        status.on_download_finished(Ok(PathBuf::from("/tmp/Zyplus.dmg")));
+        status.apply(DownloadEvent::Phase(Phase::Verifying));
+        assert_eq!(status, Status::Verifying { info: info("0.3.0") });
+        assert!(status.busy());
+        status.apply(DownloadEvent::Phase(Phase::Installing));
+        assert_eq!(status, Status::Installing { info: info("0.3.0") });
+        status.apply(DownloadEvent::Finished(Ok(Finished::Installed(PathBuf::from(
+            "/Applications/Zyplus.app",
+        )))));
         assert!(!status.busy());
+        assert_eq!(status.installed_app(), Some(Path::new("/Applications/Zyplus.app")));
+        assert_eq!(status.info().map(|i| i.version.as_str()), Some("0.3.0"));
+    }
+
+    #[test]
+    fn download_only_path_reveals_the_file() {
+        let mut status = Status::Available(info("0.3.0"));
+        status.begin_download();
+        status.apply(DownloadEvent::Phase(Phase::Verifying));
+        status.apply(DownloadEvent::Finished(Ok(Finished::Downloaded(PathBuf::from(
+            "/tmp/Z.tar.gz",
+        )))));
         assert_eq!(
             status,
             Status::Downloaded {
                 info: info("0.3.0"),
-                path: PathBuf::from("/tmp/Zyplus.dmg")
+                path: PathBuf::from("/tmp/Z.tar.gz")
             }
         );
-        assert!(status.info().is_some(), "the offer stays visible after download");
+        assert!(status.installed_app().is_none());
+        assert_eq!(status.panel_view().action, Some(Action::Reveal));
     }
 
     #[test]
     fn failed_download_keeps_the_offer_for_retry() {
         let mut status = Status::Available(info("0.3.0"));
         status.begin_download();
-        status.on_download_finished(Err("network dropped".into()));
+        status.apply(DownloadEvent::Finished(Err(Failure {
+            message: "network dropped".into(),
+            file: None,
+        })));
         assert_eq!(
             status,
             Status::Failed {
                 message: "network dropped".into(),
-                info: Some(info("0.3.0"))
+                info: Some(info("0.3.0")),
+                file: None
             }
         );
+        assert_eq!(status.panel_view().action, Some(Action::Download));
         assert!(status.begin_download().is_some(), "retry is allowed");
+    }
+
+    #[test]
+    fn manual_move_failure_offers_reveal_not_retry() {
+        let mut status = Status::Available(info("0.3.0"));
+        status.begin_download();
+        status.apply(DownloadEvent::Phase(Phase::Verifying));
+        status.apply(DownloadEvent::Phase(Phase::Installing));
+        status.apply(DownloadEvent::Finished(Err(Failure {
+            message: "move it by hand".into(),
+            file: Some(PathBuf::from("/Users/me/Downloads/Zyplus_universal.app.tar.gz")),
+        })));
+        let view = status.panel_view();
+        assert_eq!(view.action, Some(Action::Reveal));
+        assert!(view.danger);
+        assert!(status.begin_download().is_none(), "a manual move is not retried");
     }
 
     #[test]
     fn stray_events_are_ignored() {
         let mut status = Status::Idle;
-        status.on_progress(1, None);
-        status.on_download_finished(Ok(PathBuf::from("/tmp/x")));
+        status.apply(DownloadEvent::Phase(Phase::Progress(1, None)));
+        status.apply(DownloadEvent::Phase(Phase::Verifying));
+        status.apply(DownloadEvent::Finished(Ok(Finished::Downloaded(PathBuf::from("/tmp/x")))));
         assert_eq!(status, Status::Idle);
 
         let mut status = Status::UpToDate;
@@ -939,5 +1603,545 @@ mod state_tests {
         assert_eq!(progress_text(2048, Some(0)), "2 KB", "zero total means unknown");
         assert_eq!(progress_text(2048, None), "2 KB");
         assert_eq!(progress_text(2_200_000, Some(5_400_000)), "2.1 MB of 5.1 MB");
+    }
+
+    #[test]
+    fn fraction_needs_a_known_total() {
+        assert_eq!(fraction(50, Some(200)), Some(0.25));
+        assert_eq!(fraction(300, Some(200)), Some(1.0));
+        assert_eq!(fraction(5, None), None);
+        assert_eq!(fraction(5, Some(0)), None);
+    }
+
+    #[test]
+    fn every_state_shows_exactly_one_button() {
+        let states = vec![
+            Status::Idle,
+            Status::Checking,
+            Status::UpToDate,
+            Status::Available(info("0.3.0")),
+            Status::Downloading {
+                info: info("0.3.0"),
+                done: 1,
+                total: Some(4),
+            },
+            Status::Verifying { info: info("0.3.0") },
+            Status::Installing { info: info("0.3.0") },
+            Status::Downloaded {
+                info: info("0.3.0"),
+                path: PathBuf::from("/tmp/x"),
+            },
+            Status::ReadyToRestart {
+                info: info("0.3.0"),
+                app: PathBuf::from("/Applications/Zyplus.app"),
+            },
+            Status::Failed {
+                message: "x".into(),
+                info: None,
+                file: None,
+            },
+            Status::Failed {
+                message: "x".into(),
+                info: Some(info("0.3.0")),
+                file: None,
+            },
+            Status::Failed {
+                message: "x".into(),
+                info: Some(info("0.3.0")),
+                file: Some(PathBuf::from("/tmp/x")),
+            },
+        ];
+        for status in &states {
+            let view = status.panel_view();
+            assert!(!view.button.is_empty(), "{status:?}");
+            // The button is disabled exactly while work runs.
+            assert_eq!(view.action.is_none(), status.busy(), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn panel_actions_match_the_state() {
+        let failed = |info, file| Status::Failed {
+            message: "x".into(),
+            info,
+            file,
+        };
+        assert_eq!(Status::Idle.panel_view().action, Some(Action::Check));
+        assert_eq!(Status::UpToDate.panel_view().action, Some(Action::Check));
+        assert_eq!(
+            Status::Available(info("0.3.0")).panel_view().action,
+            Some(Action::Download)
+        );
+        assert_eq!(failed(None, None).panel_view().action, Some(Action::Check));
+        assert_eq!(
+            failed(Some(info("0.3.0")), None).panel_view().action,
+            Some(Action::Download)
+        );
+        assert_eq!(
+            failed(Some(info("0.3.0")), Some(PathBuf::from("/tmp/x")))
+                .panel_view()
+                .action,
+            Some(Action::Reveal)
+        );
+        let ready = Status::ReadyToRestart {
+            info: info("0.3.0"),
+            app: PathBuf::from("/Applications/Zyplus.app"),
+        };
+        assert_eq!(ready.panel_view().action, Some(Action::Restart));
+        assert_eq!(ready.panel_view().button, "Restart to update");
+    }
+
+    #[test]
+    fn pill_labels_follow_the_work() {
+        assert_eq!(Status::Idle.pill_label(), None);
+        assert_eq!(Status::UpToDate.pill_label(), None);
+        assert_eq!(Status::Available(info("0.3.0")).pill_label().as_deref(), Some("Update"));
+        let downloading = |done, total| Status::Downloading {
+            info: info("0.3.0"),
+            done,
+            total,
+        };
+        assert_eq!(downloading(50, Some(200)).pill_label().as_deref(), Some("25%"));
+        assert_eq!(downloading(50, None).pill_label().as_deref(), Some("…"));
+        assert_eq!(
+            Status::Verifying { info: info("0.3.0") }.pill_label().as_deref(),
+            Some("…")
+        );
+        assert_eq!(
+            Status::ReadyToRestart {
+                info: info("0.3.0"),
+                app: PathBuf::from("/Applications/Zyplus.app")
+            }
+            .pill_label()
+            .as_deref(),
+            Some("Restart")
+        );
+        let failed = |info| Status::Failed {
+            message: "x".into(),
+            info,
+            file: None,
+        };
+        assert_eq!(failed(None).pill_label(), None, "a failed check has no pill");
+        assert_eq!(failed(Some(info("0.3.0"))).pill_label().as_deref(), Some("Failed"));
+    }
+
+    #[test]
+    fn requested_relaunch_can_be_cancelled() {
+        request_relaunch(PathBuf::from("/tmp/Zyplus.app"));
+        assert!(PENDING_RELAUNCH.lock().unwrap().is_some());
+        cancel_relaunch();
+        assert!(PENDING_RELAUNCH.lock().unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+    use base64::engine::general_purpose::STANDARD;
+    use std::io::Cursor;
+
+    /// A fresh keypair per test, with the public key encoded the way tauri.conf.json stores it.
+    fn keypair() -> (minisign::KeyPair, String) {
+        let kp = minisign::KeyPair::generate_unencrypted_keypair().expect("generate keypair");
+        let pk_text = kp.pk.to_box().expect("public key box").into_string();
+        (kp, STANDARD.encode(pk_text))
+    }
+
+    /// Signs `data` as the release pipeline does. Returns the manifest form:
+    /// base64 of the `.sig` file text.
+    fn sign(kp: &minisign::KeyPair, data: &[u8], trusted: &str) -> String {
+        let sig = minisign::sign(None, &kp.sk, Cursor::new(data), Some(trusted), None)
+            .expect("sign");
+        STANDARD.encode(sig.into_string())
+    }
+
+    const DATA: &[u8] = b"zyplus release bytes";
+    const TRUSTED: &str = "timestamp:1700000000\tfile:Zyplus_universal.app.tar.gz";
+
+    #[test]
+    fn embedded_key_is_the_tauri_updater_key() {
+        let text = decode_b64_text(PUBKEY_B64).unwrap();
+        assert!(
+            text.starts_with("untrusted comment: minisign public key: 3D04398FDFF404D0\n"),
+            "{text}"
+        );
+        assert!(minisign_verify::PublicKey::decode(&text).is_ok());
+    }
+
+    #[test]
+    fn valid_signature_verifies() {
+        let (kp, pk) = keypair();
+        let sig = sign(&kp, DATA, TRUSTED);
+        assert_eq!(verify_signature(DATA, &sig, &pk), Ok(()));
+    }
+
+    #[test]
+    fn tampered_content_is_refused() {
+        let (kp, pk) = keypair();
+        let sig = sign(&kp, DATA, TRUSTED);
+        let mut bad = DATA.to_vec();
+        bad[0] ^= 1;
+        let err = verify_signature(&bad, &sig, &pk).unwrap_err();
+        assert!(err.contains("does not match"), "{err}");
+    }
+
+    #[test]
+    fn wrong_key_is_refused() {
+        let (kp, _) = keypair();
+        let (_, other_pk) = keypair();
+        let sig = sign(&kp, DATA, TRUSTED);
+        assert!(verify_signature(DATA, &sig, &other_pk).is_err());
+    }
+
+    #[test]
+    fn truncated_signature_is_refused() {
+        let (kp, pk) = keypair();
+        let text = String::from_utf8(STANDARD.decode(sign(&kp, DATA, TRUSTED)).unwrap()).unwrap();
+        for cut in [30, text.len() / 2, text.len() - 20] {
+            let truncated = STANDARD.encode(&text[..cut]);
+            assert!(verify_signature(DATA, &truncated, &pk).is_err(), "cut at {cut}");
+        }
+        assert!(verify_signature(DATA, "%%% not base64 %%%", &pk).is_err());
+    }
+
+    #[test]
+    fn trusted_comment_tamper_is_refused() {
+        let (kp, pk) = keypair();
+        let text = String::from_utf8(STANDARD.decode(sign(&kp, DATA, TRUSTED)).unwrap()).unwrap();
+        let tampered = text.replace(TRUSTED, "timestamp:1700000000\tfile:other.tar.gz");
+        assert_ne!(tampered, text, "the fixture must contain the trusted comment");
+        assert!(
+            verify_signature(DATA, &STANDARD.encode(tampered), &pk).is_err(),
+            "a changed trusted comment must fail the global signature"
+        );
+    }
+
+    #[test]
+    fn invalid_public_key_is_refused() {
+        let (kp, _) = keypair();
+        let sig = sign(&kp, DATA, TRUSTED);
+        let err = verify_signature(DATA, &sig, &STANDARD.encode("not a key")).unwrap_err();
+        assert!(err.contains("public key is invalid"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    const PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>zyplus-gpui</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.fankrits.zyplus-editor</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.4</string>
+	<key>CFBundleVersion</key>
+	<string>0.2.4</string>
+</dict>
+</plist>"#;
+
+    /// A fresh scratch directory for one test.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zyplus-updater-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn plist_values_are_read() {
+        assert_eq!(
+            plist_string(PLIST, "CFBundleIdentifier").as_deref(),
+            Some("com.fankrits.zyplus-editor")
+        );
+        assert_eq!(plist_string(PLIST, "CFBundleShortVersionString").as_deref(), Some("0.2.4"));
+        assert_eq!(plist_string(PLIST, "Missing"), None);
+    }
+
+    #[test]
+    fn valid_bundle_passes() {
+        let facts = validate_bundle_plist(PLIST, "0.2.3", "zyplus-gpui").unwrap();
+        assert_eq!(facts.version, "0.2.4");
+        assert_eq!(facts.executable, "zyplus-gpui");
+    }
+
+    #[test]
+    fn wrong_identifier_is_refused() {
+        let xml = PLIST.replace("com.fankrits.zyplus-editor", "com.example.other");
+        let err = validate_bundle_plist(&xml, "0.2.3", "zyplus-gpui").unwrap_err();
+        assert!(err.contains("com.example.other"), "{err}");
+    }
+
+    #[test]
+    fn same_or_older_version_is_refused() {
+        let err = validate_bundle_plist(PLIST, "0.2.4", "zyplus-gpui").unwrap_err();
+        assert!(err.contains("not newer"), "{err}");
+        assert!(validate_bundle_plist(PLIST, "0.3.0", "zyplus-gpui").is_err());
+    }
+
+    #[test]
+    fn different_executable_is_refused() {
+        // A Tauri build must not replace the gpui build.
+        let err = validate_bundle_plist(PLIST, "0.2.3", "zyplus-editor").unwrap_err();
+        assert!(err.contains("different app"), "{err}");
+    }
+
+    #[test]
+    fn version_falls_back_to_cfbundleversion() {
+        let xml = PLIST.replace("CFBundleShortVersionString", "Other");
+        assert_eq!(validate_bundle_plist(&xml, "0.2.3", "zyplus-gpui").unwrap().version, "0.2.4");
+    }
+
+    #[test]
+    fn missing_version_is_refused() {
+        let xml = PLIST
+            .replace("CFBundleShortVersionString", "X")
+            .replace("CFBundleVersion", "Y");
+        assert!(validate_bundle_plist(&xml, "0.2.3", "zyplus-gpui").is_err());
+    }
+
+    #[test]
+    fn bundle_is_found_only_for_app_executables() {
+        assert_eq!(
+            bundle_for_exe(Path::new("/Applications/Zyplus.app/Contents/MacOS/zyplus-gpui")),
+            Some(PathBuf::from("/Applications/Zyplus.app"))
+        );
+        assert_eq!(bundle_for_exe(Path::new("/Users/me/dev/gpui/target/debug/zyplus-gpui")), None);
+        assert_eq!(bundle_for_exe(Path::new("/tmp/Zyplus/Contents/MacOS/zyplus-gpui")), None);
+        assert_eq!(
+            bundle_for_exe(Path::new("/Applications/Zyplus.app/Contents/Resources/zyplus-gpui")),
+            None
+        );
+        assert_eq!(bundle_for_exe(Path::new("zyplus-gpui")), None);
+    }
+
+    #[test]
+    fn archive_entries_must_stay_under_the_app() {
+        assert!(check_archive_entries(&[
+            "Zyplus.app/",
+            "Zyplus.app/Contents/Info.plist",
+            "./Zyplus.app/Contents/MacOS/zyplus-gpui",
+        ])
+        .is_ok());
+        for bad in [
+            vec!["../Zyplus.app/x"],
+            vec!["/etc/passwd"],
+            vec!["Zyplus.app/../../etc/x"],
+            vec!["Other.app/Contents/Info.plist"],
+            vec!["Zyplus.app-evil/x"],
+            vec!["Zyplus.app/ok", "README"],
+            vec![],
+        ] {
+            assert!(check_archive_entries(&bad).is_err(), "{bad:?} should be refused");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_inside_the_bundle_are_allowed() {
+        let root = scratch("links-ok");
+        fs::create_dir_all(root.join("Contents/Frameworks/A")).unwrap();
+        symlink("A", root.join("Contents/Frameworks/Current")).unwrap();
+        symlink("Frameworks/A", root.join("Contents/alias")).unwrap();
+        assert!(check_links_stay_inside(&root).is_ok());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_that_leave_the_bundle_are_refused() {
+        for (name, target) in [
+            ("abs", "/etc"),
+            ("climb", "../../../../etc/passwd"),
+            ("mid", "sub/../../x"),
+        ] {
+            let root = scratch(&format!("links-{name}"));
+            fs::create_dir_all(root.join("Contents")).unwrap();
+            symlink(target, root.join("Contents/evil")).unwrap();
+            assert!(check_links_stay_inside(&root).is_err(), "{target} should be refused");
+            let _ = fs::remove_dir_all(&root);
+        }
+    }
+
+    fn fake_bundle(dir: &Path, marker: &str) -> PathBuf {
+        fs::create_dir_all(dir.join("Contents")).unwrap();
+        fs::write(dir.join("Contents/marker"), marker).unwrap();
+        dir.to_path_buf()
+    }
+
+    fn marker(app: &Path) -> String {
+        fs::read_to_string(app.join("Contents/marker")).unwrap()
+    }
+
+    #[test]
+    fn replace_swaps_the_bundle() {
+        let root = scratch("replace-ok");
+        let app = fake_bundle(&root.join("Zyplus.app"), "old");
+        let new = fake_bundle(&root.join("new/Zyplus.app"), "new");
+        let backup = root.join("Zyplus.app.old-1");
+        replace_bundle(&app, &new, &backup).unwrap();
+        assert_eq!(marker(&app), "new");
+        assert_eq!(marker(&backup), "old");
+        assert!(!new.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_move_rolls_back_to_the_old_bundle() {
+        let root = scratch("replace-rollback");
+        let app = fake_bundle(&root.join("Zyplus.app"), "old");
+        let missing_new = root.join("does-not-exist/Zyplus.app");
+        let backup = root.join("Zyplus.app.old-2");
+        let err = replace_bundle(&app, &missing_new, &backup).unwrap_err();
+        assert!(err.message.contains("previous version was restored"), "{}", err.message);
+        assert!(!err.reveal);
+        assert_eq!(marker(&app), "old", "the old bundle is back in place");
+        assert!(!backup.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn existing_backup_is_never_overwritten() {
+        let root = scratch("replace-backup");
+        let app = fake_bundle(&root.join("Zyplus.app"), "old");
+        let new = fake_bundle(&root.join("new/Zyplus.app"), "new");
+        let backup = fake_bundle(&root.join("Zyplus.app.old-3"), "keep");
+        assert!(replace_bundle(&app, &new, &backup).is_err());
+        assert_eq!(marker(&app), "old");
+        assert_eq!(marker(&backup), "keep");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_app_changes_nothing() {
+        let root = scratch("replace-noapp");
+        let new = fake_bundle(&root.join("new/Zyplus.app"), "new");
+        let err = replace_bundle(&root.join("Zyplus.app"), &new, &root.join("b")).unwrap_err();
+        assert!(!err.reveal);
+        assert_eq!(marker(&new), "new", "the new bundle is left where it was");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permission_denied_asks_for_a_manual_move() {
+        let root = scratch("replace-perm");
+        let parent = root.join("locked");
+        let app = fake_bundle(&parent.join("Zyplus.app"), "old");
+        let new = fake_bundle(&root.join("new/Zyplus.app"), "new");
+        let set_mode = |mode: u32| {
+            let mut perms = fs::metadata(&parent).unwrap().permissions();
+            perms.set_mode(mode);
+            fs::set_permissions(&parent, perms).unwrap();
+        };
+        set_mode(0o555);
+        // Root ignores directory permissions, so the failure cannot be produced there.
+        if fs::write(parent.join("probe"), b"").is_ok() {
+            set_mode(0o755);
+            eprintln!("skipped: the test needs a non-root user");
+            let _ = fs::remove_dir_all(&root);
+            return;
+        }
+        let result = replace_bundle(&app, &new, &parent.join("b"));
+        set_mode(0o755);
+        let err = result.unwrap_err();
+        assert!(err.reveal, "{}", err.message);
+        assert!(err.message.contains("by hand"), "{}", err.message);
+        assert_eq!(marker(&app), "old");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "macos")]
+    mod install {
+        use super::*;
+
+        /// Packs a `<name>.app` folder with the given Info.plist into `<root>/<archive>`.
+        fn pack(root: &Path, archive: &str, app_name: &str, plist: &str, exe: &str) -> PathBuf {
+            let src = root.join(format!("pack-{archive}"));
+            let app = src.join(app_name);
+            fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+            fs::write(app.join("Contents/Info.plist"), plist).unwrap();
+            fs::write(app.join("Contents/MacOS").join(exe), b"#!/bin/sh\n").unwrap();
+            let out = root.join(archive);
+            let status = Command::new("/usr/bin/tar")
+                .arg("-czf")
+                .arg(&out)
+                .arg("-C")
+                .arg(&src)
+                .arg(app_name)
+                .status()
+                .expect("run tar");
+            assert!(status.success());
+            out
+        }
+
+        fn installed_app(root: &Path) -> PathBuf {
+            let app = root.join("Apps/Zyplus.app");
+            fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+            fs::write(app.join("Contents/Info.plist"), PLIST.replace("0.2.4", "0.2.3")).unwrap();
+            fs::write(app.join("Contents/MacOS/zyplus-gpui"), b"old").unwrap();
+            app
+        }
+
+        fn leftovers(parent: &Path) -> Vec<String> {
+            fs::read_dir(parent)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with(".zyplus-update-") || n.contains(".old-"))
+                .collect()
+        }
+
+        #[test]
+        fn valid_archive_replaces_the_app() {
+            let root = scratch("install-ok");
+            let app = installed_app(&root);
+            let archive = pack(&root, "update.tar.gz", "Zyplus.app", PLIST, "zyplus-gpui");
+            install_archive(&archive, &app, "0.2.3", "zyplus-gpui").expect("install");
+            let plist = fs::read_to_string(app.join("Contents/Info.plist")).unwrap();
+            assert!(plist.contains("<string>0.2.4</string>"), "{plist}");
+            assert!(app.join("Contents/MacOS/zyplus-gpui").is_file());
+            assert_eq!(leftovers(app.parent().unwrap()), Vec::<String>::new());
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn wrong_identifier_leaves_the_app_alone() {
+            let root = scratch("install-id");
+            let app = installed_app(&root);
+            let plist = PLIST.replace("com.fankrits.zyplus-editor", "com.example.other");
+            let archive = pack(&root, "update.tar.gz", "Zyplus.app", &plist, "zyplus-gpui");
+            let err = install_archive(&archive, &app, "0.2.3", "zyplus-gpui").unwrap_err();
+            assert!(err.message.contains("com.example.other"), "{}", err.message);
+            assert_eq!(fs::read(app.join("Contents/MacOS/zyplus-gpui")).unwrap(), b"old");
+            assert_eq!(leftovers(app.parent().unwrap()), Vec::<String>::new());
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn foreign_archive_entries_are_refused_before_extraction() {
+            let root = scratch("install-foreign");
+            let app = installed_app(&root);
+            let archive = pack(&root, "update.tar.gz", "Evil.app", PLIST, "zyplus-gpui");
+            let err = install_archive(&archive, &app, "0.2.3", "zyplus-gpui").unwrap_err();
+            assert!(err.message.contains("unexpected entry"), "{}", err.message);
+            assert_eq!(fs::read(app.join("Contents/MacOS/zyplus-gpui")).unwrap(), b"old");
+            let _ = fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn same_version_archive_is_refused() {
+            let root = scratch("install-same");
+            let app = installed_app(&root);
+            let archive = pack(&root, "update.tar.gz", "Zyplus.app", PLIST, "zyplus-gpui");
+            let err = install_archive(&archive, &app, "0.2.4", "zyplus-gpui").unwrap_err();
+            assert!(err.message.contains("not newer"), "{}", err.message);
+            let _ = fs::remove_dir_all(&root);
+        }
     }
 }

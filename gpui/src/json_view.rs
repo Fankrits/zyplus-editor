@@ -19,10 +19,12 @@ use std::ops::Range;
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, uniform_list, AnyElement, App, ClickEvent, Context, CursorStyle, Div, ElementId,
-    Entity, FocusHandle, Focusable, Rgba, SharedString, Stateful, UniformListScrollHandle, Window,
+    div, px, uniform_list, AnyElement, AnyWindowHandle, App, ClickEvent, Context, CursorStyle, Div,
+    ElementId, Entity, FocusHandle, Focusable, Rgba, SharedString, Stateful, UniformListScrollHandle,
+    Window,
 };
 
+use crate::app_icon;
 use crate::editor::{Editor, MONO_FONT};
 use crate::theme::Theme;
 
@@ -1073,6 +1075,9 @@ pub struct JsonView {
     tree_scroll: UniformListScrollHandle,
     table_scroll: UniformListScrollHandle,
     focus: FocusHandle,
+    /// The window the current edit started in, so focus can return to the
+    /// view once a deferred commit or cancel has dropped the input.
+    edit_window: Option<AnyWindowHandle>,
     /// Called with the full text after every edit, with the file's line endings.
     /// Do not read the view from inside this callback; the view is busy then.
     pub on_change: Option<Box<dyn Fn(&str, &mut App)>>,
@@ -1148,6 +1153,7 @@ impl JsonView {
             tree_scroll: UniformListScrollHandle::new(),
             table_scroll: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
+            edit_window: None,
             on_change: None,
         }
     }
@@ -1445,20 +1451,39 @@ impl JsonView {
             editor.on_submit = Some(Box::new(move |cx: &mut App| {
                 let weak = weak_submit.clone();
                 cx.defer(move |cx| {
-                    let _ = weak.update(cx, |this, cx| this.commit_edit(cx));
+                    let _ = weak.update(cx, |this, cx| {
+                        this.commit_edit(cx);
+                        this.refocus_after_edit(cx);
+                    });
                 });
             }));
             editor.on_cancel = Some(Box::new(move |cx: &mut App| {
                 let weak = weak_cancel.clone();
                 cx.defer(move |cx| {
-                    let _ = weak.update(cx, |this, cx| this.cancel_edit(cx));
+                    let _ = weak.update(cx, |this, cx| {
+                        this.cancel_edit(cx);
+                        this.refocus_after_edit(cx);
+                    });
                 });
             }));
         });
         let handle = input.read(cx).focus_handle(cx);
         window.focus(&handle);
         self.edit = Some(Edit { target, input });
+        self.edit_window = Some(window.window_handle());
         cx.notify();
+    }
+
+    /// Moves keyboard focus back to the view once an edit has ended. A commit
+    /// that was refused keeps its input, and so keeps focus.
+    fn refocus_after_edit(&mut self, cx: &mut Context<Self>) {
+        if self.edit.is_some() {
+            return;
+        }
+        if let Some(handle) = self.edit_window {
+            let focus = self.focus.clone();
+            let _ = handle.update(cx, |_, window, _| window.focus(&focus));
+        }
     }
 
     fn cancel_edit(&mut self, cx: &mut Context<Self>) {
@@ -1607,11 +1632,10 @@ impl JsonView {
                 .w(px(14.0))
                 .flex_shrink_0()
                 .text_color(theme.muted)
-                .child(match (container, row.open) {
-                    (true, true) => "▾",
-                    (true, false) => "▸",
-                    _ => "",
-                })
+                .children(container.then(|| {
+                    let name = if row.open { "arrow-down01" } else { "arrow-right01" };
+                    app_icon::icon(name, 12.0).text_color(theme.muted)
+                }))
                 .when(container, |el| {
                     el.cursor(CursorStyle::PointingHand).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| this.toggle(p.clone(), cx),
@@ -1725,22 +1749,22 @@ impl JsonView {
             .gap_1()
             .flex_shrink_0()
             .when(container, |el| {
-                el.child(icon_button(theme, ("tree-add", ix), "+").on_click(cx.listener(
+                el.child(icon_button(theme, ("tree-add", ix), "plus-sign").on_click(cx.listener(
                     move |this, _: &ClickEvent, window, cx| this.add_child(p_add.clone(), window, cx),
                 )))
             })
             .when(!container, |el| {
-                el.child(icon_button(theme, ("tree-edit", ix), "✎").on_click(cx.listener(
+                el.child(icon_button(theme, ("tree-edit", ix), "pencil-edit01").on_click(cx.listener(
                     move |this, _: &ClickEvent, window, cx| {
                         this.begin_value_edit(p_edit.clone(), window, cx)
                     },
                 )))
             })
             .when(!is_root, |el| {
-                el.child(icon_button(theme, ("tree-dup", ix), "⧉").on_click(cx.listener(
+                el.child(icon_button(theme, ("tree-dup", ix), "copy01").on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| this.duplicate_node(p_dup.clone(), cx),
                 )))
-                .child(icon_button(theme, ("tree-del", ix), "✕").on_click(cx.listener(
+                .child(icon_button(theme, ("tree-del", ix), "trash").on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| this.delete_node(p_del.clone(), cx),
                 )))
             });
@@ -1851,10 +1875,10 @@ impl JsonView {
                 .flex_row()
                 .gap_1()
                 .items_center()
-                .child(icon_button(theme, ("table-dup", ix), "⧉").on_click(cx.listener(
+                .child(icon_button(theme, ("table-dup", ix), "copy01").on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| this.duplicate_node(vec![p_dup], cx),
                 )))
-                .child(icon_button(theme, ("table-del", ix), "✕").on_click(cx.listener(
+                .child(icon_button(theme, ("table-del", ix), "trash").on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| this.delete_node(vec![p_del], cx),
                 ))),
         )
@@ -2250,7 +2274,7 @@ fn button(
         .child(label.into())
 }
 
-fn icon_button(theme: &Theme, id: impl Into<ElementId>, glyph: &'static str) -> Stateful<Div> {
+fn icon_button(theme: &Theme, id: impl Into<ElementId>, icon: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -2259,11 +2283,9 @@ fn icon_button(theme: &Theme, id: impl Into<ElementId>, glyph: &'static str) -> 
         .w(px(20.0))
         .h(px(20.0))
         .rounded(px(4.0))
-        .text_size(px(12.0))
-        .text_color(theme.muted)
         .cursor(CursorStyle::PointingHand)
-        .hover(|s| s.bg(theme.hover).text_color(theme.fg))
-        .child(glyph)
+        .hover(|s| s.bg(theme.hover))
+        .child(app_icon::icon(icon, 13.0).text_color(theme.muted))
 }
 
 fn message_box(theme: &Theme, message: &str) -> Div {

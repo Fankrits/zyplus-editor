@@ -97,6 +97,9 @@ const MONO_SIZE: f32 = 13.0;
 const MONO_LH: f32 = 20.0;
 const LABEL_SIZE: f32 = 11.0;
 const LABEL_LH: f32 = 16.0;
+/// Callout label icon: square size, and the gap before the label text.
+const LABEL_ICON: f32 = 12.0;
+const LABEL_ICON_GAP: f32 = 18.0;
 /// H1..H6.
 const HEADING_SIZE: [f32; 6] = [30.0, 24.0, 20.0, 17.0, 15.0, 14.0];
 const COLUMN_MAX: f32 = 760.0;
@@ -322,11 +325,20 @@ pub fn normalise_newlines(text: &str) -> String {
 
 fn label_text(kind: CalloutKind) -> &'static str {
     match kind {
-        CalloutKind::Note => "NOTE",
-        CalloutKind::Tip => "TIP",
-        CalloutKind::Important => "IMPORTANT",
-        CalloutKind::Warning => "WARNING",
-        CalloutKind::Caution => "CAUTION",
+        CalloutKind::Note => "Note",
+        CalloutKind::Tip => "Tip",
+        CalloutKind::Important => "Important",
+        CalloutKind::Warning => "Warning",
+        CalloutKind::Caution => "Caution",
+    }
+}
+
+/// Icon drawn before a callout's label (the web app's GitHub-alert icons).
+fn label_icon(kind: CalloutKind) -> &'static str {
+    match kind {
+        CalloutKind::Note | CalloutKind::Tip => "information-circle",
+        CalloutKind::Important => "alert-circle",
+        CalloutKind::Warning | CalloutKind::Caution => "alert01",
     }
 }
 
@@ -499,6 +511,8 @@ struct Row {
     buttons: Vec<Button>,
     /// A later line of a rendered widget: takes no height, draws nothing.
     widget_part: bool,
+    /// Callout kind of a label row: its icon is painted before the text.
+    icon: Option<CalloutKind>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1014,19 +1028,11 @@ impl RichEditor {
     }
 
     fn prev_boundary(&self, offset: usize) -> usize {
-        self.content[..offset]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0)
+        rich_ops::prev_grapheme(&self.content, offset)
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
-        self.content[offset..]
-            .chars()
-            .next()
-            .map(|c| offset + c.len_utf8())
-            .unwrap_or(self.content.len())
+        rich_ops::next_grapheme(&self.content, offset)
     }
 
     /// Records a restore point. A typed character joins the step of the typing
@@ -1072,6 +1078,15 @@ impl RichEditor {
 
     /// Typed text, deletions and IME input: these may join a typing run.
     fn replace_range(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        // Text typed on a closing fence or a rule goes on a new line after the
+        // block, never onto its delimiter line.
+        if range.is_empty() && !text.is_empty() {
+            if let Some(le) = rich_ops::block_guard_line_end(&self.content, range.start) {
+                let typed = format!("\n{text}");
+                self.splice(le..le, &typed, true, cx);
+                return;
+            }
+        }
         self.splice(range, text, true, cx);
     }
 
@@ -1507,6 +1522,7 @@ impl RichEditor {
             embed: None,
             buttons,
             widget_part: false,
+            icon: plan.label,
         }
     }
 
@@ -1555,6 +1571,7 @@ impl RichEditor {
                 embed: None,
                 buttons: Vec::new(),
                 widget_part: true,
+                icon: None,
             };
         }
         let hover = self.widgets.hover;
@@ -1586,6 +1603,7 @@ impl RichEditor {
             embed: None,
             buttons: Vec::new(),
             widget_part: false,
+            icon: None,
         }
     }
 
@@ -2026,8 +2044,33 @@ impl RichEditor {
     }
 
     fn vertical(&mut self, window: &Window, delta: isize, extend: bool, cx: &mut Context<Self>) {
-        if let Some((offset, at_end)) = self.vertical_target(window, delta) {
-            let offset = clamp_out_of_marker(&self.model, offset, delta > 0);
+        let target = self.vertical_target(window, delta);
+        if delta > 0 && !extend {
+            // Down onto a closing fence or rule that ends the document: give
+            // it a line after, and move there.
+            if let Some(edit) = rich_ops::ensure_trailing_line(&self.content) {
+                let last_start = self.content.rfind('\n').map_or(0, |i| i + 1);
+                let exits = match target {
+                    None => true,
+                    Some((o, _)) => {
+                        let p = rich_ops::line_prefix(&self.content, o);
+                        o >= last_start && ((p.fence && !p.in_code) || p.rule)
+                    }
+                };
+                if exits {
+                    self.apply_edit(edit, cx);
+                    let len = self.content.len();
+                    self.place(len, false, false, false, cx);
+                    return;
+                }
+            }
+        }
+        if let Some((offset, at_end)) = target {
+            // Inside a table the caret lands in a cell's content, never on a `|`.
+            let cursor = self.cursor();
+            let snapped = rich_ops::table_vertical_target(&self.content, offset, cursor, delta);
+            let at_end = at_end && snapped == offset;
+            let offset = clamp_out_of_marker(&self.model, snapped, delta > 0);
             self.place(offset, at_end, extend, true, cx);
         }
     }
@@ -2059,14 +2102,18 @@ impl RichEditor {
                 self.apply_edit(edit, cx);
                 return;
             }
-            let prev = self.prev_boundary(self.cursor());
-            self.selection = prev..self.cursor();
+            let start = rich_ops::backspace_start(&self.content, self.cursor());
+            self.selection = start..self.cursor();
         }
         self.replace_range(self.selection.clone(), "", cx);
     }
 
     fn act_delete(&mut self, _: &editor::Delete, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_empty() {
+            if let Some(edit) = rich_ops::join_paragraphs_forward(&self.content, self.selection.clone()) {
+                self.apply_edit(edit, cx);
+                return;
+            }
             let cursor = self.cursor();
             let next = self.next_boundary(cursor);
             self.selection = cursor..next;
@@ -2114,7 +2161,9 @@ impl RichEditor {
         }
         match rich_ops::tab(&self.content, self.selection.clone(), shift) {
             Some(edit) => self.apply_edit(edit, cx),
-            None if !shift => self.splice(self.selection.clone(), "\t", false, cx),
+            // Tab in a paragraph is consumed without inserting a tab character:
+            // the rich document is markdown, where a literal tab is not a
+            // paragraph indent (Milkdown ignores it too).
             None => {}
         }
     }
@@ -2213,6 +2262,27 @@ impl RichEditor {
 
     fn act_select_end(&mut self, _: &editor::SelectEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.visual_edge(window, true, true, cx);
+    }
+
+    fn act_doc_start(&mut self, _: &editor::DocStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.place(0, false, false, false, cx);
+    }
+
+    fn act_doc_end(&mut self, _: &editor::DocEnd, _: &mut Window, cx: &mut Context<Self>) {
+        // A closing fence, rule or table at the end gets a line after it, so
+        // the caret never lands on the block's last line.
+        if let Some(edit) = rich_ops::ensure_trailing_line(&self.content) {
+            self.apply_edit(edit, cx);
+        }
+        self.place(self.content.len(), false, false, false, cx);
+    }
+
+    fn act_select_doc_start(&mut self, _: &editor::SelectDocStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.place(0, false, true, false, cx);
+    }
+
+    fn act_select_doc_end(&mut self, _: &editor::SelectDocEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.place(self.content.len(), false, true, false, cx);
     }
 
     fn act_select_all(&mut self, _: &editor::SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -2856,7 +2926,19 @@ impl Element for RichElement {
             for b in &row.buttons {
                 rich_blocks::paint_button(b, bounds, &rows_theme, window, cx);
             }
-            row.para.paint(window, cx, origin(row.text_x, row.text_top));
+            if let Some(kind) = row.icon {
+                let at = origin(row.text_x, row.text_top + (LABEL_LH - LABEL_ICON) / 2.0);
+                let colour: Hsla = callout_colour(kind, &rows_theme).into();
+                let _ = window.paint_svg(
+                    Bounds::new(at, size(px(LABEL_ICON), px(LABEL_ICON))),
+                    gpui::SharedString::from(format!("icons/{}.svg", label_icon(kind))),
+                    gpui::TransformationMatrix::default(),
+                    colour,
+                    cx,
+                );
+            }
+            let text_x = row.text_x + if row.icon.is_some() { LABEL_ICON_GAP } else { 0.0 };
+            row.para.paint(window, cx, origin(text_x, row.text_top));
             for mark in &row.marks {
                 mark.para.paint(window, cx, origin(mark.x, mark.y));
             }
@@ -2918,6 +3000,10 @@ impl Render for RichEditor {
             .on_action(cx.listener(Self::act_end))
             .on_action(cx.listener(Self::act_select_home))
             .on_action(cx.listener(Self::act_select_end))
+            .on_action(cx.listener(Self::act_doc_start))
+            .on_action(cx.listener(Self::act_doc_end))
+            .on_action(cx.listener(Self::act_select_doc_start))
+            .on_action(cx.listener(Self::act_select_doc_end))
             .on_action(cx.listener(Self::act_select_all))
             .on_action(cx.listener(Self::act_paste))
             .on_action(cx.listener(Self::act_copy))
@@ -2982,7 +3068,8 @@ mod tests {
         assert!(touches(&(5..5), &(5..9)));
         assert!(!touches(&(6..6), &(0..5)));
         assert!(touches(&(0..3), &(2..8)));
-        assert!(touches(&(8..2), &(0..3)), "reversed selections count too");
+        let (hi, lo) = (8usize, 2usize);
+        assert!(touches(&(hi..lo), &(0..3)), "reversed selections count too");
         assert!(!touches(&(10..12), &(0..5)));
     }
 
@@ -3059,8 +3146,11 @@ mod tests {
 
     #[test]
     fn callout_and_heading_labels() {
-        assert_eq!(label_text(CalloutKind::Warning), "WARNING");
-        assert_eq!(label_text(CalloutKind::Note), "NOTE");
+        assert_eq!(label_text(CalloutKind::Warning), "Warning");
+        assert_eq!(label_text(CalloutKind::Note), "Note");
+        assert_eq!(label_icon(CalloutKind::Note), "information-circle");
+        assert_eq!(label_icon(CalloutKind::Important), "alert-circle");
+        assert_eq!(label_icon(CalloutKind::Caution), "alert01");
         assert_eq!(heading_size(1), 30.0);
         assert_eq!(heading_size(9), 14.0, "levels clamp to H6");
     }

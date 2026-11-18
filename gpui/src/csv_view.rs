@@ -19,9 +19,9 @@ use std::fmt;
 
 use gpui::prelude::*;
 use gpui::{
-    point, px, uniform_list, AnyElement, App, ClickEvent, Context, Div, Entity, FocusHandle,
-    Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, ScrollHandle, ScrollStrategy,
-    SharedString, Stateful, UniformListScrollHandle, Window, div,
+    point, px, uniform_list, AnyElement, AnyWindowHandle, App, ClickEvent, Context, Div, Entity,
+    FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, ScrollHandle,
+    ScrollStrategy, SharedString, Stateful, UniformListScrollHandle, WeakEntity, Window, div,
 };
 
 use crate::editor::{Editor, FONT_SIZE, MONO_FONT};
@@ -520,6 +520,9 @@ pub struct CsvView {
     /// written back, so a multi-line cell is not flattened by an Enter.
     editing_original: String,
     cell_editor: Entity<Editor>,
+    /// The window the current cell edit started in. A deferred commit or
+    /// cancel refocuses the table there, since no window is at hand then.
+    edit_window: Option<AnyWindowHandle>,
     text_editor: Entity<Editor>,
     list_scroll: UniformListScrollHandle,
     hscroll: ScrollHandle,
@@ -551,15 +554,11 @@ impl CsvView {
             // Deferred: the editor is still being updated while its callbacks run.
             editor.on_submit = Some(Box::new(move |cx: &mut App| {
                 let weak = weak_submit.clone();
-                cx.defer(move |cx| {
-                    let _ = weak.update(cx, |this, cx| this.finish_edit(true, None, cx));
-                });
+                cx.defer(move |cx| finish_deferred(&weak, true, cx));
             }));
             editor.on_cancel = Some(Box::new(move |cx: &mut App| {
                 let weak = weak_cancel.clone();
-                cx.defer(move |cx| {
-                    let _ = weak.update(cx, |this, cx| this.finish_edit(false, None, cx));
-                });
+                cx.defer(move |cx| finish_deferred(&weak, false, cx));
             }));
         });
 
@@ -587,6 +586,7 @@ impl CsvView {
             editing: None,
             editing_original: String::new(),
             cell_editor,
+            edit_window: None,
             text_editor,
             list_scroll: UniformListScrollHandle::new(),
             hscroll: ScrollHandle::new(),
@@ -696,6 +696,7 @@ impl CsvView {
         });
         self.editing = Some((row, col));
         self.editing_original = original;
+        self.edit_window = Some(window.window_handle());
         let focus = self.cell_editor.read(cx).focus_handle(cx);
         window.focus(&focus);
         self.scroll_to_selection();
@@ -721,7 +722,7 @@ impl CsvView {
         match window {
             Some(window) => window.focus(&focus),
             None => {
-                if let Some(handle) = cx.active_window() {
+                if let Some(handle) = self.edit_window {
                     let _ = handle.update(cx, |_, window, _| window.focus(&focus));
                 }
             }
@@ -1199,6 +1200,24 @@ fn one_line(text: &str) -> String {
     text.replace(['\r', '\n'], " ")
 }
 
+/// Ends a cell edit from a deferred Enter or Escape, in the window the edit
+/// started in, so the table keeps keyboard focus afterwards.
+fn finish_deferred(weak: &WeakEntity<CsvView>, commit: bool, cx: &mut App) {
+    let Some(entity) = weak.upgrade() else {
+        return;
+    };
+    match entity.read(cx).edit_window {
+        Some(handle) => {
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = entity.update(cx, |this, cx| this.finish_edit(commit, Some(window), cx));
+            });
+        }
+        None => {
+            let _ = entity.update(cx, |this, cx| this.finish_edit(commit, None, cx));
+        }
+    }
+}
+
 /// Cell text for display. Control characters (tabs, stray breaks) show as spaces.
 fn display_text(text: &str) -> String {
     text.chars()
@@ -1234,7 +1253,8 @@ impl Render for CsvView {
             .text_color(theme.fg)
             .text_size(px(FONT_SIZE))
             .font_family(MONO_FONT)
-            .child(self.render_toolbar(theme, cx))
+            // The table toolbar belongs to the table only; the Text view has none.
+            .children((self.mode == Mode::Table).then(|| self.render_toolbar(theme, cx)))
             .when_some(error, |this, message| {
                 this.child(
                     div()

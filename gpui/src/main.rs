@@ -5,11 +5,13 @@
 //! open folders, the tabs and which one is active. Each tab owns an `Editor`
 //! entity, so switching tabs is a swap and typing never re-reads the file.
 //!
-//! Everything the web build does on the desktop is ported here: session
-//! restore, the ten palettes, find/replace, a rendered markdown mode, context
-//! menus, settings, autosave and the keyboard shortcuts. The two pieces that
-//! cannot cross over are noted where they would live: PDF export needs a print
-//! stack, and extensions are downloaded JavaScript bundles.
+//! Ported from the web build: session restore, the ten palettes, find/replace,
+//! the rich (WYSIWYG) and plain markdown views, the CSV, JSON and chart views,
+//! PDF export (`export_pdf`, which uses the macOS system fonts), the update check
+//! and install (`updater`), context menus, settings, autosave and the keyboard
+//! shortcuts. Not ported: Mermaid and KaTeX rendering (those fences show as
+//! source; `mermaid.rs` and `math.rs` are not wired in yet), and extensions that
+//! are downloaded JavaScript bundles.
 
 mod app_icon;
 mod chart;
@@ -18,6 +20,9 @@ mod editor;
 mod export_pdf;
 mod highlight;
 mod json_view;
+mod math;
+mod mermaid;
+mod nav;
 mod os;
 mod paths;
 mod preview;
@@ -43,8 +48,8 @@ use gpui::prelude::*;
 use gpui::{
     actions, div, px, rgb, rgba, size, AnyElement, App, Application, Bounds, ClipboardItem, Context,
     Div, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, MouseButton, PathPromptOptions,
-    Rgba, SharedString, Stateful, TitlebarOptions, Window, WindowBounds, WindowControlArea,
-    WindowOptions,
+    Rgba, ScrollHandle, SharedString, Stateful, TitlebarOptions, Window, WindowBounds,
+    WindowControlArea, WindowOptions,
 };
 
 use csv_view::CsvView;
@@ -74,10 +79,19 @@ actions!(
         Replace,
         Settings,
         Shortcuts,
+        ShowAbout,
         CopyMarkdown,
         CopyPath,
         DeleteSelection,
         CloseOverlay,
+        FindNext,
+        FindPrev,
+        TreeUp,
+        TreeDown,
+        TreeLeft,
+        TreeRight,
+        TreeActivate,
+        TreeRename,
         GoToTab1,
         GoToTab2,
         GoToTab3,
@@ -90,6 +104,7 @@ actions!(
     ]
 );
 
+/// Written into the notes folder on first run; text matches `src/lib/welcomeNote.ts`.
 const WELCOME_NOTE_NAME: &str = "Welcome.md";
 const VERSION: &str = "0.2.3";
 /// Space the macOS traffic lights take at the top-left of the window.
@@ -97,27 +112,42 @@ const TRAFFIC_LIGHT_INSET: f32 = 84.0;
 
 const WELCOME_NOTE: &str = r#"# Welcome to Zyplus
 
-**A markdown editor that gets out of the way.** This note lives in your Zyplus
-folder. Edit it, rename it, or delete it — it won't come back.
+**A markdown editor that gets out of the way.** This note lives in your Zyplus folder — edit it, rename it, or delete it. It won't come back.
+
+> [!TIP]
+> Press `⌘E` (`Ctrl+E` on Windows and Linux) to flip this tab between rich text and raw markdown.
 
 ## The basics
 
-- **Your notes are plain files.** Everything is a `.md` file in a real folder on
-  disk, with no database and no lock-in.
-- **New files land here.** This folder is the default; open another with
-  `Cmd-O`.
-- **Open a single file** with `Cmd-Shift-O`.
+- **Your notes are plain files.** Everything is a `.md` file in a real folder on disk — no database, no lock-in.
+- **New files land here.** This folder is your default; change it in Settings (`⌘,`).
+- **Open anything.** Add more project folders with `⌘O`, or open a single file with `⌘⇧O`.
+- **Pick up where you left off.** Open folders and tabs come back exactly as you left them.
+
+## Beyond plain text
+
+Callouts and syntax-highlighted code work out of the box. Mermaid diagrams and math are not rendered in this build, so their fences show as source. The web version renders them once you turn on **Mermaid** and **KaTeX** in Settings → Extensions:
+
+```mermaid
+flowchart LR
+    A[Write] --> B[Save]
+```
+
+```latex
+e^{i\pi} + 1 = 0
+```
 
 ## Handy shortcuts
 
 | Action | Shortcut |
 |---|---|
-| New file | `Cmd-N` |
-| Save | `Cmd-S` |
-| Close tab | `Cmd-W` |
-| Toggle sidebar | `Cmd-B` |
-| Open folder | `Cmd-O` |
-| Open file | `Cmd-Shift-O` |
+| New file | `⌘N` |
+| Save | `⌘S` |
+| Toggle rich / plain | `⌘E` |
+| Find | `⌘F` |
+| Toggle sidebar | `⌘B` |
+| Export as PDF | `⌘P` |
+| All shortcuts | `⌘/` |
 
 Happy writing!
 "#;
@@ -215,6 +245,14 @@ impl Searchable {
         }
     }
 
+    /// The selection, which is the caret when empty.
+    fn selection(&self, cx: &App) -> Range<usize> {
+        match self {
+            Searchable::Plain(editor) => editor.read(cx).selection(),
+            Searchable::Rich(editor) => editor.read(cx).selection(),
+        }
+    }
+
     fn replace_at(&self, range: Range<usize>, text: &str, cx: &mut App) {
         match self {
             Searchable::Plain(editor) => {
@@ -252,6 +290,20 @@ fn edit_reporter(workspace: Entity<Zyplus>, path: String) -> Box<dyn Fn(&str, &m
     })
 }
 
+/// Escape in a tab's editor. It closes the open overlay (menu, dialog,
+/// settings, find bar), which the editor's own Cancel binding would otherwise
+/// swallow. With nothing open it does nothing.
+fn cancel_reporter(workspace: Entity<Zyplus>) -> Box<dyn Fn(&mut App)> {
+    Box::new(move |cx| {
+        let workspace = workspace.clone();
+        cx.defer(move |cx| {
+            let _ = workspace.update(cx, |this, cx| {
+                this.close_overlay(None, cx);
+            });
+        });
+    })
+}
+
 #[derive(Clone)]
 enum MenuAction {
     NewFile(String),
@@ -271,9 +323,7 @@ enum MenuAction {
     ExportMd(String),
     ExportPdf(String),
     Find,
-    Replace,
-    ToggleMode,
-    Settings,
+    PickFile,
     OpenFolder,
 }
 
@@ -290,6 +340,11 @@ struct MenuItem {
 impl MenuItem {
     fn with_icon(mut self, icon: &'static str) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    fn disabled_if(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 }
@@ -420,6 +475,15 @@ struct Zyplus {
     /// Set when the find bar closes without a window (from its own Escape
     /// handler); the next render gives keyboard focus back to the editor.
     refocus_editor: bool,
+    /// Set when a dialog opens from code without a window; the next render
+    /// moves keyboard focus into it (its name field, or the window itself).
+    focus_modal: bool,
+    /// Cmd-Q found unsaved tabs and is asking about them one at a time; the
+    /// app quits once none is left. Cancelling a dialog stops it.
+    quitting: bool,
+    /// The stored session could not be read, or came back empty. It is kept
+    /// on disk until the user opens something (see `may_overwrite_session`).
+    restore_failed: bool,
     menu: Option<MenuState>,
     modal: Option<Modal>,
     dialog_error: Option<SharedString>,
@@ -440,6 +504,13 @@ struct Zyplus {
     update_status: updater::Status,
     /// Which apps open each file type, read from the OS when Settings opens.
     default_apps: Option<DefaultApps>,
+    /// Keyboard focus for the sidebar tree (arrow keys, Enter, F2, Delete).
+    tree_focus: FocusHandle,
+    tree_scroll: ScrollHandle,
+    /// The tab strip's horizontal scroll position.
+    tab_scroll: ScrollHandle,
+    /// The active tab the strip last scrolled to, so only a change scrolls it.
+    tab_scrolled_to: Option<String>,
 }
 
 /// LaunchServices claims for the Settings → General rows, in `DEFAULT_APPS` order.
@@ -574,10 +645,163 @@ fn is_untitled(title: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The tab the Cmd-1…9 keys select: the nth tab, 9 meaning the last one. `None`
+/// when there is no such tab; the key then does nothing.
+fn goto_index(len: usize, number: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let index = if number == 9 {
+        len - 1
+    } else {
+        number.checked_sub(1)?
+    };
+    (index < len).then_some(index)
+}
+
+/// The active tab after `closed` is removed. Closing another tab keeps the
+/// active one; closing the active tab activates the last remaining tab, as the
+/// web app does.
+fn active_after_close(active: Option<&str>, closed: &str, remaining: &[String]) -> Option<String> {
+    if active != Some(closed) {
+        return active.map(str::to_string);
+    }
+    remaining.last().cloned()
+}
+
+/// `path` after `old` was renamed or moved to `new`: `path` itself or anything
+/// inside `old` moves with it, anything else is unchanged. A sibling that only
+/// shares the prefix (`/n/foo` vs `/n/foobar`) is not inside `old`.
+fn remapped_path(path: &str, old: &str, new: &str) -> String {
+    if paths::is_under(path, old) {
+        format!("{}{}", new, &path[old.len()..])
+    } else {
+        path.to_string()
+    }
+}
+
+/// The first tab with edits nobody has decided about, for the quit prompt.
+fn first_unsaved<'a>(tabs: impl IntoIterator<Item = (&'a str, bool)>) -> Option<&'a str> {
+    tabs.into_iter()
+        .find(|(_, dirty)| *dirty)
+        .map(|(path, _)| path)
+}
+
+/// Whether the workspace may write the session file. After a restore that came
+/// back empty (or a session that could not be read), the stored one is kept
+/// until the user opens something, as the web app does.
+fn may_overwrite_session(restore_failed: bool, roots: usize, tabs: usize) -> bool {
+    !(restore_failed && roots == 0 && tabs == 0)
+}
+
+/// The live hint under a name field: empty is "not finished yet", not an error.
+fn live_name_error(typed: &str) -> Option<String> {
+    let name = typed.trim();
+    if name.is_empty() {
+        None
+    } else {
+        paths::invalid_name_reason(name)
+    }
+}
+
+/// The label for "reveal this path in the OS file browser" (`REVEAL_LABEL` in
+/// the web build's `lib/platform.ts`).
+fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Show in File Explorer"
+    } else {
+        "Show in File Manager"
+    }
+}
+
+/// The sidebar row menu (`buildNodeMenuItems` in `FileTree.tsx`). Folders and
+/// files get different lists; a project root can only be closed.
+fn row_menu_items(path: &str, is_folder: bool, is_root: bool) -> Vec<MenuItem> {
+    let p = || path.to_string();
+    if is_folder && is_root {
+        return vec![
+            item("New File", MenuAction::NewFile(p())).with_icon("file-add"),
+            item("New Folder", MenuAction::NewFolder(p())).with_icon("folder-add"),
+            item(reveal_label(), MenuAction::Reveal(p())).with_icon("folder-open"),
+            item("Copy Path", MenuAction::CopyPath(p())).with_icon("clipboard"),
+            danger_item("Close Project", MenuAction::CloseProject(p())).with_icon("cancel01"),
+        ];
+    }
+    if is_folder {
+        return vec![
+            item("New File", MenuAction::NewFile(p())).with_icon("file-add"),
+            item("New Folder", MenuAction::NewFolder(p())).with_icon("folder-add"),
+            item("Rename", MenuAction::Rename(p(), true)).with_icon("pencil-edit01"),
+            item(reveal_label(), MenuAction::Reveal(p())).with_icon("folder-open"),
+            item("Copy Path", MenuAction::CopyPath(p())).with_icon("clipboard"),
+            danger_item("Delete", MenuAction::Delete(p(), true)).with_icon("trash"),
+        ];
+    }
+    vec![
+        item("Open", MenuAction::Open(p())).with_icon("external-link"),
+        item("Rename", MenuAction::Rename(p(), false)).with_icon("pencil-edit01"),
+        item("Duplicate", MenuAction::Duplicate(p())).with_icon("copy01"),
+        item(reveal_label(), MenuAction::Reveal(p())).with_icon("folder-open"),
+        item("Copy Path", MenuAction::CopyPath(p())).with_icon("clipboard"),
+        // Native-only extras, after the web items.
+        item("Copy Markdown", MenuAction::CopyMarkdown(p())).with_icon("copy01"),
+        item("Export Markdown…", MenuAction::ExportMd(p())).with_icon("file-export"),
+        danger_item("Delete", MenuAction::Delete(p(), false)).with_icon("trash"),
+    ]
+}
+
+/// Empty tree space (`handleTreeContextMenu` in `FileTree.tsx`): new items in
+/// the first project, then the open actions. `first_root` is `None` with no project.
+fn tree_area_items(first_root: Option<&str>) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    if let Some(root) = first_root {
+        items.push(item("New File", MenuAction::NewFile(root.to_string())).with_icon("file-add"));
+        items.push(item("New Folder", MenuAction::NewFolder(root.to_string())).with_icon("folder-add"));
+    }
+    items.push(item("Open File...", MenuAction::PickFile).with_icon("file01"));
+    items.push(item("Add Project Folder...", MenuAction::OpenFolder).with_icon("folder-open"));
+    items
+}
+
+/// A tab's right-click menu (`handleTabContextMenu` in `TabBar.tsx`). Save is
+/// disabled while the tab is clean; Reveal appears only for a path on disk.
+fn tab_menu_items(path: &str, dirty: bool, on_disk: bool) -> Vec<MenuItem> {
+    let p = || path.to_string();
+    let mut items = vec![
+        item("Save", MenuAction::Save(p())).with_icon("floppy-disk").disabled_if(!dirty),
+        item("Close", MenuAction::Close(p())).with_icon("cancel01"),
+        item("Close Others", MenuAction::CloseOthers(p())).with_icon("multiplication-sign"),
+        item("Close All", MenuAction::CloseAll).with_icon("multiplication-sign"),
+    ];
+    if on_disk {
+        items.push(item(reveal_label(), MenuAction::Reveal(p())).with_icon("folder-open"));
+    }
+    items.push(item("Copy Path", MenuAction::CopyPath(p())).with_icon("clipboard"));
+    items
+}
+
+/// The tab bar's ⋯ menu (`handleActionsMenu` in `TabBar.tsx`). A different list
+/// from the tab's right-click menu.
+fn actions_menu_items(path: &str, dirty: bool, on_disk: bool) -> Vec<MenuItem> {
+    let p = || path.to_string();
+    let mut items = vec![
+        item("Save", MenuAction::Save(p())).with_icon("floppy-disk").disabled_if(!dirty),
+        item("Find in document", MenuAction::Find).with_icon("search01"),
+        item("Copy Markdown", MenuAction::CopyMarkdown(p())).with_icon("copy01"),
+        item("Copy Path", MenuAction::CopyPath(p())).with_icon("clipboard"),
+        item("Export as .md", MenuAction::ExportMd(p())).with_icon("file-export"),
+        item("Export as PDF…", MenuAction::ExportPdf(p())).with_icon("pdf01"),
+    ];
+    if on_disk {
+        items.push(item(reveal_label(), MenuAction::Reveal(p())).with_icon("folder-open"));
+    }
+    items
+}
+
 impl Zyplus {
     fn new(cx: &mut Context<Self>) -> Self {
-        let stored = session::load();
-        let had_session = stored.is_some();
         let mut this = Self {
             focus: cx.focus_handle(),
             roots: Vec::new(),
@@ -594,6 +818,9 @@ impl Zyplus {
             autosave_tick: 0,
             find: None,
             refocus_editor: false,
+            focus_modal: false,
+            quitting: false,
+            restore_failed: false,
             menu: None,
             modal: None,
             dialog_error: None,
@@ -606,11 +833,33 @@ impl Zyplus {
             notice_tick: 0,
             update_status: updater::Status::default(),
             default_apps: None,
+            tree_focus: cx.focus_handle(),
+            tree_scroll: ScrollHandle::new(),
+            tab_scroll: ScrollHandle::new(),
+            tab_scrolled_to: None,
+        };
+
+        let stored = match session::load() {
+            Ok(stored) => stored,
+            Err(err) => {
+                // Unreadable: not overwritten until the user opens something.
+                eprintln!("zyplus: could not read the saved session: {err}");
+                this.restore_failed = true;
+                None
+            }
+        };
+        // First run: nothing saved, or a saved session with no folders, tabs or
+        // notes folder. Skip keeps `default_folder` as "" so it is not first run.
+        let first_run = match &stored {
+            None => true,
+            Some(saved) => {
+                saved.roots.is_empty() && saved.tabs.is_empty() && saved.default_folder.is_none()
+            }
         };
 
         let mut restored = false;
         if let Some(stored) = stored {
-            restored = !stored.roots.is_empty() || !stored.tabs.is_empty();
+            let had_content = !stored.roots.is_empty() || !stored.tabs.is_empty();
             if theme::THEMES.iter().any(|option| option.id == stored.theme) {
                 this.theme_name = stored.theme;
             }
@@ -620,42 +869,41 @@ impl Zyplus {
             this.disabled_extensions = stored.disabled_extensions.into_iter().collect();
 
             let open: BTreeSet<String> = stored.open_folders.into_iter().collect();
+            // A folder or file that is gone is dropped without a message, as the web app does.
             for root in &stored.roots {
-                match tree::read_project_node(root, &open) {
-                    Ok(node) => {
-                        this.roots.push(root.clone());
-                        this.tree.push(node);
-                    }
-                    Err(err) => this.error = Some(err.into()),
+                if let Ok(node) = tree::read_project_node(root, &open) {
+                    this.roots.push(root.clone());
+                    this.tree.push(node);
                 }
             }
             this.open_folders = open;
 
-            let mut wanted_active = stored.active_file_path.clone();
+            let wanted_active = stored.active_file_path.clone();
             for tab in stored.tabs {
-                match tree::read_text_file(&tab.file_path) {
-                    Ok(content) => this.push_tab(&tab.file_path, &tab.mode, content, cx),
-                    Err(err) => this.error = Some(err.into()),
+                if let Ok(content) = tree::read_text_file(&tab.file_path) {
+                    this.push_tab(&tab.file_path, Some(&tab.mode), content, cx);
                 }
             }
-            if let Some(path) = wanted_active.take() {
+            if let Some(path) = wanted_active {
                 if this.tabs.iter().any(|tab| tab.path == path) {
                     this.active = Some(path);
                 }
             }
+            restored = !this.roots.is_empty() || !this.tabs.is_empty();
+            if had_content && !restored {
+                this.restore_failed = true;
+            }
         }
 
-        // First run shows the welcome screen, where the notes folder can be
-        // created or skipped. A stored session that opens nothing means the
-        // user already went through it, so it is not shown again.
-        if !restored && !had_session {
+        // The notes folder is created with Welcome.md open. The Welcome screen
+        // is the fallback when that cannot be written.
+        if first_run && !restored && !this.create_notes_folder(cx) {
             this.welcome = true;
         }
 
-        if !restored {
+        if !restored && may_overwrite_session(this.restore_failed, this.roots.len(), this.tabs.len()) {
             this.persist();
         }
-        this.start_startup_update_check(cx);
         this
     }
 
@@ -746,13 +994,28 @@ impl Zyplus {
             editor
         });
         rich.update(cx, |editor, _| {
-            editor.on_change = Some(edit_reporter(workspace, path));
+            editor.on_change = Some(edit_reporter(workspace.clone(), path.clone()));
+            editor.on_cancel = Some(cancel_reporter(workspace));
         });
         self.tabs[index].rich = Some(rich);
     }
 
     fn theme(&self, window: &Window) -> Theme {
         Theme::for_name(&self.theme_name, window.appearance())
+    }
+
+    /// Moves keyboard focus into the dialog that just opened: its name field,
+    /// or the window for the dialogs without one (so typing does not go into
+    /// the document behind).
+    fn focus_open_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.modal {
+            Some(Modal::Rename { input, .. }) | Some(Modal::NewFolder { input, .. }) => {
+                let handle = input.read(cx).focus_handle(cx);
+                window.focus(&handle);
+            }
+            Some(_) => window.focus(&self.focus),
+            None => {}
+        }
     }
 
     fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -770,6 +1033,10 @@ impl Zyplus {
     }
 
     fn persist(&mut self) {
+        if !may_overwrite_session(self.restore_failed, self.roots.len(), self.tabs.len()) {
+            return;
+        }
+        self.restore_failed = false;
         let stored = session::Session {
             roots: self.roots.clone(),
             default_folder: self.default_folder.clone(),
@@ -792,15 +1059,18 @@ impl Zyplus {
     }
 
     /// Opens `path` as a tab in the view its extension picks. `mode` is the
-    /// persisted view mode; a mode the view does not offer falls back to the
-    /// view's default.
-    fn push_tab(&mut self, path: &str, mode: &str, content: String, cx: &mut Context<Self>) {
+    /// persisted view mode (a restore); `None` opens the view's default. A mode
+    /// the view does not offer falls back to the view's default.
+    fn push_tab(&mut self, path: &str, mode: Option<&str>, content: String, cx: &mut Context<Self>) {
         if self.tabs.iter().any(|tab| tab.path == path) {
             self.active = Some(path.to_string());
             return;
         }
         let kind = view_kind::kind_for_path(path, |id| self.extension_enabled(id));
-        let wanted = view_kind::normalize_mode(kind, mode);
+        let wanted = match mode {
+            Some(stored) => view_kind::normalize_mode(kind, stored),
+            None => view_kind::default_mode(kind),
+        };
         let theme_name = self.theme_name.clone();
         let workspace = cx.entity();
         let tab_path = path.to_string();
@@ -814,6 +1084,10 @@ impl Zyplus {
                         view.select_mode(wanted, None, cx);
                     }
                 });
+                let text = csv.read(cx).text_editor();
+                text.update(cx, |editor, _| {
+                    editor.on_cancel = Some(cancel_reporter(workspace.clone()));
+                });
                 let mode = csv.read(cx).mode();
                 (TabView::Csv(csv), mode)
             }
@@ -824,6 +1098,10 @@ impl Zyplus {
                     if let Some(wanted) = wanted {
                         view.set_mode(wanted, cx);
                     }
+                });
+                let text = json.read(cx).text_editor();
+                text.update(cx, |editor, _| {
+                    editor.on_cancel = Some(cancel_reporter(workspace.clone()));
                 });
                 let mode = json.read(cx).mode();
                 (TabView::Json(json), mode)
@@ -837,6 +1115,7 @@ impl Zyplus {
                 });
                 editor.update(cx, |editor, cx| {
                     editor.on_change = Some(edit_reporter(workspace.clone(), tab_path.clone()));
+                    editor.on_cancel = Some(cancel_reporter(workspace.clone()));
                     editor.set_language(language);
                     cx.notify();
                 });
@@ -897,7 +1176,7 @@ impl Zyplus {
             }
         };
 
-        self.push_tab(path, "plain", content, cx);
+        self.push_tab(path, None, content, cx);
 
         if let Some(folder) = self
             .roots
@@ -949,13 +1228,8 @@ impl Zyplus {
             return;
         };
         self.tabs.remove(index);
-        if self.active.as_deref() == Some(path) {
-            self.active = self
-                .tabs
-                .get(index.saturating_sub(1))
-                .or_else(|| self.tabs.last())
-                .map(|tab| tab.path.clone());
-        }
+        let remaining: Vec<String> = self.tabs.iter().map(|tab| tab.path.clone()).collect();
+        self.active = active_after_close(self.active.as_deref(), path, &remaining);
         self.focus_editor(window, cx);
         self.persist();
         cx.notify();
@@ -978,6 +1252,7 @@ impl Zyplus {
             return;
         }
         self.dialog_error = None;
+        self.focus_modal = true;
         self.modal = Some(Modal::Unsaved {
             path: path.to_string(),
         });
@@ -1014,52 +1289,39 @@ impl Zyplus {
         cx.notify();
     }
 
-    /// Rewrites the tabs, the active path and the open folders after `old`
-    /// changed its name or moved somewhere else.
+    /// Rewrites the tabs, the active path, the sidebar selection and cursor,
+    /// and the open folders after `old` changed its name or moved somewhere else.
     fn remap_paths(&mut self, old: &str, new: &str) {
         for tab in &mut self.tabs {
             if paths::is_under(&tab.path, old) {
-                tab.path = format!("{}{}", new, &tab.path[old.len()..]);
+                tab.path = remapped_path(&tab.path, old, new);
                 tab.title = paths::basename_of(&tab.path);
             }
         }
         if let Some(active) = self.active.clone() {
-            if paths::is_under(&active, old) {
-                self.active = Some(format!("{}{}", new, &active[old.len()..]));
-            }
+            self.active = Some(remapped_path(&active, old, new));
         }
-        self.selected = self
-            .selected
-            .iter()
-            .map(|selected| {
-                if paths::is_under(selected, old) {
-                    format!("{}{}", new, &selected[old.len()..])
-                } else {
-                    selected.clone()
-                }
-            })
-            .collect();
-        if let Some(selected) = self.selection_anchor.clone() {
-            if paths::is_under(&selected, old) {
-                self.selection_anchor = Some(format!("{}{}", new, &selected[old.len()..]));
-            }
+        for selected in &mut self.selected {
+            *selected = remapped_path(selected, old, new);
+        }
+        if let Some(anchor) = self.selection_anchor.clone() {
+            self.selection_anchor = Some(remapped_path(&anchor, old, new));
+        }
+        if let Some((clicked, at)) = self.last_row_click.clone() {
+            self.last_row_click = Some((remapped_path(&clicked, old, new), at));
         }
         self.open_folders = self
             .open_folders
             .iter()
-            .map(|id| {
-                if paths::is_under(id, old) {
-                    format!("{}{}", new, &id[old.len()..])
-                } else {
-                    id.clone()
-                }
-            })
+            .map(|id| remapped_path(id, old, new))
             .collect();
     }
 
     /// Moves dragged rows into `dest_dir`, the way dragging in the web tree did.
+    /// One failed item does not stop the rest; the first failure is reported once.
     fn move_into(&mut self, paths_to_move: &[String], dest_dir: &str, cx: &mut Context<Self>) {
         let mut moved = false;
+        let mut failure: Option<String> = None;
         for src in paths_to_move {
             if self.roots.iter().any(|root| root == src) || src == dest_dir {
                 continue;
@@ -1078,18 +1340,20 @@ impl Zyplus {
                     moved = true;
                 }
                 Err(err) => {
-                    self.error = Some(err.into());
-                    cx.notify();
-                    return;
+                    failure.get_or_insert(err);
                 }
             }
         }
         if moved {
-            self.error = None;
             self.refresh_tree(cx);
             self.persist();
-            cx.notify();
         }
+        match failure {
+            Some(err) => self.error = Some(err.into()),
+            None if moved => self.error = None,
+            None => {}
+        }
+        cx.notify();
     }
 
     /// Applies a click on a sidebar row: plain replaces the selection, the
@@ -1161,6 +1425,155 @@ impl Zyplus {
         double
     }
 
+    // ---- sidebar keyboard -----------------------------------------------
+
+    /// The visible row the sidebar cursor is on (the selection's anchor).
+    fn tree_cursor_row(&self) -> Option<tree::Row> {
+        let id = self.selection_anchor.as_ref()?;
+        tree::visible_rows(&self.tree, &self.open_folders)
+            .into_iter()
+            .find(|row| &row.id == id)
+    }
+
+    /// Arrow keys in the tree: move the cursor and selection, or open and
+    /// close folders (react-arborist's defaults; see `nav::tree_move`).
+    fn tree_nav(&mut self, key: nav::TreeKey, window: &mut Window, cx: &mut Context<Self>) {
+        let rows = tree::visible_rows(&self.tree, &self.open_folders);
+        let shapes: Vec<nav::RowShape> = rows
+            .iter()
+            .map(|row| nav::RowShape {
+                depth: row.depth,
+                is_folder: row.is_folder,
+                is_open: row.is_open,
+            })
+            .collect();
+        let current = self
+            .selection_anchor
+            .as_ref()
+            .and_then(|id| rows.iter().position(|row| &row.id == id));
+        match nav::tree_move(&shapes, current, key) {
+            nav::TreeMove::Nothing => {}
+            nav::TreeMove::Select(index) => {
+                let id = rows[index].id.clone();
+                self.selected = vec![id.clone()];
+                self.selection_anchor = Some(id);
+                self.scroll_tree_to(index);
+            }
+            nav::TreeMove::Expand(index) | nav::TreeMove::Collapse(index) => {
+                let id = rows[index].id.clone();
+                self.toggle_folder(&id, cx);
+            }
+        }
+        window.focus(&self.tree_focus);
+        cx.notify();
+    }
+
+    /// Keeps the sidebar row at `index` on screen, scrolling only when it is
+    /// out of view. Rows are 25px with a 4px top inset (see `render_sidebar`).
+    fn scroll_tree_to(&self, index: usize) {
+        const ROW_H: f32 = 25.0;
+        const INSET: f32 = 4.0;
+        let viewport = f32::from(self.tree_scroll.bounds().size.height);
+        if viewport <= 0.0 {
+            return;
+        }
+        let offset = self.tree_scroll.offset();
+        let shown = -f32::from(offset.y);
+        let top = INSET + index as f32 * ROW_H;
+        let bottom = top + ROW_H;
+        let target = if top < shown {
+            Some(top - INSET)
+        } else if bottom > shown + viewport {
+            Some(bottom + INSET - viewport)
+        } else {
+            None
+        };
+        if let Some(target) = target {
+            self.tree_scroll
+                .set_offset(gpui::point(offset.x, px(-target)));
+        }
+    }
+
+    /// Enter on the cursor row. A folder opens or closes. A file opens in a
+    /// tab only when the tree opens that file type (`handleActivate` in `FileTree.tsx`).
+    fn tree_activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self.tree_cursor_row() else {
+            return;
+        };
+        if row.is_folder {
+            self.toggle_folder(&row.id, cx);
+            return;
+        }
+        if nav::tree_opens(&row.name, |id| self.extension_enabled(id)) {
+            self.open_document(&row.id, Some(window), cx);
+        }
+    }
+
+    /// F2 on the cursor row. Project roots cannot be renamed, as in `FileTree.tsx`.
+    fn tree_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(row) = self.tree_cursor_row() else {
+            return;
+        };
+        if row.is_root {
+            return;
+        }
+        self.open_rename(&row.id, row.is_folder, cx);
+    }
+
+    fn tree_up(&mut self, _: &TreeUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_nav(nav::TreeKey::Up, window, cx);
+    }
+
+    fn tree_down(&mut self, _: &TreeDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_nav(nav::TreeKey::Down, window, cx);
+    }
+
+    fn tree_left(&mut self, _: &TreeLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_nav(nav::TreeKey::Left, window, cx);
+    }
+
+    fn tree_right(&mut self, _: &TreeRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_nav(nav::TreeKey::Right, window, cx);
+    }
+
+    fn tree_activate_action(
+        &mut self,
+        _: &TreeActivate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.tree_activate(window, cx);
+        cx.notify();
+    }
+
+    fn tree_rename_action(&mut self, _: &TreeRename, _: &mut Window, cx: &mut Context<Self>) {
+        self.tree_rename(cx);
+    }
+
+    /// Cmd-G / Cmd-Shift-G and Shift-Enter in the query: step the open find
+    /// bar. With no bar open the key falls through to the focused view.
+    fn find_next_action(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
+        if self.find.is_some() {
+            self.step_find(1, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    /// Shift-Enter: the previous match, or Replace All from the replace field
+    /// (`SearchBar.tsx`). With no bar open the key falls through to the editor.
+    fn find_prev_action(&mut self, _: &FindPrev, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(find) = self.find.as_ref() else {
+            cx.propagate();
+            return;
+        };
+        if find.replace.read(cx).focus_handle(cx).is_focused(window) {
+            self.replace_all(cx);
+        } else {
+            self.step_find(-1, cx);
+        }
+    }
+
     fn delete_selected(&mut self, cx: &mut Context<Self>) {
         // Project roots are closed, never deleted from disk.
         let paths: Vec<String> = self
@@ -1178,6 +1591,7 @@ impl Zyplus {
                 .map(|node| node.is_folder)
                 .unwrap_or(false);
         self.dialog_error = None;
+        self.focus_modal = true;
         self.modal = Some(Modal::Delete { paths, is_folder });
         cx.notify();
     }
@@ -1238,7 +1652,15 @@ impl Zyplus {
         let this = cx.entity();
         let for_submit = this.clone();
         let for_cancel = this.clone();
+        let for_change = this.clone();
         input.update(cx, |editor, _| {
+            editor.on_change = Some(Box::new(move |_text: &str, cx: &mut App| {
+                // The hint under the field reads the text on the next render.
+                let this = for_change.clone();
+                cx.defer(move |cx| {
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                });
+            }));
             editor.on_submit = Some(Box::new(move |cx| {
                 let this = for_submit.clone();
                 cx.defer(move |cx| {
@@ -1249,14 +1671,15 @@ impl Zyplus {
                 let this = for_cancel.clone();
                 cx.defer(move |cx| {
                     let _ = this.update(cx, |this, cx| {
-                        this.modal = None;
-                        this.dialog_error = None;
+                        this.close_modal();
+                        this.refocus_editor = true;
                         cx.notify();
                     });
                 });
             }));
         });
         self.dialog_error = None;
+        self.focus_modal = true;
         self.modal = Some(Modal::NewFolder {
             dir: dir.to_string(),
             input,
@@ -1269,6 +1692,11 @@ impl Zyplus {
             return;
         };
         let name = input.read(cx).text().trim().to_string();
+        // Enter on an empty box does nothing: the web Create button is disabled
+        // until there is a name, and an empty box is not an error to report.
+        if name.is_empty() {
+            return;
+        }
         if let Some(reason) = paths::invalid_name_reason(&name) {
             self.dialog_error = Some(reason.into());
             cx.notify();
@@ -1282,6 +1710,7 @@ impl Zyplus {
                 self.error = None;
                 self.refresh_tree(cx);
                 self.reveal_dir(&dir);
+                self.refocus_editor = true;
                 self.persist();
                 cx.notify();
             }
@@ -1482,6 +1911,11 @@ impl Zyplus {
     // ---- find and replace ----------------------------------------------
 
     fn open_find(&mut self, replace: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Only a text editor can be searched. The JSON tree, JSON table and CSV
+        // table show no text, so the bar would do nothing (the web hides it there).
+        if self.active_searchable(cx).is_none() {
+            return;
+        }
         let theme_name = self.theme_name.clone();
         if self.find.is_none() {
             let this = cx.entity();
@@ -1610,18 +2044,25 @@ impl Zyplus {
 
     fn step_find(&mut self, delta: isize, cx: &mut Context<Self>) {
         self.refresh_find(cx);
+        // Step from the caret, not the old index: an edit or a click may have
+        // moved it since the last match was shown.
+        let caret = self.active_searchable(cx).map(|target| target.selection(cx));
         let Some(find) = self.find.as_mut() else {
             return;
         };
         if find.matches.is_empty() {
             return;
         }
-        let len = find.matches.len() as isize;
-        find.index = ((find.index as isize + delta).rem_euclid(len)) as usize;
-        let index = find.index;
+        find.index = match caret {
+            Some(caret) => nav::find_next_index(&find.matches, caret, delta),
+            None => {
+                let len = find.matches.len() as isize;
+                ((find.index as isize + delta).rem_euclid(len)) as usize
+            }
+        };
         let find = self.find.as_ref().unwrap();
         let matches = find.matches.clone();
-        let Some(range) = find.matches.get(index).cloned() else {
+        let Some(range) = find.matches.get(find.index).cloned() else {
             return;
         };
         let active = Some(range.clone());
@@ -1727,11 +2168,10 @@ impl Zyplus {
                 });
             }
         }
-        let shows_text = view_kind::shows_text(kind, &applied) || applied == "rich";
         self.tabs[index].mode = applied;
-        if shows_text {
-            self.focus_editor(window, cx);
-        }
+        // Whatever view the mode lands on takes the keyboard, including the
+        // JSON tree and CSV table; the hidden text editor must not keep it.
+        self.focus_editor(window, cx);
         if self.find.is_some() {
             if let Some(old) = before {
                 old.set_search(Vec::new(), None, cx);
@@ -1897,41 +2337,31 @@ impl Zyplus {
     fn open_settings(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         self.dialog_error = None;
         self.default_apps = None;
+        self.focus_modal = true;
         self.modal = Some(Modal::Settings { section });
         cx.notify();
     }
 
     // ---- updates ----------------------------------------------------------
 
-    /// Once per launch, a few seconds after startup. Failures stay silent.
-    fn start_startup_update_check(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_secs(3))
-                .await;
-            this.update(cx, |this, cx| this.check_for_updates(true, cx))
-                .ok();
-        })
-        .detach();
-    }
+    // There is no check at startup: like the web app, the check only runs when
+    // the user asks for it in Settings → About.
 
-    /// Asks GitHub for a newer release. A silent check reports nothing when it
-    /// fails or finds nothing; a manual one shows the result in About.
-    fn check_for_updates(&mut self, silent: bool, cx: &mut Context<Self>) {
-        if self.update_status.busy() {
+    /// Asks GitHub for the newest release. Nothing runs at startup: the check
+    /// only starts from Settings → About. The result shows in About and the sidebar.
+    fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if self.update_status.busy() || self.update_status.installed_app().is_some() {
             return;
         }
-        if !silent {
-            self.update_status = updater::Status::Checking;
-            cx.notify();
-        }
+        self.update_status = updater::Status::Checking;
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async { updater::check(VERSION) })
                 .await;
             this.update(cx, |this, cx| {
-                this.update_status.after_check(result, silent);
+                this.update_status.after_check(result);
                 cx.notify();
             })
             .ok();
@@ -1939,13 +2369,40 @@ impl Zyplus {
         .detach();
     }
 
-    /// Downloads the offered release in the background. The file is only
-    /// revealed afterwards; nothing is installed automatically.
+    /// Runs the one action the About panel shows for the current state.
+    fn update_action(&mut self, cx: &mut Context<Self>) {
+        match self.update_status.panel_view().action {
+            Some(updater::Action::Check) => self.check_for_updates(cx),
+            Some(updater::Action::Download) => self.download_update(cx),
+            Some(updater::Action::Restart) => {
+                if let Some(app) = self.update_status.installed_app().map(|p| p.to_path_buf()) {
+                    // The helper starts only when the quit really happens, so a
+                    // cancelled quit (unsaved tabs) leaves the app running.
+                    updater::request_relaunch(app);
+                    cx.defer(request_quit);
+                }
+            }
+            Some(updater::Action::Reveal) => {
+                let path = match &self.update_status {
+                    updater::Status::Downloaded { path, .. } => Some(path.clone()),
+                    updater::Status::Failed { file, .. } => file.clone(),
+                    _ => None,
+                };
+                if let Some(path) = path {
+                    self.reveal_update(&path, cx);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Downloads, verifies, and on macOS app bundles installs the release on offer.
+    /// Progress and the result come back over a channel and are applied here.
     fn download_update(&mut self, cx: &mut Context<Self>) {
         let Some(info) = self.update_status.begin_download() else {
             return;
         };
-        let events = updater::start_download(info);
+        let events = updater::start_update(info, VERSION);
         cx.notify();
         cx.spawn(async move |this, cx| {
             loop {
@@ -1957,26 +2414,29 @@ impl Zyplus {
                     let mut changed = false;
                     loop {
                         match events.try_recv() {
-                            Ok(updater::DownloadEvent::Progress(done, total)) => {
-                                this.update_status.on_progress(done, total);
+                            Ok(event) => {
+                                finished = matches!(event, updater::DownloadEvent::Finished(_));
+                                this.update_status.apply(event);
                                 changed = true;
-                            }
-                            Ok(updater::DownloadEvent::Finished(result)) => {
-                                this.update_status.on_download_finished(result);
-                                finished = true;
-                                break;
+                                if finished {
+                                    break;
+                                }
                             }
                             Err(std::sync::mpsc::TryRecvError::Empty) => break,
                             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                this.update_status.on_download_finished(Err(
-                                    "The download stopped unexpectedly.".into(),
-                                ));
+                                this.update_status.apply(updater::DownloadEvent::Finished(Err(
+                                    updater::Failure {
+                                        message: "The update stopped unexpectedly.".into(),
+                                        file: None,
+                                    },
+                                )));
                                 finished = true;
+                                changed = true;
                                 break;
                             }
                         }
                     }
-                    if changed || finished {
+                    if changed {
                         cx.notify();
                     }
                 });
@@ -1988,16 +2448,10 @@ impl Zyplus {
         .detach();
     }
 
-    fn reveal_update(&mut self, cx: &mut Context<Self>) {
-        let downloaded = match &self.update_status {
-            updater::Status::Downloaded { path, .. } => Some(path.clone()),
-            _ => None,
-        };
-        if let Some(path) = downloaded {
-            if let Err(err) = updater::reveal_or_open(&path) {
-                self.error = Some(err.into());
-                cx.notify();
-            }
+    fn reveal_update(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        if let Err(err) = updater::reveal_or_open(path) {
+            self.error = Some(err.into());
+            cx.notify();
         }
     }
 
@@ -2042,7 +2496,9 @@ impl Zyplus {
                     changed = true;
                 }
                 Err(err) => {
-                    self.error = Some(err.into());
+                    // Like the web app, a failed autosave is logged, not shown.
+                    // Quit and close still ask about the tab.
+                    eprintln!("zyplus: autosave failed for {}: {err}", tab.path);
                     break;
                 }
             }
@@ -2072,7 +2528,14 @@ impl Zyplus {
         let this = cx.entity();
         let for_submit = this.clone();
         let for_cancel = this.clone();
+        let for_change = this.clone();
         input.update(cx, |editor, _| {
+            editor.on_change = Some(Box::new(move |_text: &str, cx: &mut App| {
+                let this = for_change.clone();
+                cx.defer(move |cx| {
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                });
+            }));
             editor.on_submit = Some(Box::new(move |cx| {
                 let this = for_submit.clone();
                 cx.defer(move |cx| {
@@ -2083,14 +2546,15 @@ impl Zyplus {
                 let this = for_cancel.clone();
                 cx.defer(move |cx| {
                     let _ = this.update(cx, |this, cx| {
-                        this.modal = None;
-                        this.dialog_error = None;
+                        this.close_modal();
+                        this.refocus_editor = true;
                         cx.notify();
                     });
                 });
             }));
         });
         self.dialog_error = None;
+        self.focus_modal = true;
         self.modal = Some(Modal::Rename {
             path: path.to_string(),
             is_folder,
@@ -2123,32 +2587,12 @@ impl Zyplus {
         let new_path = paths::display_join(&paths::dirname_of(&path), &name);
         match tree::rename_path(&path, &new_path) {
             Ok(()) => {
-                for tab in &mut self.tabs {
-                    if paths::is_under(&tab.path, &path) {
-                        tab.path = format!("{}{}", new_path, &tab.path[path.len()..]);
-                        tab.title = paths::basename_of(&tab.path);
-                    }
-                }
-                if let Some(active) = self.active.clone() {
-                    if paths::is_under(&active, &path) {
-                        self.active = Some(format!("{}{}", new_path, &active[path.len()..]));
-                    }
-                }
-                self.open_folders = self
-                    .open_folders
-                    .iter()
-                    .map(|id| {
-                        if paths::is_under(id, &path) {
-                            format!("{}{}", new_path, &id[path.len()..])
-                        } else {
-                            id.clone()
-                        }
-                    })
-                    .collect();
                 let _ = is_folder;
                 self.modal = None;
+                self.refocus_editor = true;
                 self.dialog_error = None;
                 self.error = None;
+                self.remap_paths(&path, &new_path);
                 self.refresh_tree(cx);
                 self.persist();
             }
@@ -2195,86 +2639,30 @@ impl Zyplus {
 
     // ---- menus ----------------------------------------------------------
 
+    /// The sidebar row menu for a row.
     fn row_menu(&self, path: &str, is_folder: bool, is_root: bool) -> Vec<MenuItem> {
-        if is_folder {
-            let mut items = vec![
-                item("New File", MenuAction::NewFile(path.to_string())).with_icon("file-add"),
-                item("New Folder", MenuAction::NewFolder(path.to_string())).with_icon("folder-add"),
-            ];
-            if !is_root {
-                items.push(
-                    item("Rename…", MenuAction::Rename(path.to_string(), true)).with_icon("pencil-edit01"),
-                );
-                items.push(
-                    danger_item("Delete…", MenuAction::Delete(path.to_string(), true)).with_icon("trash"),
-                );
-            } else {
-                items.push(item("Copy Path", MenuAction::CopyPath(path.to_string())).with_icon("clipboard"));
-                items.push(
-                    item("Show in File Manager", MenuAction::Reveal(path.to_string())).with_icon("folder-open"),
-                );
-                items.push(
-                    danger_item("Close Project", MenuAction::CloseProject(path.to_string())).with_icon("cancel01"),
-                );
-            }
-            items
-        } else {
-            vec![
-                item("Open", MenuAction::Open(path.to_string())).with_icon("external-link"),
-                item("Rename…", MenuAction::Rename(path.to_string(), false)).with_icon("pencil-edit01"),
-                item("Duplicate", MenuAction::Duplicate(path.to_string())).with_icon("copy01"),
-                item("Copy Path", MenuAction::CopyPath(path.to_string())).with_icon("clipboard"),
-                item("Copy Markdown", MenuAction::CopyMarkdown(path.to_string())).with_icon("copy01"),
-                item("Export Markdown…", MenuAction::ExportMd(path.to_string())).with_icon("file-export"),
-                item("Show in File Manager", MenuAction::Reveal(path.to_string())).with_icon("folder-open"),
-                danger_item("Delete…", MenuAction::Delete(path.to_string(), false)).with_icon("trash"),
-            ]
-        }
+        row_menu_items(path, is_folder, is_root)
     }
 
+    /// The tab's right-click menu.
     fn tab_menu(&self, path: &str) -> Vec<MenuItem> {
-        let switch = self.tabs.iter().find(|tab| tab.path == path).and_then(|tab| {
-            if view_kind::modes(tab.kind).len() < 2 {
-                None
-            } else if matches!(tab.kind, ViewKind::Markdown { .. }) {
-                Some("Toggle Rich / Plain")
-            } else {
-                Some("Switch View")
-            }
-        });
-        let mut items = vec![
-            item("Save", MenuAction::Save(path.to_string())).with_icon("floppy-disk"),
-            item("Close", MenuAction::Close(path.to_string())).with_icon("cancel01"),
-            item("Close Others", MenuAction::CloseOthers(path.to_string())).with_icon("multiplication-sign"),
-            item("Close All", MenuAction::CloseAll).with_icon("multiplication-sign"),
-        ];
-        items.extend(switch.map(|label| {
-            let icon = if label == "Switch View" { "source-code" } else { "text-font" };
-            item(label, MenuAction::ToggleMode).with_icon(icon)
-        }));
-        items.extend([
-            item("Find…", MenuAction::Find).with_icon("search01"),
-            item("Replace…", MenuAction::Replace).with_icon("pencil-edit01"),
-            item("Copy Path", MenuAction::CopyPath(path.to_string())).with_icon("clipboard"),
-            item("Copy Markdown", MenuAction::CopyMarkdown(path.to_string())).with_icon("copy01"),
-            item("Export Markdown…", MenuAction::ExportMd(path.to_string())).with_icon("file-export"),
-            item("Export as PDF…", MenuAction::ExportPdf(path.to_string())).with_icon("pdf01"),
-        ]);
-        items
+        let dirty = self.tabs.iter().any(|tab| tab.path == path && tab.dirty);
+        tab_menu_items(path, dirty, paths::path_exists(path))
     }
 
-    /// The ⋯ menu at the end of the tab bar: the active document's actions, or
-    /// the workspace's when no document is open.
+    /// The ⋯ menu at the end of the tab bar, for the active document. Empty
+    /// when no document is open (the button is hidden then).
     fn actions_menu(&self) -> Vec<MenuItem> {
-        match self.active.clone() {
-            Some(path) => self.tab_menu(&path),
-            None => vec![
-                item("New File", MenuAction::NewFile(String::new())).with_icon("file-add"),
-                item("New Folder", MenuAction::NewFolder(String::new())).with_icon("folder-add"),
-                item("Open Folder…", MenuAction::OpenFolder).with_icon("folder-open"),
-                item("Settings…", MenuAction::Settings).with_icon("settings01"),
-            ],
-        }
+        let Some(path) = self.active.as_deref() else {
+            return Vec::new();
+        };
+        let dirty = self.tabs.iter().any(|tab| tab.path == path && tab.dirty);
+        actions_menu_items(path, dirty, paths::path_exists(path))
+    }
+
+    /// Right-click on empty tree space.
+    fn tree_area_menu(&self) -> Vec<MenuItem> {
+        tree_area_items(self.roots.first().map(String::as_str))
     }
 
     fn open_menu(&mut self, x: f32, y: f32, items: Vec<MenuItem>, cx: &mut Context<Self>) {
@@ -2293,6 +2681,7 @@ impl Zyplus {
             MenuAction::Rename(path, is_folder) => self.open_rename(&path, is_folder, cx),
             MenuAction::Delete(path, is_folder) => {
                 self.dialog_error = None;
+                self.focus_modal = true;
                 // Delete acts on the whole selection when the row is part of it.
                 let paths = if self.selected.iter().any(|selected| selected == &path) {
                     self.selected.clone()
@@ -2329,9 +2718,7 @@ impl Zyplus {
             MenuAction::ExportMd(path) => self.export_md(&path, cx),
             MenuAction::ExportPdf(path) => self.export_pdf(&path, cx),
             MenuAction::Find => self.open_find(false, window, cx),
-            MenuAction::Replace => self.open_find(true, window, cx),
-            MenuAction::ToggleMode => self.toggle_mode(window, cx),
-            MenuAction::Settings => self.open_settings(SettingsSection::General, cx),
+            MenuAction::PickFile => self.pick_file(cx),
         }
     }
 
@@ -2404,20 +2791,43 @@ impl Zyplus {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_overlay(Some(window), cx);
+    }
+
+    /// Closes the topmost overlay: the menu, then a dialog, then the find bar.
+    /// Returns whether anything was open. Used by Escape from the app and from
+    /// the editors (`cancel_reporter`), so Escape works whichever has focus.
+    fn close_overlay(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) -> bool {
         if self.menu.is_some() {
             self.menu = None;
-            cx.notify();
-            return;
+        } else if self.modal.is_some() {
+            self.close_modal();
+        } else if self.find.is_some() {
+            self.close_find(window, cx);
+            return true;
+        } else if let Some(window) = window.filter(|w| self.tree_focus.is_focused(w)) {
+            // Escape leaves the file tree for the editor, as in react-arborist's host.
+            self.focus_editor(window, cx);
+            return true;
+        } else {
+            return false;
         }
-        if self.modal.is_some() {
-            self.modal = None;
-            self.dialog_error = None;
-            cx.notify();
-            return;
+        match window {
+            Some(window) => self.focus_editor(window, cx),
+            None => self.refocus_editor = true,
         }
-        if self.find.is_some() {
-            self.close_find(Some(window), cx);
+        cx.notify();
+        true
+    }
+
+    /// Closes the dialog and abandons a quit that was waiting on it.
+    fn close_modal(&mut self) {
+        if matches!(self.modal, Some(Modal::Unsaved { .. })) {
+            updater::cancel_relaunch();
         }
+        self.modal = None;
+        self.dialog_error = None;
+        self.quitting = false;
     }
 
     fn delete_selection_action(
@@ -2464,6 +2874,10 @@ impl Zyplus {
         self.open_settings(SettingsSection::General, cx);
     }
 
+    fn about_action(&mut self, _: &ShowAbout, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(SettingsSection::About, cx);
+    }
+
     fn shortcuts_action(&mut self, _: &Shortcuts, _: &mut Window, cx: &mut Context<Self>) {
         self.open_settings(SettingsSection::Shortcuts, cx);
     }
@@ -2487,13 +2901,9 @@ impl Zyplus {
     }
 
     fn goto_tab(&mut self, number: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.is_empty() {
+        // Out of range does nothing, as the web app does; Cmd-9 is the last tab.
+        let Some(index) = goto_index(self.tabs.len(), number) else {
             return;
-        }
-        let index = if number >= 9 {
-            self.tabs.len() - 1
-        } else {
-            (number - 1).min(self.tabs.len() - 1)
         };
         self.active = Some(self.tabs[index].path.clone());
         self.focus_editor(window, cx);
@@ -2541,7 +2951,7 @@ impl Zyplus {
                     .path(app_icon::LOGO_PATH)
                     .w(px(64.0))
                     .h(px(55.0))
-                    .text_color(theme.accent),
+                    .text_color(theme.fg),
             )
             .child(
                 div()
@@ -2616,27 +3026,24 @@ impl Zyplus {
         let active = self.active.clone();
         let selected_rows: BTreeSet<String> = self.selected.iter().cloned().collect();
 
-        let update_pill = if self.update_status.info().is_some() {
-            Some(
-                div()
-                    .id("update-pill")
-                    .px_2()
-                    .h(px(24.0))
-                    .flex()
-                    .items_center()
-                    .rounded(px(5.0))
-                    .bg(theme.accent_soft)
-                    .text_size(px(11.0))
-                    .text_color(theme.accent)
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_settings(SettingsSection::About, cx)
-                    }))
-                    .child("Update"),
-            )
-        } else {
-            None
-        };
+        let update_pill = self.update_status.pill_label().map(|label| {
+            div()
+                .id("update-pill")
+                .px_2()
+                .h(px(24.0))
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .rounded(px(5.0))
+                .bg(theme.accent_soft)
+                .text_size(px(11.0))
+                .text_color(theme.accent)
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.open_settings(SettingsSection::About, cx)
+                }))
+                .child(label)
+        });
 
         let header = div()
             .flex()
@@ -2649,12 +3056,27 @@ impl Zyplus {
             .flex_shrink_0()
             .window_control_area(WindowControlArea::Drag)
             .child(
-                gpui::svg()
-                    .path(app_icon::LOGO_PATH)
-                    .w(px(18.0))
-                    .h(px(16.0))
-                    .flex_shrink_0()
-                    .text_color(theme.accent),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .min_w(px(0.0))
+                    .child(
+                        gpui::svg()
+                            .path(app_icon::LOGO_PATH)
+                            .w(px(16.0))
+                            .h(px(14.0))
+                            .flex_shrink_0()
+                            .text_color(theme.fg),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.muted)
+                            .child("ZYPLUS"),
+                    ),
             )
             .child(
                 div()
@@ -2750,10 +3172,41 @@ impl Zyplus {
                     )
                     .on_click(cx.listener(|this, _, _, cx| this.pick_folder(cx, false))),
                 )
+                .child(
+                    secondary_button(
+                        theme,
+                        "sidebar-open-file",
+                        icon_label("file01", 16.0, theme.fg, "Open File"),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.pick_file(cx))),
+                )
                 .into_any_element()
         } else {
             div()
                 .id("tree-scroll")
+                .key_context("ZyplusTree")
+                .track_focus(&self.tree_focus)
+                .track_scroll(&self.tree_scroll)
+                .on_action(cx.listener(Self::tree_up))
+                .on_action(cx.listener(Self::tree_down))
+                .on_action(cx.listener(Self::tree_left))
+                .on_action(cx.listener(Self::tree_right))
+                .on_action(cx.listener(Self::tree_activate_action))
+                .on_action(cx.listener(Self::tree_rename_action))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                        // Rows stop this event themselves, so it is the empty area here.
+                        window.focus(&this.tree_focus);
+                        let items = this.tree_area_menu();
+                        this.open_menu(
+                            f32::from(event.position.x),
+                            f32::from(event.position.y),
+                            items,
+                            cx,
+                        );
+                    }),
+                )
                 .flex()
                 .flex_col()
                 .flex_1()
@@ -2796,6 +3249,7 @@ impl Zyplus {
                     let hover_bg = theme.hover;
                     let accent_soft = theme.accent_soft;
                     let menu_path = row.id.clone();
+                    let file_name = row.name.clone();
                     let new_file_dir = row.id.clone();
                     let new_folder_dir = row.id.clone();
                     let hover_group = group.clone();
@@ -2850,7 +3304,8 @@ impl Zyplus {
                         })
                         .on_mouse_down(MouseButton::Left, {
                             let select_id = row_id.clone();
-                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                window.focus(&this.tree_focus);
                                 this.select_row(&select_id, &event.modifiers, cx);
                             })
                         })
@@ -2871,14 +3326,17 @@ impl Zyplus {
                                 }
                             } else if double {
                                 this.open_rename(&row_id, false, cx);
-                            } else {
+                            } else if nav::tree_opens(&file_name, |id| this.extension_enabled(id)) {
                                 this.open_document(&row_id, Some(window), cx);
                             }
                             cx.notify();
                         }))
                         .on_mouse_down(
                             MouseButton::Right,
-                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                // Stops the empty-area menu from opening over this one.
+                                cx.stop_propagation();
+                                window.focus(&this.tree_focus);
                                 if !this.selected.iter().any(|path| path == &menu_path) {
                                     this.selected = vec![menu_path.clone()];
                                     this.selection_anchor = Some(menu_path.clone());
@@ -3102,6 +3560,22 @@ impl Zyplus {
             })
             .collect::<Vec<_>>();
 
+        // Bring the active tab into view when it changes (Cmd-1…9, a new tab, a
+        // click). Only a change scrolls: wheel scrolling away from it stays put.
+        // Wait for the strip's first layout: a request made before it has bounds
+        // would be applied against an empty viewport (session restore hits this).
+        let laid_out = f32::from(self.tab_scroll.bounds().size.width) > 0.0;
+        if laid_out && self.active != self.tab_scrolled_to {
+            if let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| self.active.as_deref() == Some(tab.path.as_str()))
+            {
+                self.tab_scroll.scroll_to_item(index);
+            }
+            self.tab_scrolled_to = self.active.clone();
+        }
+
         div()
             .flex()
             .flex_row()
@@ -3143,16 +3617,8 @@ impl Zyplus {
                     .flex_1()
                     .min_w(px(0.0))
                     .overflow_x_scroll()
+                    .track_scroll(&self.tab_scroll)
                     .children(tabs)
-                    .child(
-                        icon_button(
-                            theme,
-                            "tab-new-file",
-                            app_icon::icon("plus-sign", 16.0).text_color(theme.muted),
-                            26.0,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| this.new_file(window, cx))),
-                    )
                     .child(
                         // Empty strip after the last tab: dropping here moves the
                         // tab to the end. A sibling, not a parent, so a drop on a
@@ -3166,6 +3632,17 @@ impl Zyplus {
                                 this.reorder_tab(&dragged.path, None, cx);
                             })),
                     ),
+            )
+            // Pinned outside the scrolling strip, so it stays reachable with many tabs.
+            .child(
+                icon_button(
+                    theme,
+                    "tab-new-file",
+                    app_icon::icon("plus-sign", 16.0).text_color(theme.muted),
+                    26.0,
+                )
+                .flex_shrink_0()
+                .on_click(cx.listener(|this, _, window, cx| this.new_file(window, cx))),
             )
             .children(active_switch.map(|(kind, mode)| {
                 div()
@@ -3187,34 +3664,36 @@ impl Zyplus {
                         }))
                     }))
             }))
-            .child(
-                div()
-                    .id("tab-actions")
-                    .w(px(28.0))
-                    .h(px(28.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.0))
-                    .flex_shrink_0()
-                    .cursor_pointer()
-                    .text_size(px(14.0))
-                    .text_color(theme.muted)
-                    .hover(move |style| style.bg(theme.hover))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                            let items = this.actions_menu();
-                            this.open_menu(
-                                f32::from(event.position.x) - 180.0,
-                                f32::from(event.position.y) + 8.0,
-                                items,
-                                cx,
-                            );
-                        }),
-                    )
-                    .child(app_icon::icon("more-horizontal", 16.0).text_color(theme.muted)),
-            )
+            .when(self.active.is_some(), |el| {
+                el.child(
+                    div()
+                        .id("tab-actions")
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.0))
+                        .flex_shrink_0()
+                        .cursor_pointer()
+                        .text_size(px(14.0))
+                        .text_color(theme.muted)
+                        .hover(move |style| style.bg(theme.hover))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                                let items = this.actions_menu();
+                                this.open_menu(
+                                    f32::from(event.position.x),
+                                    f32::from(event.position.y),
+                                    items,
+                                    cx,
+                                );
+                            }),
+                        )
+                        .child(app_icon::icon("more-horizontal", 16.0).text_color(theme.muted)),
+                )
+            })
     }
 
     fn render_find_bar(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
@@ -3230,9 +3709,9 @@ impl Zyplus {
         } else if !searchable {
             "Text view only".to_string()
         } else if total == 0 {
-            "No results".to_string()
+            "0 results".to_string()
         } else {
-            format!("{} of {}", index + 1, total)
+            format!("{}/{}", index + 1, total)
         };
 
         let field = |input: Entity<Editor>, width: f32| {
@@ -3354,12 +3833,15 @@ impl Zyplus {
         cx: &mut Context<Self>,
     ) -> Div {
         let switchable = view_kind::modes(kind).len() > 1;
-        // Markdown reads as Rich or Markdown; other views name their mode.
+        // Markdown reads as Rich or Markdown (a .txt file reads as plain text);
+        // other views name their mode, or the language of a code file.
         let (toggle_label, toggle_lit) = match kind {
-            ViewKind::Markdown { .. } => {
+            ViewKind::Markdown { language } => {
                 let rich = mode == "rich";
-                (if rich { "Rich" } else { "Markdown" }, rich)
+                let plain = if language.is_none() { "Plain text" } else { "Markdown" };
+                (if rich { "Rich" } else { plain }, rich)
             }
+            ViewKind::Text { language } => (view_kind::language_label(language), true),
             _ => (view_kind::mode_label(&mode), true),
         };
         let words = self
@@ -3403,6 +3885,7 @@ impl Zyplus {
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_mode(window, cx)))
                     .child(toggle_label)
             }))
+            .children((!switchable).then(|| div().flex_shrink_0().child(toggle_label)))
             .child(div().flex_shrink_0().child(format!("{words} words")))
             .child(
                 div()
@@ -3497,8 +3980,16 @@ impl Zyplus {
             .child(status)
     }
 
-    fn render_menu(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
+    fn render_menu(
+        &mut self,
+        theme: &Theme,
+        viewport: gpui::Size<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
         let menu = self.menu.clone()?;
+        // Keep the whole menu inside the window: flip up / slide left when it would spill.
+        let height = menu.items.len() as f32 * 28.0 + 8.0;
+        let (left, top) = clamp_menu(menu.x, menu.y, 220.0, height, f32::from(viewport.width), f32::from(viewport.height));
         let items = menu
             .items
             .iter()
@@ -3534,8 +4025,8 @@ impl Zyplus {
 
         let panel = div()
             .absolute()
-            .left(px(menu.x))
-            .top(px(menu.y))
+            .left(px(left))
+            .top(px(top))
             .w(px(220.0))
             .py_1()
             .flex()
@@ -3581,6 +4072,11 @@ impl Zyplus {
                 input,
             } => {
                 let what = if is_folder { "folder" } else { "file" };
+                let typed = input.read(cx).text().to_string();
+                let blocked = typed.trim().is_empty() || live_name_error(&typed).is_some();
+                let shown: Option<SharedString> = live_name_error(&typed)
+                    .map(SharedString::from)
+                    .or_else(|| self.dialog_error.clone());
                 div()
                     .flex()
                     .flex_col()
@@ -3620,7 +4116,7 @@ impl Zyplus {
                             .overflow_hidden()
                             .child(input),
                     )
-                    .children(self.dialog_error.clone().map(|error| {
+                    .children(shown.clone().map(|error| {
                         div()
                             .text_size(px(11.0))
                             .text_color(theme.danger)
@@ -3635,20 +4131,29 @@ impl Zyplus {
                             .child(
                                 secondary_button(theme, "rename-cancel", "Cancel").on_click(
                                     cx.listener(|this, _, _, cx| {
-                                        this.modal = None;
-                                        this.dialog_error = None;
+                                        this.close_modal();
+                                        this.refocus_editor = true;
                                         cx.notify();
                                     }),
                                 ),
                             )
                             .child(
-                                primary_button(theme, "rename-submit", "Rename").on_click(
-                                    cx.listener(|this, _, _, cx| this.submit_rename(cx)),
-                                ),
+                                primary_button(theme, "rename-submit", "Rename")
+                                    .when(blocked, |button| button.opacity(0.5))
+                                    .when(!blocked, |button| {
+                                        button.on_click(cx.listener(|this, _, _, cx| {
+                                            this.submit_rename(cx)
+                                        }))
+                                    }),
                             ),
                     )
             }
             Modal::NewFolder { dir, input } => {
+                let typed = input.read(cx).text().to_string();
+                let blocked = typed.trim().is_empty() || live_name_error(&typed).is_some();
+                let shown: Option<SharedString> = live_name_error(&typed)
+                    .map(SharedString::from)
+                    .or_else(|| self.dialog_error.clone());
                 div()
                     .flex()
                     .flex_col()
@@ -3694,15 +4199,27 @@ impl Zyplus {
                     )
                     .child(
                         div()
-                            .h(px(32.0))
-                            .rounded(px(6.0))
-                            .border_1()
-                            .border_color(theme.border)
-                            .bg(theme.bg)
-                            .overflow_hidden()
-                            .child(input),
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme.muted)
+                                    .child("Folder name"),
+                            )
+                            .child(
+                                div()
+                                    .h(px(32.0))
+                                    .rounded(px(6.0))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .bg(theme.bg)
+                                    .overflow_hidden()
+                                    .child(input),
+                            ),
                     )
-                    .children(self.dialog_error.clone().map(|error| {
+                    .children(shown.clone().map(|error| {
                         div()
                             .text_size(px(11.0))
                             .text_color(theme.danger)
@@ -3717,32 +4234,34 @@ impl Zyplus {
                             .child(
                                 secondary_button(theme, "new-folder-cancel", "Cancel").on_click(
                                     cx.listener(|this, _, _, cx| {
-                                        this.modal = None;
-                                        this.dialog_error = None;
+                                        this.close_modal();
+                                        this.refocus_editor = true;
                                         cx.notify();
                                     }),
                                 ),
                             )
                             .child(
-                                primary_button(theme, "new-folder-submit", "Create").on_click(
-                                    cx.listener(|this, _, _, cx| this.submit_new_folder(cx)),
-                                ),
+                                primary_button(theme, "new-folder-submit", "Create")
+                                    .when(blocked, |button| button.opacity(0.5).cursor_default())
+                                    .when(!blocked, |button| {
+                                        button.on_click(cx.listener(|this, _, _, cx| {
+                                            this.submit_new_folder(cx)
+                                        }))
+                                    }),
                             ),
                     )
             }
             Modal::Delete { paths, is_folder } => {
-                let what = if paths.len() > 1 {
-                    format!("{} items", paths.len())
-                } else if is_folder {
-                    "folder".to_string()
+                let _ = is_folder;
+                // Title and body as in `FileTree.tsx`: "Delete <name>?" or "Delete N items?".
+                let title = if paths.len() > 1 {
+                    format!("Delete {} items?", paths.len())
                 } else {
-                    "file".to_string()
+                    format!(
+                        "Delete {}?",
+                        paths.first().map(|path| paths::basename_of(path)).unwrap_or_default()
+                    )
                 };
-                let names = paths
-                    .iter()
-                    .map(|path| paths::basename_of(path))
-                    .collect::<Vec<_>>()
-                    .join(", ");
                 div()
                     .flex()
                     .flex_col()
@@ -3768,24 +4287,14 @@ impl Zyplus {
                                     .text_size(px(15.0))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(theme.fg)
-                                    .child(format!("Delete {what}?")),
+                                    .child(title),
                             ),
                     )
                     .child(
                         div()
                             .text_size(px(12.0))
                             .text_color(theme.muted)
-                            .child(if paths.len() == 1 {
-                                format!(
-                                    "\"{}\" will be deleted from disk. This cannot be undone.",
-                                    names
-                                )
-                            } else {
-                                format!(
-                                    "{} will be deleted from disk. This cannot be undone.",
-                                    names
-                                )
-                            }),
+                            .child("This can't be undone."),
                     )
                     .children(self.dialog_error.clone().map(|error| {
                         div()
@@ -3851,7 +4360,7 @@ impl Zyplus {
                                 .text_size(px(15.0))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.fg)
-                                .child("Save changes?"),
+                                .child("Unsaved changes"),
                         ),
                 )
                 .child(
@@ -3859,7 +4368,7 @@ impl Zyplus {
                         .text_size(px(12.0))
                         .text_color(theme.muted)
                         .child(format!(
-                            "\"{}\" has unsaved changes.",
+                            "\"{}\" has unsaved changes. Save before closing, or discard them?",
                             paths::basename_of(&path)
                         )),
                 )
@@ -3872,16 +4381,18 @@ impl Zyplus {
                         .child(
                             secondary_button(theme, "unsaved-cancel", "Cancel").on_click(
                                 cx.listener(|this, _, _, cx| {
-                                    this.modal = None;
+                                    this.close_modal();
+                                    this.refocus_editor = true;
                                     cx.notify();
                                 }),
                             ),
                         )
                         .child(
-                            secondary_button(theme, "unsaved-discard", "Discard").on_click(
+                            danger_button(theme, "unsaved-discard", "Discard").on_click(
                                 cx.listener(move |this, _, window, cx| {
                                     this.modal = None;
                                     this.close_tab_now(&discard_path, window, cx);
+                                    this.continue_quit(cx);
                                 }),
                             ),
                         )
@@ -3891,6 +4402,7 @@ impl Zyplus {
                                     if this.save_path(&save_path, cx) {
                                         this.modal = None;
                                         this.close_tab_now(&save_path, window, cx);
+                                        this.continue_quit(cx);
                                     }
                                 },
                             )),
@@ -3912,8 +4424,7 @@ impl Zyplus {
                 .justify_center()
                 .bg(rgba(0x00000040))
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                    this.modal = None;
-                    this.dialog_error = None;
+                    this.close_modal();
                     cx.notify();
                 }))
                 .child(card),
@@ -3947,7 +4458,7 @@ impl Zyplus {
             .child(settings_nav_item(
                 theme,
                 cx,
-                "Appearance",
+                "Theme",
                 "paint-board",
                 SettingsSection::Appearance,
                 section == SettingsSection::Appearance,
@@ -3979,11 +4490,16 @@ impl Zyplus {
 
         let content = match section {
             SettingsSection::General => {
-                let notes = self
-                    .default_folder
-                    .clone()
-                    .filter(|dir| !dir.is_empty())
-                    .unwrap_or_else(|| "No folder selected".to_string());
+                // Same row as SettingsModal.tsx: the folder in a bordered box, "Not set"
+                // when there is none, and "Show in Finder" (or "Show") when there is one.
+                // "Change" stays, since it is the native way to pick a folder.
+                let folder = self.default_folder.clone().filter(|dir| !dir.is_empty());
+                let shown = folder.clone().unwrap_or_else(|| "Not set".to_string());
+                let reveal_label = if cfg!(target_os = "macos") {
+                    "Show in Finder"
+                } else {
+                    "Show"
+                };
                 let default_rows = self.default_app_rows(theme, cx);
                 div()
                     .flex()
@@ -3995,14 +4511,27 @@ impl Zyplus {
                     .child(settings_row(
                         theme,
                         "Autosave",
-                        Some("Write tabs shortly after you stop typing."),
+                        Some("Saves open files a moment after you stop typing."),
                         Some(
-                            toggle_switch(theme, "autosave-toggle", self.autosave)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.autosave = !this.autosave;
-                                    this.persist();
-                                    cx.notify();
-                                }))
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(theme.fg)
+                                        .child("Save automatically"),
+                                )
+                                .child(
+                                    toggle_switch(theme, "autosave-toggle", self.autosave)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.autosave = !this.autosave;
+                                            this.persist();
+                                            cx.notify();
+                                        })),
+                                )
                                 .into_any_element(),
                         ),
                     ))
@@ -4022,7 +4551,7 @@ impl Zyplus {
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme.muted)
-                                    .child("Where Cmd-N creates new notes."),
+                                    .child("Where new files land when nothing is open."),
                             )
                             .child(
                                 div()
@@ -4030,7 +4559,16 @@ impl Zyplus {
                                     .flex_row()
                                     .items_center()
                                     .gap_2()
-                                    .child(app_icon::icon("folder-open", 16.0).text_color(theme.muted))
+                                    .px_3()
+                                    .py_2()
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .child(
+                                        app_icon::icon("folder-open", 16.0)
+                                            .flex_shrink_0()
+                                            .text_color(theme.muted),
+                                    )
                                     .child(
                                         div()
                                             .flex_1()
@@ -4040,8 +4578,14 @@ impl Zyplus {
                                             .text_ellipsis()
                                             .text_size(px(11.0))
                                             .text_color(theme.fg)
-                                            .child(notes),
+                                            .child(shown),
                                     )
+                                    .children(folder.clone().map(|dir| {
+                                        secondary_button(theme, "notes-folder-reveal", reveal_label)
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.reveal_path(Path::new(&dir))
+                                            }))
+                                    }))
                                     .child(
                                         secondary_button(theme, "notes-folder", "Change")
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -4052,55 +4596,67 @@ impl Zyplus {
                     )
             }
             SettingsSection::Appearance => {
-                let mut groups: Vec<(String, Vec<Stateful<Div>>)> = Vec::new();
+                // One heading per group, then rows of three cards, as in the web grid.
+                // (id, label, swatch) per card; copied out of the THEMES const.
+                type Card = (&'static str, &'static str, [u32; 3]);
+                let mut groups: Vec<(&'static str, Vec<Card>)> = Vec::new();
                 for option in theme::THEMES.iter() {
-                    let selected = self.theme_name == option.id;
-                    let id = option.id;
-                    let label = option.label;
-                    let group = option.group.to_string();
-                    let row = div()
-                        .id(SharedString::from(format!("theme-{}", id)))
-                        .h(px(26.0))
-                        .px_2()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .rounded(px(5.0))
-                        .cursor_pointer()
-                        .text_size(px(12.0))
-                        .text_color(if selected { theme.accent } else { theme.fg })
-                        .when(selected, |el| el.bg(theme.accent_soft))
-                        .when(!selected, |el| {
-                            el.hover(move |style| style.bg(theme.hover))
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.apply_theme(id, cx);
-                        }))
-                        .child(div().w(px(12.0)).child(if selected { "✓" } else { "" }))
-                        .child(label);
+                    let card: Card = (option.id, option.label, option.swatch);
                     match groups.last_mut() {
-                        Some((name, rows)) if name == &group => rows.push(row),
-                        _ => groups.push((group, vec![row])),
+                        Some((name, cards)) if *name == option.group => cards.push(card),
+                        _ => groups.push((option.group, vec![card])),
                     }
                 }
                 let mut body = div()
                     .flex()
                     .flex_col()
-                    .gap_1()
+                    .gap_3()
                     .p_4()
-                    .child(settings_heading(theme, "Appearance"));
-                for (group, rows) in groups {
-                    body = body
-                        .child(
-                            div()
-                                .mt_2()
-                                .text_size(px(10.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.muted)
-                                .child(group.to_uppercase()),
-                        )
-                        .children(rows);
+                    .child(settings_heading(theme, "Theme"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(theme.fg)
+                                    .child("Appearance"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.muted)
+                                    .child("System follows your OS setting."),
+                            ),
+                    );
+                for (group, cards) in groups {
+                    let mut grid = div().flex().flex_col().gap_2().child(
+                        div()
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.muted)
+                            .child(group.to_uppercase()),
+                    );
+                    for chunk in cards.chunks(3) {
+                        let mut row = div().flex().flex_row().gap_3();
+                        for &(id, label, swatch) in chunk {
+                            let selected = self.theme_name == id;
+                            row = row.child(
+                                theme_card(theme, id, label, swatch, selected).on_click(
+                                    cx.listener(move |this, _, _, cx| this.apply_theme(id, cx)),
+                                ),
+                            );
+                        }
+                        // Keep a short last row at the same column width.
+                        for _ in chunk.len()..3 {
+                            row = row.child(div().flex_1().min_w(px(0.0)));
+                        }
+                        grid = grid.child(row);
+                    }
+                    body = body.child(grid);
                 }
                 body
             }
@@ -4208,13 +4764,13 @@ impl Zyplus {
                     div()
                         .text_size(px(12.0))
                         .text_color(theme.muted)
-                        .child(format!("Version {VERSION} — native GPUI build")),
+                        .child(format!("Version {VERSION}")),
                 )
                 .child(
                     div()
                         .text_size(px(12.0))
                         .text_color(theme.fg)
-                        .child("A markdown editor that gets out of the way. Your notes stay plain files in a folder you choose."),
+                        .child("A local-first markdown editor. Your files stay on your machine."),
                 )
                 .child(self.update_panel(theme, cx)),
         };
@@ -4345,72 +4901,59 @@ impl Zyplus {
             .collect()
     }
 
-    /// The update block in Settings → About: the check button and what it found.
+    /// The update block in Settings → About: one status line, a progress bar
+    /// while downloading, and the single action for the current state.
     fn update_panel(&self, theme: &Theme, cx: &mut Context<Self>) -> Div {
-        let status = &self.update_status;
-        let check = secondary_button(theme, "check-updates", "Check for updates");
-        let check = if status.busy() {
-            check.opacity(0.4)
+        let view = self.update_status.panel_view();
+        let primary = matches!(
+            view.action,
+            Some(updater::Action::Download | updater::Action::Restart)
+        );
+        let button = if primary {
+            primary_button(theme, "update-action", view.button.clone())
         } else {
-            check.on_click(cx.listener(|this, _, _, cx| this.check_for_updates(false, cx)))
+            secondary_button(theme, "update-action", view.button.clone())
+        };
+        let button = match view.action {
+            Some(_) => button.on_click(cx.listener(|this, _, _, cx| this.update_action(cx))),
+            None => button.opacity(0.4),
         };
 
-        let (text, color) = match status {
-            updater::Status::Idle => (String::new(), theme.muted),
-            updater::Status::Checking => ("Checking for updates…".to_string(), theme.muted),
-            updater::Status::UpToDate => ("You are up to date.".to_string(), theme.muted),
-            updater::Status::Available(info) => (
-                format!("Version {} is available.", info.version),
-                theme.fg,
-            ),
-            updater::Status::Downloading { info, done, total } => (
-                format!(
-                    "Downloading {}… {}",
-                    info.version,
-                    updater::progress_text(*done, *total)
-                ),
-                theme.muted,
-            ),
-            updater::Status::Downloaded { info, path } => (
-                format!(
-                    "Version {} was downloaded to {}. Zyplus does not install updates itself; open the file to install it.",
-                    info.version,
-                    path.display()
-                ),
-                theme.fg,
-            ),
-            updater::Status::Failed { message, .. } => (message.clone(), theme.danger),
+        let color = if view.danger {
+            theme.danger
+        } else if view.action.is_some() {
+            theme.fg
+        } else {
+            theme.muted
         };
-
-        let action = match status {
-            updater::Status::Available(_) | updater::Status::Failed { info: Some(_), .. } => Some(
-                primary_button(theme, "update-download", "Download").on_click(cx.listener(
-                    |this, _, _, cx| this.download_update(cx),
-                )),
-            ),
-            updater::Status::Downloaded { .. } => Some(
-                secondary_button(theme, "update-reveal", "Reveal").on_click(cx.listener(
-                    |this, _, _, cx| this.reveal_update(cx),
-                )),
-            ),
-            _ => None,
-        };
-
         let mut panel = div()
             .flex()
             .flex_col()
             .items_start()
             .gap_2()
             .mt_3()
-            .max_w(px(520.0))
-            .child(check);
-        if !text.is_empty() {
-            panel = panel.child(div().text_size(px(11.0)).text_color(color).child(text));
+            .max_w(px(520.0));
+        if !view.text.is_empty() {
+            panel = panel.child(div().text_size(px(11.0)).text_color(color).child(view.text.clone()));
         }
-        if let Some(action) = action {
-            panel = panel.child(action);
+        if let Some(fraction) = view.progress {
+            panel = panel.child(
+                div()
+                    .w(px(320.0))
+                    .h(px(6.0))
+                    .rounded(px(3.0))
+                    .bg(theme.border)
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .h_full()
+                            .w(gpui::relative(fraction))
+                            .rounded(px(3.0))
+                            .bg(theme.accent),
+                    ),
+            );
         }
-        panel
+        panel.child(button)
     }
 
     fn render_error(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
@@ -4461,6 +5004,15 @@ impl Zyplus {
                 ),
         )
     }
+}
+
+/// Where a popup of `w` x `h` opened at (`x`, `y`) lands inside a `vw` x `vh` window:
+/// pulled left/up just enough to fit, never off the top-left edge.
+fn clamp_menu(x: f32, y: f32, w: f32, h: f32, vw: f32, vh: f32) -> (f32, f32) {
+    const MARGIN: f32 = 8.0;
+    let left = x.min(vw - w - MARGIN).max(MARGIN.min(x.max(0.0)));
+    let top = y.min(vh - h - MARGIN).max(MARGIN.min(y.max(0.0)));
+    (left, top)
 }
 
 fn settings_nav_item(
@@ -4563,6 +5115,96 @@ fn keycaps(theme: &Theme, keys: &[&'static str]) -> Div {
                 .text_color(theme.muted)
                 .child(*key)
         }))
+}
+
+/// One card of the appearance picker, as `ThemePreview` and the button in
+/// SettingsModal.tsx draw it: a miniature window painted from the theme's swatch,
+/// the label underneath, and an accent ring on the selected card.
+fn theme_card(
+    theme: &Theme,
+    id: &'static str,
+    label: &'static str,
+    swatch: [u32; 3],
+    selected: bool,
+) -> Stateful<Div> {
+    let accent = rgb(swatch[2]);
+    let ring = gpui::BoxShadow {
+        color: accent.into(),
+        offset: gpui::point(px(0.0), px(0.0)),
+        blur_radius: px(0.0),
+        spread_radius: px(1.0),
+    };
+    div()
+        .id(SharedString::from(format!("theme-{id}")))
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_2()
+        .rounded(px(10.0))
+        .border_1()
+        .border_color(if selected { accent } else { theme.border })
+        .cursor_pointer()
+        .when(selected, |el| el.shadow(vec![ring]))
+        .when(!selected, |el| {
+            let hover = theme.hover;
+            el.hover(move |style| style.bg(hover))
+        })
+        .child(theme_preview(theme, id == "system", swatch))
+        .child(
+            div()
+                .px_0p5()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(12.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme.fg)
+                .child(label),
+        )
+}
+
+/// The miniature window: a background, a sidebar-width surface strip and an
+/// accent bar, per `ThemePreview`. "System" shows its light and dark halves.
+fn theme_preview(theme: &Theme, system: bool, swatch: [u32; 3]) -> Div {
+    let [bg, surface, accent] = swatch.map(rgb);
+    let halves: [(Rgba, Rgba, Rgba); 2] = if system {
+        [
+            (rgb(0xffffff), rgba(0x00000018), rgba(0x0000000d)),
+            (rgb(0x18181b), rgba(0xffffff33), rgba(0xffffff1a)),
+        ]
+    } else {
+        [(bg, surface, accent), (bg, surface, accent)]
+    };
+    let mut window = div()
+        .flex()
+        .flex_row()
+        .w_full()
+        .h(px(40.0))
+        .overflow_hidden()
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(theme.border);
+    for (background, strip, bar) in halves {
+        window = window.child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_1()
+                .h_full()
+                .gap_0p5()
+                .p_1()
+                .bg(background)
+                .child(
+                    div()
+                        .w(gpui::relative(1.0 / 3.0))
+                        .h_full()
+                        .rounded(px(3.0))
+                        .bg(strip),
+                )
+                .child(div().flex_1().h_full().rounded(px(3.0)).bg(bar)),
+        );
+    }
+    window
 }
 
 fn settings_heading(theme: &Theme, label: &'static str) -> Div {
@@ -4845,7 +5487,11 @@ impl Zyplus {
         if std::mem::take(&mut self.refocus_editor) {
             self.focus_editor(window, cx);
         }
+        if std::mem::take(&mut self.focus_modal) {
+            self.focus_open_modal(window, cx);
+        }
         let theme = self.theme(window);
+        let welcome_up = self.welcome;
 
         // Drawn over the empty shell instead of replacing it, so the global
         // shortcuts stay bound while the welcome screen is up.
@@ -4890,10 +5536,10 @@ impl Zyplus {
         let tab_bar = self.render_tab_bar(&theme, cx);
         let body = self.render_body(&theme, cx);
         let error_banner = self.render_error(&theme, cx);
-        let menu = self.render_menu(&theme, cx);
+        let menu = self.render_menu(&theme, window.viewport_size(), cx);
         let modal = self.render_modal(&theme, cx);
 
-        div()
+        let root = div()
             .key_context("Zyplus")
             .track_focus(&self.focus)
             .flex()
@@ -4901,59 +5547,68 @@ impl Zyplus {
             .size_full()
             .bg(theme.bg)
             .text_color(theme.fg)
-            .text_size(px(13.0))
-            .on_action(cx.listener(Self::save_action))
-            .on_action(cx.listener(Self::export_md_action))
-            .on_action(cx.listener(Self::export_pdf_action))
-            .on_action(cx.listener(Self::new_file_action))
-            .on_action(cx.listener(Self::new_folder_action))
-            .on_action(cx.listener(Self::close_tab_action))
-            .on_action(cx.listener(Self::delete_selection_action))
-            .on_action(cx.listener(Self::close_overlay_action))
-            .on_action(cx.listener(Self::toggle_sidebar_action))
-            .on_action(cx.listener(Self::toggle_mode_action))
-            .on_action(cx.listener(Self::open_file_action))
-            .on_action(cx.listener(Self::open_folder_action))
-            .on_action(cx.listener(Self::find_action))
-            .on_action(cx.listener(Self::replace_action))
-            .on_action(cx.listener(Self::settings_action))
-            .on_action(cx.listener(Self::shortcuts_action))
-            .on_action(cx.listener(Self::copy_markdown_action))
-            .on_action(cx.listener(Self::copy_path_action))
-            .on_action(cx.listener(Self::next_tab))
-            .on_action(cx.listener(Self::prev_tab))
-            .on_action(cx.listener(Self::go_to_tab_1))
-            .on_action(cx.listener(Self::go_to_tab_2))
-            .on_action(cx.listener(Self::go_to_tab_3))
-            .on_action(cx.listener(Self::go_to_tab_4))
-            .on_action(cx.listener(Self::go_to_tab_5))
-            .on_action(cx.listener(Self::go_to_tab_6))
-            .on_action(cx.listener(Self::go_to_tab_7))
-            .on_action(cx.listener(Self::go_to_tab_8))
-            .on_action(cx.listener(Self::go_to_tab_9))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .children(sidebar)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .min_h(px(0.0))
-                            .child(tab_bar)
-                            .child(body),
-                    ),
-            )
-            .children(error_banner)
-            .children(menu)
-            .children(modal)
-            .children(welcome)
-            .into_any_element()
+            .text_size(px(13.0));
+        // While the Welcome screen is up, the app actions are not bound: they
+        // would act on the hidden shell (Cmd-, opened Settings underneath it).
+        let root = if welcome_up {
+            root
+        } else {
+            root.on_action(cx.listener(Self::save_action))
+                .on_action(cx.listener(Self::export_md_action))
+                .on_action(cx.listener(Self::export_pdf_action))
+                .on_action(cx.listener(Self::new_file_action))
+                .on_action(cx.listener(Self::new_folder_action))
+                .on_action(cx.listener(Self::close_tab_action))
+                .on_action(cx.listener(Self::delete_selection_action))
+                .on_action(cx.listener(Self::close_overlay_action))
+                .on_action(cx.listener(Self::toggle_sidebar_action))
+                .on_action(cx.listener(Self::toggle_mode_action))
+                .on_action(cx.listener(Self::open_file_action))
+                .on_action(cx.listener(Self::open_folder_action))
+                .on_action(cx.listener(Self::find_action))
+                .on_action(cx.listener(Self::replace_action))
+                .on_action(cx.listener(Self::find_next_action))
+                .on_action(cx.listener(Self::find_prev_action))
+                .on_action(cx.listener(Self::settings_action))
+                .on_action(cx.listener(Self::about_action))
+                .on_action(cx.listener(Self::shortcuts_action))
+                .on_action(cx.listener(Self::copy_markdown_action))
+                .on_action(cx.listener(Self::copy_path_action))
+                .on_action(cx.listener(Self::next_tab))
+                .on_action(cx.listener(Self::prev_tab))
+                .on_action(cx.listener(Self::go_to_tab_1))
+                .on_action(cx.listener(Self::go_to_tab_2))
+                .on_action(cx.listener(Self::go_to_tab_3))
+                .on_action(cx.listener(Self::go_to_tab_4))
+                .on_action(cx.listener(Self::go_to_tab_5))
+                .on_action(cx.listener(Self::go_to_tab_6))
+                .on_action(cx.listener(Self::go_to_tab_7))
+                .on_action(cx.listener(Self::go_to_tab_8))
+                .on_action(cx.listener(Self::go_to_tab_9))
+        };
+        root.child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_1()
+                .min_h(px(0.0))
+                .children(sidebar)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .min_h(px(0.0))
+                        .child(tab_bar)
+                        .child(body),
+                ),
+        )
+        .children(error_banner)
+        .children(menu)
+        .children(modal)
+        .children(welcome)
+        .into_any_element()
     }
 }
 
@@ -5084,7 +5739,12 @@ fn with_active_window(cx: &mut App, f: impl FnOnce(&mut Window)) {
 }
 
 /// Cmd-Q and the Quit menu item. Quits once no window has unsaved edits left
-/// to decide about; otherwise the first dirty tab gets the Save-changes prompt.
+/// to decide about; otherwise the first dirty tab gets the Save-changes prompt
+/// and the quit waits for that decision (`continue_quit` picks it up again).
+///
+/// Cmd-Q arrives while the window is busy dispatching its key, so the window
+/// cannot be updated here. That is not a "may quit": the check is retried
+/// once the window is free.
 fn request_quit(cx: &mut App) {
     let handles: Vec<gpui::WindowHandle<Zyplus>> = cx
         .windows()
@@ -5092,13 +5752,23 @@ fn request_quit(cx: &mut App) {
         .filter_map(|handle| handle.downcast::<Zyplus>())
         .collect();
     for handle in handles {
-        let may_quit = handle
-            .update(cx, |this, window, cx| this.confirm_quit(window, cx))
-            .unwrap_or(true);
-        if !may_quit {
-            return;
+        let decided = handle.update(cx, |this, window, cx| {
+            let may_quit = this.confirm_quit(window, cx);
+            if !may_quit {
+                this.quitting = true;
+            }
+            may_quit
+        });
+        match decided {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(_) => {
+                cx.defer(request_quit);
+                return;
+            }
         }
     }
+    updater::relaunch_on_exit();
     cx.quit();
 }
 
@@ -5109,8 +5779,8 @@ fn app_menus() -> Vec<gpui::Menu> {
         gpui::Menu {
             name: "Zyplus".into(),
             items: vec![
-                // The About section lives in Settings, so both items open it.
-                gpui::MenuItem::action("About Zyplus", Settings),
+                // The About section lives in Settings; the item opens it there.
+                gpui::MenuItem::action("About Zyplus", ShowAbout),
                 gpui::MenuItem::separator(),
                 gpui::MenuItem::action("Settings…", Settings),
                 gpui::MenuItem::separator(),
@@ -5194,24 +5864,30 @@ impl Zyplus {
         }
     }
 
-    /// Whether the app may close now. Edits that autosave (or are untitled)
-    /// are written first. Any other dirty tab gets the Save-changes prompt
-    /// and the caller says no; the user repeats the close after deciding.
+    /// Whether the window may close now. Edits that autosave (or are untitled)
+    /// are written first. Any other dirty tab gets the Save-changes prompt and
+    /// this returns false; the user decides, then closes again.
     fn confirm_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.autosave_dirty(cx);
-        let Some(path) = self
-            .tabs
-            .iter()
-            .find(|tab| tab.dirty)
-            .map(|tab| tab.path.clone())
+        let Some(path) = first_unsaved(self.tabs.iter().map(|tab| (tab.path.as_str(), tab.dirty)))
+            .map(str::to_string)
         else {
             return true;
         };
         window.activate_window();
         self.dialog_error = None;
+        self.focus_modal = true;
         self.modal = Some(Modal::Unsaved { path });
         cx.notify();
         false
+    }
+
+    /// After a Save-changes decision made during Cmd-Q: asks about the next
+    /// unsaved tab, or quits once none is left.
+    fn continue_quit(&mut self, cx: &mut Context<Self>) {
+        if self.quitting {
+            cx.defer(request_quit);
+        }
     }
 }
 
@@ -5275,7 +5951,17 @@ fn main() {
             KeyBinding::new("cmd-7", GoToTab7, Some("Zyplus")),
             KeyBinding::new("cmd-8", GoToTab8, Some("Zyplus")),
             KeyBinding::new("cmd-9", GoToTab9, Some("Zyplus")),
-            KeyBinding::new("delete", DeleteSelection, Some("Zyplus")),
+            KeyBinding::new("delete", DeleteSelection, Some("ZyplusTree")),
+            KeyBinding::new("backspace", DeleteSelection, Some("ZyplusTree")),
+            KeyBinding::new("up", TreeUp, Some("ZyplusTree")),
+            KeyBinding::new("down", TreeDown, Some("ZyplusTree")),
+            KeyBinding::new("left", TreeLeft, Some("ZyplusTree")),
+            KeyBinding::new("right", TreeRight, Some("ZyplusTree")),
+            KeyBinding::new("enter", TreeActivate, Some("ZyplusTree")),
+            KeyBinding::new("f2", TreeRename, Some("ZyplusTree")),
+            KeyBinding::new("cmd-g", FindNext, Some("Zyplus")),
+            KeyBinding::new("cmd-shift-g", FindPrev, Some("Zyplus")),
+            KeyBinding::new("shift-enter", FindPrev, Some("Zyplus")),
             KeyBinding::new("escape", CloseOverlay, Some("Zyplus")),
 
             // The editor draws its own text, so it needs its own key map; GPUI
@@ -5309,6 +5995,7 @@ fn main() {
             KeyBinding::new("escape", editor::Cancel, Some("Editor")),
         ]);
         RichEditor::bind_keys(cx);
+        editor::bind_nav_keys(cx);
 
         cx.set_menus(app_menus());
         cx.on_action(|_: &Quit, cx| request_quit(cx));
@@ -5396,5 +6083,246 @@ mod open_request_tests {
         assert_eq!(plan_open(Vec::new()), OpenPlan::default());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod menu_clamp_tests {
+    use super::clamp_menu;
+
+    #[test]
+    fn menus_stay_inside_the_window() {
+        // Plenty of room: unchanged.
+        assert_eq!(clamp_menu(100.0, 100.0, 220.0, 200.0, 800.0, 600.0), (100.0, 100.0));
+        // Near the bottom: slides up so the last row is visible.
+        assert_eq!(clamp_menu(60.0, 590.0, 220.0, 280.0, 800.0, 600.0), (60.0, 312.0));
+        // Near the right edge: slides left.
+        assert_eq!(clamp_menu(790.0, 20.0, 220.0, 100.0, 800.0, 600.0), (572.0, 20.0));
+        // Taller than the window: pinned near the top.
+        let (_, top) = clamp_menu(10.0, 300.0, 220.0, 900.0, 800.0, 600.0);
+        assert!(top <= 8.0 || top < 300.0);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    fn names_of(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn cmd_9_is_the_last_tab_and_other_out_of_range_keys_do_nothing() {
+        assert_eq!(goto_index(3, 1), Some(0));
+        assert_eq!(goto_index(3, 3), Some(2));
+        assert_eq!(goto_index(3, 9), Some(2), "Cmd-9 goes to the last tab");
+        assert_eq!(goto_index(12, 9), Some(11));
+        // Out of range is a no-op, not a clamp to the last tab.
+        assert_eq!(goto_index(3, 4), None);
+        assert_eq!(goto_index(3, 8), None);
+        assert_eq!(goto_index(0, 1), None);
+        assert_eq!(goto_index(0, 9), None);
+    }
+
+    #[test]
+    fn closing_the_active_tab_activates_the_last_remaining_one() {
+        let remaining = names_of(&["/a.md", "/c.md"]);
+        // The active tab was /b.md: the last remaining tab wins, not the left neighbour.
+        assert_eq!(
+            active_after_close(Some("/b.md"), "/b.md", &remaining),
+            Some("/c.md".to_string())
+        );
+        // Closing a background tab keeps the active one.
+        assert_eq!(
+            active_after_close(Some("/a.md"), "/b.md", &remaining),
+            Some("/a.md".to_string())
+        );
+        // Closing the last tab leaves nothing active.
+        assert_eq!(active_after_close(Some("/a.md"), "/a.md", &[]), None);
+    }
+
+    #[test]
+    fn quit_asks_about_the_first_unsaved_tab_only() {
+        let tabs = [("/a.md", false), ("/b.md", true), ("/c.md", true)];
+        assert_eq!(first_unsaved(tabs.iter().copied()), Some("/b.md"));
+        assert_eq!(first_unsaved([("/a.md", false)].into_iter()), None);
+        assert_eq!(first_unsaved(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn an_unreadable_or_emptied_session_is_not_overwritten() {
+        // Restore came back empty from a stored session: keep it.
+        assert!(!may_overwrite_session(true, 0, 0));
+        // The user opened something: the session is written again.
+        assert!(may_overwrite_session(true, 0, 1));
+        assert!(may_overwrite_session(true, 1, 0));
+        assert!(may_overwrite_session(false, 0, 0));
+    }
+
+    #[test]
+    fn name_hints_reuse_the_web_rules_and_stay_quiet_when_empty() {
+        assert_eq!(live_name_error(""), None, "empty is not finished, not an error");
+        assert_eq!(live_name_error("   "), None);
+        assert_eq!(live_name_error("a/b"), paths::invalid_name_reason("a/b"));
+        assert!(live_name_error("CON").is_some());
+        assert_eq!(live_name_error("  notes  "), None);
+    }
+
+    #[test]
+    fn files_open_in_rich_by_default_but_csv_and_json_keep_their_own() {
+        let no_extensions = |_: &str| false;
+        for path in ["/n/a.md", "/n/a.markdown", "/n/a.txt", "/n/Welcome.md"] {
+            let kind = view_kind::kind_for_path(path, no_extensions);
+            assert_eq!(view_kind::default_mode(kind), Some("rich"), "{path}");
+        }
+        let all_extensions = |_: &str| true;
+        let csv = view_kind::kind_for_path("/n/a.csv", all_extensions);
+        assert_eq!(view_kind::default_mode(csv), None);
+        let json = view_kind::kind_for_path("/n/a.json", all_extensions);
+        assert_eq!(view_kind::default_mode(json), None);
+        // A saved mode still wins on restore.
+        let md = view_kind::kind_for_path("/n/a.md", no_extensions);
+        assert_eq!(view_kind::normalize_mode(md, "plain"), Some("plain"));
+    }
+
+    #[test]
+    fn welcome_note_matches_the_web_text() {
+        assert!(WELCOME_NOTE.starts_with("# Welcome to Zyplus\n"));
+        assert!(WELCOME_NOTE.contains("Press `⌘E` (`Ctrl+E` on Windows and Linux)"));
+        assert!(WELCOME_NOTE.contains("Mermaid diagrams and math are not rendered in this build"));
+        assert!(WELCOME_NOTE.contains("```mermaid\nflowchart LR\n"));
+        assert!(WELCOME_NOTE.contains("```latex\ne^{i\\pi} + 1 = 0\n"));
+        assert!(WELCOME_NOTE.ends_with("Happy writing!\n"));
+        // Header and separator rows are not shortcuts; the table has seven.
+        let rows = WELCOME_NOTE
+            .lines()
+            .filter(|line| line.starts_with("| ") && !line.starts_with("| Action"))
+            .count();
+        assert_eq!(rows, 7);
+    }
+}
+
+#[cfg(test)]
+mod menu_parity_tests {
+    use super::{
+        actions_menu_items, remapped_path, reveal_label, row_menu_items, tab_menu_items,
+        tree_area_items, MenuItem,
+    };
+
+    fn labels(items: &[MenuItem]) -> Vec<&'static str> {
+        items.iter().map(|item| item.label).collect()
+    }
+
+    fn disabled(items: &[MenuItem], label: &str) -> bool {
+        items.iter().find(|item| item.label == label).map(|item| item.disabled).unwrap_or(false)
+    }
+
+    #[test]
+    fn tab_right_click_menu_matches_the_web_tab_menu() {
+        let clean = tab_menu_items("/n/a.md", false, true);
+        assert_eq!(
+            labels(&clean),
+            ["Save", "Close", "Close Others", "Close All", reveal_label(), "Copy Path"]
+        );
+        assert!(disabled(&clean, "Save"), "Save is disabled on a clean tab");
+
+        let dirty = tab_menu_items("/n/a.md", true, true);
+        assert!(!disabled(&dirty, "Save"));
+
+        // An untitled tab that is not on disk offers no Reveal.
+        let unsaved = tab_menu_items("/n/Untitled.md", true, false);
+        assert_eq!(labels(&unsaved), ["Save", "Close", "Close Others", "Close All", "Copy Path"]);
+    }
+
+    #[test]
+    fn tab_bar_actions_menu_is_a_different_list() {
+        let clean = actions_menu_items("/n/a.md", false, true);
+        assert_eq!(
+            labels(&clean),
+            [
+                "Save",
+                "Find in document",
+                "Copy Markdown",
+                "Copy Path",
+                "Export as .md",
+                "Export as PDF…",
+                reveal_label()
+            ]
+        );
+        assert!(disabled(&clean, "Save"));
+        assert!(!disabled(&actions_menu_items("/n/a.md", true, true), "Save"));
+        assert!(!labels(&clean).contains(&"Close"), "close items belong to the right-click menu");
+        assert_eq!(
+            labels(&actions_menu_items("/n/Untitled.md", false, false)),
+            [
+                "Save",
+                "Find in document",
+                "Copy Markdown",
+                "Copy Path",
+                "Export as .md",
+                "Export as PDF…"
+            ]
+        );
+    }
+
+    #[test]
+    fn folder_rows_offer_reveal_and_copy_path() {
+        assert_eq!(
+            labels(&row_menu_items("/p/notes", true, false)),
+            ["New File", "New Folder", "Rename", reveal_label(), "Copy Path", "Delete"]
+        );
+        assert_eq!(
+            labels(&row_menu_items("/p", true, true)),
+            ["New File", "New Folder", reveal_label(), "Copy Path", "Close Project"]
+        );
+    }
+
+    #[test]
+    fn file_rows_keep_their_actions() {
+        // The web items keep their order; the native-only extras sit before Delete.
+        assert_eq!(
+            labels(&row_menu_items("/p/a.md", false, false)),
+            [
+                "Open",
+                "Rename",
+                "Duplicate",
+                reveal_label(),
+                "Copy Path",
+                "Copy Markdown",
+                "Export Markdown…",
+                "Delete"
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_tree_area_offers_creation_and_opening() {
+        assert_eq!(
+            labels(&tree_area_items(Some("/p"))),
+            ["New File", "New Folder", "Open File...", "Add Project Folder..."]
+        );
+        assert_eq!(labels(&tree_area_items(None)), ["Open File...", "Add Project Folder..."]);
+    }
+
+    #[test]
+    fn remapped_path_moves_only_paths_inside_the_renamed_one() {
+        // A file renamed: itself moves, a sibling sharing the prefix stays.
+        assert_eq!(remapped_path("/n/a.md", "/n/a.md", "/n/b.md"), "/n/b.md");
+        assert_eq!(remapped_path("/n/a.md.bak", "/n/a.md", "/n/b.md"), "/n/a.md.bak");
+        // A folder renamed: everything under it moves, a same-prefix sibling does not.
+        assert_eq!(remapped_path("/n/dir/x/y.md", "/n/dir", "/n/new"), "/n/new/x/y.md");
+        assert_eq!(remapped_path("/n/dirty/y.md", "/n/dir", "/n/new"), "/n/dirty/y.md");
+        assert_eq!(remapped_path("/other/z.md", "/n/dir", "/n/new"), "/other/z.md");
+    }
+
+    #[test]
+    fn reveal_label_follows_the_platform() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(reveal_label(), "Reveal in Finder");
+        #[cfg(target_os = "windows")]
+        assert_eq!(reveal_label(), "Show in File Explorer");
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        assert_eq!(reveal_label(), "Show in File Manager");
     }
 }

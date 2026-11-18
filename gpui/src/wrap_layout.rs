@@ -653,6 +653,40 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_stepping_lands_on_row_starts_and_row_ends() {
+        // Row starts as the verifier painted them; every char 10 px wide.
+        let body = "x".repeat(430);
+        let text = Mono(&body);
+        let starts = vec![0, 18, 117, 216, 316, 418];
+        let origins: Vec<f32> = starts.iter().map(|&s| s as f32 * CELL).collect();
+        let rows = Rows::new(430, starts, origins);
+
+        // Column 0: each Down lands exactly on the next row start.
+        let mut at = 0;
+        let mut landed = Vec::new();
+        for _ in 0..5 {
+            let (next, at_end) = rows.step(&text, at, false, 0.0, 1).expect("row below");
+            assert!(!at_end, "column 0 lands at a row start");
+            landed.push(next);
+            at = next;
+        }
+        assert_eq!(landed, vec![18, 117, 216, 316, 418]);
+
+        // A non-zero column keeps its row-local x: 30 px into each row.
+        assert_eq!(rows.step(&text, 18, false, 30.0, 1), Some((120, false)));
+        assert_eq!(rows.step(&text, 120, false, 30.0, -1), Some((21, false)));
+
+        // A column past the row's width lands on that row's end, at_row_end.
+        assert_eq!(rows.step(&text, 18, false, 2000.0, 1), Some((216, true)));
+
+        // End after two Downs (caret at 117, row 2) reaches the end of that row.
+        let row = rows.row_of(117, false);
+        assert_eq!(row, 2);
+        assert_eq!(rows.end(row), 216);
+        assert_eq!(rows.caret(&text, 216, true), (2, 990.0));
+    }
+
+    #[test]
     fn segments_split_a_range_across_rows() {
         let rows = three_rows();
         let text = Mono(TEXT);

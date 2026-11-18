@@ -91,6 +91,17 @@ pub fn normalize_mode(kind: ViewKind, stored: &str) -> Option<&'static str> {
     }
 }
 
+/// The mode a file opens in when nothing was saved for it. Markdown and `.txt`
+/// open rendered (`rich`), as the web app does; other text opens in the editor.
+/// `None` leaves CSV and JSON to their own default.
+pub fn default_mode(kind: ViewKind) -> Option<&'static str> {
+    match kind {
+        ViewKind::Markdown { .. } => Some("rich"),
+        ViewKind::Text { .. } => Some("plain"),
+        ViewKind::Csv | ViewKind::Json => None,
+    }
+}
+
 /// The mode after `current` when Cmd-E cycles the view, or `None` when the view
 /// has only one mode.
 pub fn next_mode(kind: ViewKind, current: &str) -> Option<&'static str> {
@@ -100,6 +111,41 @@ pub fn next_mode(kind: ViewKind, current: &str) -> Option<&'static str> {
     }
     let index = modes.iter().position(|mode| *mode == current).unwrap_or(0);
     Some(modes[(index + 1) % modes.len()])
+}
+
+/// The name the status bar shows for a highlighted language id (`highlight`
+/// ids). Files with no language read as plain text.
+pub fn language_label(language: Option<&str>) -> &'static str {
+    match language {
+        Some("javascript") => "JavaScript",
+        Some("typescript") => "TypeScript",
+        Some("jsx") => "JSX",
+        Some("tsx") => "TSX",
+        Some("json") => "JSON",
+        Some("python") => "Python",
+        Some("html") => "HTML",
+        Some("css") => "CSS",
+        Some("yaml") => "YAML",
+        Some("xml") => "XML",
+        Some("sql") => "SQL",
+        Some("rust") => "Rust",
+        Some("go") => "Go",
+        Some("java") => "Java",
+        Some("cpp") => "C++",
+        Some("c") => "C",
+        Some("php") => "PHP",
+        Some("markdown") => "Markdown",
+        Some("shell") => "Shell",
+        Some("toml") => "TOML",
+        Some("dockerfile") => "Dockerfile",
+        Some("ruby") => "Ruby",
+        Some("swift") => "Swift",
+        Some("kotlin") => "Kotlin",
+        Some("csharp") => "C#",
+        Some("properties") => "Properties",
+        Some("diff") => "Diff",
+        _ => "Plain text",
+    }
 }
 
 /// Whether the mode shows an editor buffer, which is what Find and Replace work on.
@@ -229,6 +275,15 @@ mod tests {
         assert!(shows_text(ViewKind::Csv, "text"));
         assert!(!shows_text(ViewKind::Csv, "table"));
         assert!(shows_text(ViewKind::Text { language: None }, "plain"));
+    }
+
+    #[test]
+    fn status_names_the_language_of_a_file() {
+        assert_eq!(language_label(Some("yaml")), "YAML");
+        assert_eq!(language_label(Some("rust")), "Rust");
+        assert_eq!(language_label(Some("cpp")), "C++");
+        assert_eq!(language_label(None), "Plain text");
+        assert_eq!(language_label(Some("unknown-id")), "Plain text");
     }
 
     #[test]

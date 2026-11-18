@@ -25,10 +25,10 @@ use crate::rich_model::Inline;
 
 // ---------------------------------------------------------------- metrics
 
-const TB_W: f32 = 404.0;
+const TB_W: f32 = 360.0;
 const TB_H: f32 = 32.0;
 /// Where the heading button's centre sits, from the bar's left edge.
-const HEADING_BTN_CENTRE: f32 = 222.0;
+const HEADING_BTN_CENTRE: f32 = 199.0;
 const DD_W: f32 = 150.0;
 const DD_ROW: f32 = 28.0;
 const SLASH_W: f32 = 268.0;
@@ -63,30 +63,32 @@ pub enum SlashAction {
 
 pub struct SlashItem {
     pub label: &'static str,
+    /// Hugeicons id (see `app_icon::icon`).
+    pub icon: &'static str,
     /// Extra words the query also matches, space separated.
     pub keys: &'static str,
     pub action: SlashAction,
 }
 
 pub const SLASH_ITEMS: [SlashItem; 18] = [
-    SlashItem { label: "Text", keys: "text paragraph plain normal p", action: SlashAction::Paragraph },
-    SlashItem { label: "Heading 1", keys: "heading h1 title big", action: SlashAction::Heading(1) },
-    SlashItem { label: "Heading 2", keys: "heading h2 subtitle", action: SlashAction::Heading(2) },
-    SlashItem { label: "Heading 3", keys: "heading h3", action: SlashAction::Heading(3) },
-    SlashItem { label: "Bullet list", keys: "bullet list ul unordered dash", action: SlashAction::List(ListType::Bullet) },
-    SlashItem { label: "Ordered list", keys: "ordered numbered list ol number", action: SlashAction::List(ListType::Ordered) },
-    SlashItem { label: "Task list", keys: "task todo checkbox check list", action: SlashAction::List(ListType::Task) },
-    SlashItem { label: "Quote", keys: "quote blockquote citation", action: SlashAction::Quote },
-    SlashItem { label: "Code block", keys: "code block fence snippet pre", action: SlashAction::CodeBlock },
-    SlashItem { label: "Table", keys: "table grid 3x3", action: SlashAction::Table },
-    SlashItem { label: "Divider", keys: "divider rule hr line separator ---", action: SlashAction::Rule },
-    SlashItem { label: "Image", keys: "image img picture photo", action: SlashAction::Image },
-    SlashItem { label: "Callout: Note", keys: "callout note alert admonition info", action: SlashAction::Callout(CalloutKind::Note) },
-    SlashItem { label: "Callout: Tip", keys: "callout tip hint", action: SlashAction::Callout(CalloutKind::Tip) },
-    SlashItem { label: "Callout: Important", keys: "callout important", action: SlashAction::Callout(CalloutKind::Important) },
-    SlashItem { label: "Callout: Warning", keys: "callout warning caution alert", action: SlashAction::Callout(CalloutKind::Warning) },
-    SlashItem { label: "Callout: Caution", keys: "callout caution danger", action: SlashAction::Callout(CalloutKind::Caution) },
-    SlashItem { label: "Chart", keys: "chart graph bar line pie data", action: SlashAction::Chart },
+    SlashItem { label: "Text", icon: "text-font", keys: "text paragraph plain normal p", action: SlashAction::Paragraph },
+    SlashItem { label: "Heading 1", icon: "heading01", keys: "heading h1 title big", action: SlashAction::Heading(1) },
+    SlashItem { label: "Heading 2", icon: "heading02", keys: "heading h2 subtitle", action: SlashAction::Heading(2) },
+    SlashItem { label: "Heading 3", icon: "heading03", keys: "heading h3", action: SlashAction::Heading(3) },
+    SlashItem { label: "Bullet list", icon: "left-to-right-list-bullet", keys: "bullet list ul unordered dash", action: SlashAction::List(ListType::Bullet) },
+    SlashItem { label: "Ordered list", icon: "left-to-right-list-number", keys: "ordered numbered list ol number", action: SlashAction::List(ListType::Ordered) },
+    SlashItem { label: "Task list", icon: "check-list", keys: "task todo checkbox check list", action: SlashAction::List(ListType::Task) },
+    SlashItem { label: "Quote", icon: "quote-down", keys: "quote blockquote citation", action: SlashAction::Quote },
+    SlashItem { label: "Code block", icon: "source-code", keys: "code block fence snippet pre", action: SlashAction::CodeBlock },
+    SlashItem { label: "Table", icon: "table01", keys: "table grid 3x3", action: SlashAction::Table },
+    SlashItem { label: "Divider", icon: "minus-sign", keys: "divider rule hr line separator ---", action: SlashAction::Rule },
+    SlashItem { label: "Image", icon: "image01", keys: "image img picture photo", action: SlashAction::Image },
+    SlashItem { label: "Callout: Note", icon: "information-circle", keys: "callout note alert admonition info", action: SlashAction::Callout(CalloutKind::Note) },
+    SlashItem { label: "Callout: Tip", icon: "information-circle", keys: "callout tip hint", action: SlashAction::Callout(CalloutKind::Tip) },
+    SlashItem { label: "Callout: Important", icon: "alert-circle", keys: "callout important", action: SlashAction::Callout(CalloutKind::Important) },
+    SlashItem { label: "Callout: Warning", icon: "alert01", keys: "callout warning caution alert", action: SlashAction::Callout(CalloutKind::Warning) },
+    SlashItem { label: "Callout: Caution", icon: "alert01", keys: "callout caution danger", action: SlashAction::Callout(CalloutKind::Caution) },
+    SlashItem { label: "Chart", icon: "chart01", keys: "chart graph bar line pie data", action: SlashAction::Chart },
 ];
 
 /// Indices into `SLASH_ITEMS` that match `query`, best first. An empty query
@@ -966,13 +968,15 @@ impl RichEditor {
 
         if let Some(pop) = self.overlays.link.clone() {
             if let Some(anchor) = self.caret_rect(self.cursor(), self.at_row_end) {
-                let (x, y) = place_popup(anchor, (LINK_W, LINK_H), view, false);
+                let (x, y) = place_popup(anchor, (LINK_W, LINK_H), view, true);
                 out.push(self.link_el(&t, (x, y), pop.target.is_some(), cx));
             }
         } else if let Some(inl) = self.tooltip_target() {
             if let Some(anchor) = self.caret_rect(self.cursor(), self.at_row_end) {
                 let url = link_target_text(&self.content, &inl);
-                let (x, y) = place_popup(anchor, (TIP_W, TIP_H), view, false);
+                // Above the link text, so it never covers the table header or the
+                // line above; flips below only when there is no room above.
+                let (x, y) = place_popup(anchor, (TIP_W, TIP_H), view, true);
                 out.push(self.tooltip_el(&t, (x, y), url, cx));
             }
         }
@@ -981,8 +985,8 @@ impl RichEditor {
 
     fn toolbar_el(&self, t: &Theme, at: (f32, f32), marks: Marks, cx: &mut Context<Self>) -> AnyElement {
         let heading_label = match marks.heading {
-            Some(n) if n > 0 => format!("H{n} ▾"),
-            _ => "Text ▾".to_string(),
+            Some(n) if n > 0 => format!("H{n}"),
+            _ => "Text".to_string(),
         };
         let heading_active = marks.heading.is_some_and(|n| n > 0);
         let list = |k: ListType| marks.list == Some(k);
@@ -1002,31 +1006,32 @@ impl RichEditor {
             .border_1()
             .border_color(t.border)
             .occlude()
-            .child(button(OverlayCmd::Bold, "B", marks.bold, 26.0, t, cx))
-            .child(button(OverlayCmd::Italic, "I", marks.italic, 26.0, t, cx))
-            .child(button(OverlayCmd::Strike, "S", marks.strike, 26.0, t, cx))
-            .child(button(OverlayCmd::Code, "</>", marks.code, 34.0, t, cx))
+            .child(icon_button(OverlayCmd::Bold, "text-bold", marks.bold, t, cx))
+            .child(icon_button(OverlayCmd::Italic, "text-italic", marks.italic, t, cx))
+            .child(icon_button(OverlayCmd::Strike, "text-strikethrough", marks.strike, t, cx))
+            .child(icon_button(OverlayCmd::Code, "source-code", marks.code, t, cx))
             .child(divider(t))
-            .child(button(OverlayCmd::Link, "Link", marks.link, 40.0, t, cx))
+            .child(icon_button(OverlayCmd::Link, "link01", marks.link, t, cx))
             .child(divider(t))
-            .child(button(OverlayCmd::Dropdown, &heading_label, heading_active, 64.0, t, cx))
+            .child(dropdown_button(OverlayCmd::Dropdown, &heading_label, heading_active, t, cx))
             .child(divider(t))
-            .child(button(OverlayCmd::Bullet, "•", list(ListType::Bullet), 26.0, t, cx))
-            .child(button(OverlayCmd::Ordered, "1.", list(ListType::Ordered), 26.0, t, cx))
-            .child(button(OverlayCmd::Task, "☑", list(ListType::Task), 26.0, t, cx))
-            .child(button(OverlayCmd::Quote, "❝", marks.quote, 26.0, t, cx))
+            .child(icon_button(OverlayCmd::Bullet, "left-to-right-list-bullet", list(ListType::Bullet), t, cx))
+            .child(icon_button(OverlayCmd::Ordered, "left-to-right-list-number", list(ListType::Ordered), t, cx))
+            .child(icon_button(OverlayCmd::Task, "check-list", list(ListType::Task), t, cx))
+            .child(icon_button(OverlayCmd::Quote, "quote-down", marks.quote, t, cx))
             .into_any_element()
     }
 
     fn heading_menu_el(&self, t: &Theme, at: (f32, f32), current: Option<u8>, cx: &mut Context<Self>) -> AnyElement {
-        let rows = [("Paragraph", 0u8), ("Heading 1", 1), ("Heading 2", 2), ("Heading 3", 3)];
+        let rows = [("Paragraph", "text-font", 0u8), ("Heading 1", "heading01", 1), ("Heading 2", "heading02", 2), ("Heading 3", "heading03", 3)];
         let mut panel = panel(t).left(px(at.0)).top(px(at.1)).w(px(DD_W)).p_1();
-        for (label, level) in rows {
+        for (label, icon, level) in rows {
             let active = current.unwrap_or(0) == level;
             panel = panel.child(
                 menu_row(
                     format!("rich-ov-heading-{level}"),
                     label,
+                    Some(icon),
                     active,
                     t,
                 )
@@ -1062,7 +1067,7 @@ impl RichEditor {
             let item = &SLASH_ITEMS[index];
             let active = pos == selected;
             panel = panel.child(
-                menu_row(format!("rich-slash-{index}"), item.label, active, t)
+                menu_row(format!("rich-slash-{index}"), item.label, Some(item.icon), active, t)
                     .h(px(SLASH_ROW))
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                         if *hovered {
@@ -1147,9 +1152,9 @@ impl RichEditor {
                     .flex()
                     .flex_row()
                     .gap_1()
-                    .child(button(OverlayCmd::Open, "Open", false, 56.0, t, cx))
-                    .child(button(OverlayCmd::Edit, "Edit", false, 56.0, t, cx))
-                    .child(button(OverlayCmd::Unlink, "Remove", false, 72.0, t, cx)),
+                    .child(labeled_icon_button(OverlayCmd::Open, "external-link", "Open", 64.0, t, cx))
+                    .child(labeled_icon_button(OverlayCmd::Edit, "pencil-edit01", "Edit", 60.0, t, cx))
+                    .child(labeled_icon_button(OverlayCmd::Unlink, "unlink01", "Remove", 80.0, t, cx)),
             )
             .into_any_element()
     }
@@ -1197,8 +1202,91 @@ fn button(cmd: OverlayCmd, label: &str, active: bool, w: f32, t: &Theme, cx: &mu
         .into_any_element()
 }
 
+/// A square toolbar button showing a Hugeicons glyph.
+fn icon_button(cmd: OverlayCmd, icon: &str, active: bool, t: &Theme, cx: &mut Context<RichEditor>) -> AnyElement {
+    let hover = t.hover;
+    let color = if active { t.accent } else { t.fg };
+    let mut b = div()
+        .id(SharedString::from(format!("rich-ov-{cmd:?}")))
+        .w(px(26.0))
+        .h(px(24.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover));
+    if active {
+        b = b.bg(t.accent_soft);
+    }
+    b.child(crate::app_icon::icon(icon, 15.0).text_color(color))
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.overlay_command(cmd, window, cx)
+        }))
+        .into_any_element()
+}
+
+/// A button with a glyph and a label side by side.
+fn labeled_icon_button(
+    cmd: OverlayCmd,
+    icon: &str,
+    label: &str,
+    w: f32,
+    t: &Theme,
+    cx: &mut Context<RichEditor>,
+) -> AnyElement {
+    let hover = t.hover;
+    div()
+        .id(SharedString::from(format!("rich-ov-{cmd:?}")))
+        .w(px(w))
+        .h(px(24.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .rounded(px(5.0))
+        .text_size(px(12.0))
+        .text_color(t.fg)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .child(crate::app_icon::icon(icon, 14.0).text_color(t.fg))
+        .child(label.to_string())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.overlay_command(cmd, window, cx)
+        }))
+        .into_any_element()
+}
+
+/// The heading picker: its label and a chevron.
+fn dropdown_button(cmd: OverlayCmd, label: &str, active: bool, t: &Theme, cx: &mut Context<RichEditor>) -> AnyElement {
+    let hover = t.hover;
+    let color = if active { t.accent } else { t.fg };
+    let mut b = div()
+        .id(SharedString::from(format!("rich-ov-{cmd:?}")))
+        .w(px(64.0))
+        .h(px(24.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_0p5()
+        .rounded(px(5.0))
+        .text_size(px(12.0))
+        .text_color(color)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover));
+    if active {
+        b = b.bg(t.accent_soft);
+    }
+    b.child(label.to_string())
+        .child(crate::app_icon::icon("arrow-down01", 12.0).text_color(color))
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.overlay_command(cmd, window, cx)
+        }))
+        .into_any_element()
+}
+
 /// A full-width menu row with a hover tint. The caller adds the click handler.
-fn menu_row(id: String, label: &str, active: bool, t: &Theme) -> Stateful<Div> {
+fn menu_row(id: String, label: &str, icon: Option<&str>, active: bool, t: &Theme) -> Stateful<Div> {
     let hover = t.hover;
     let mut row = div()
         .id(SharedString::from(id))
@@ -1206,6 +1294,7 @@ fn menu_row(id: String, label: &str, active: bool, t: &Theme) -> Stateful<Div> {
         .px_2()
         .flex()
         .items_center()
+        .gap_2()
         .rounded(px(5.0))
         .text_size(px(12.0))
         .text_color(if active { t.accent } else { t.fg })
@@ -1214,7 +1303,10 @@ fn menu_row(id: String, label: &str, active: bool, t: &Theme) -> Stateful<Div> {
     if active {
         row = row.bg(t.accent_soft);
     }
-    row.child(label.to_string())
+    row.children(icon.map(|name| {
+        crate::app_icon::icon(name, 15.0).text_color(if active { t.accent } else { t.muted })
+    }))
+    .child(label.to_string())
 }
 
 // ---------------------------------------------------------------- tests
