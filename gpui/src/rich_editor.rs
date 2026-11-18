@@ -1106,6 +1106,25 @@ impl RichEditor {
 
     /// Typed text, deletions and IME input: these may join a typing run.
     fn replace_range(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        if let Some((lines, table, byte_range)) = self.table_info_at(range.start) {
+            if range.end <= byte_range.end {
+                let clean_text = crate::rich_table::sanitize_cell_text(text);
+                let start_cell = rich_blocks::cell_for(&table, range.start);
+                let end_cell = rich_blocks::cell_for(&table, range.end);
+                if start_cell.is_some() && end_cell.is_some() && start_cell != end_cell {
+                    let edit = crate::rich_table::multi_cell_replace(&self.content, &table, range, &clean_text);
+                    self.commit(edit, true, cx);
+                    return;
+                }
+                if let Some((r, c)) = start_cell.or_else(|| crate::rich_table::cell_at_offset(&table, &self.model.lines[lines], range.start)) {
+                    let cell_src = table.rows[r][c].clone();
+                    let clamped_start = range.start.clamp(cell_src.start, cell_src.end);
+                    let clamped_end = range.end.clamp(cell_src.start, cell_src.end);
+                    self.splice(clamped_start..clamped_end, &clean_text, true, cx);
+                    return;
+                }
+            }
+        }
         // Text typed on a closing fence or a rule goes on a new line after the
         // block, never onto its delimiter line.
         if range.is_empty() && !text.is_empty() {
@@ -1567,7 +1586,13 @@ impl RichEditor {
         )?;
         let first = self.model.lines[lines.start].range.start;
         let last = self.model.lines[lines.end - 1].range.end;
-        (!touches(&self.selection, &(first..last))).then_some((lines, kind))
+        if !touches(&self.selection, &(first..last)) {
+            return Some((lines, kind));
+        }
+        if kind == WidgetKind::Table && crate::rich_table::is_table_rendered(first..last, &self.selection) {
+            return Some((lines, kind));
+        }
+        None
     }
 
     /// Row(s) for a rendered widget. Its first line carries the widget; the
@@ -1658,6 +1683,7 @@ impl RichEditor {
             dims: &mut self.widgets.dims,
             hover,
             copied,
+            selection: self.selection.clone(),
         }
     }
 
@@ -2015,16 +2041,35 @@ impl RichEditor {
         }
 
         let cursor = self.cursor();
+        for row in rows {
+            if let Some(w) = &row.widget {
+                if let rich_blocks::Body::Table(tb) = &w.body {
+                    crate::rich_table::table_quads(
+                        bounds,
+                        tb,
+                        &self.selection,
+                        cursor,
+                        self.at_row_end,
+                        t,
+                        &mut q.caret,
+                        &mut q.selection,
+                    );
+                }
+            }
+        }
+
         let caret_line = self.line_of(cursor);
-        if let Some(row) = rows.iter().find(|r| r.index == caret_line) {
-            let idx = rich_model::source_to_display(&row.disp, cursor);
-            q.caret = Some(row.para.caret_quad(
-                at(row.text_x, row.text_top),
-                idx,
-                self.at_row_end,
-                t.cursor,
-                px(CARET_WIDTH),
-            ));
+        if q.caret.is_none() {
+            if let Some(row) = rows.iter().find(|r| r.index == caret_line && r.widget.is_none() && !r.widget_part) {
+                let idx = rich_model::source_to_display(&row.disp, cursor);
+                q.caret = Some(row.para.caret_quad(
+                    at(row.text_x, row.text_top),
+                    idx,
+                    self.at_row_end,
+                    t.cursor,
+                    px(CARET_WIDTH),
+                ));
+            }
         }
         q
     }
@@ -2050,6 +2095,20 @@ impl RichEditor {
                 return None;
             }
             let prev = self.build_row(&mut f, line - 1, 0.0);
+            if let Some(w) = &prev.widget {
+                if let rich_blocks::Body::Table(tb) = &w.body {
+                    let last_r = tb.cells.len().saturating_sub(1);
+                    let cols = tb.col_edges.len().saturating_sub(1);
+                    if cols > 0 && !tb.cells[last_r].is_empty() {
+                        let clamped_x = x.clamp(tb.col_edges[0], tb.col_edges[cols] - 0.1);
+                        let c = rich_blocks::cell_index(&tb.col_edges, clamped_x).unwrap_or(0).min(tb.cells[last_r].len() - 1);
+                        let cell = &tb.cells[last_r][c];
+                        let (i2, end) = cell.para.hit_test(point(px(x - cell.x), px(0.0)));
+                        let target = cell.src.start + rich_model::display_to_source(&cell.disp, i2);
+                        return Some((target, end));
+                    }
+                }
+            }
             let last = prev.para.row_count() - 1;
             let (i2, end) = prev.para.index_at_row(last, x - prev.text_x);
             Some((self.source_of(&prev, i2), end))
@@ -2062,6 +2121,19 @@ impl RichEditor {
                 return None;
             }
             let next = self.build_row(&mut f, line + 1, 0.0);
+            if let Some(w) = &next.widget {
+                if let rich_blocks::Body::Table(tb) = &w.body {
+                    let cols = tb.col_edges.len().saturating_sub(1);
+                    if cols > 0 && !tb.cells[0].is_empty() {
+                        let clamped_x = x.clamp(tb.col_edges[0], tb.col_edges[cols] - 0.1);
+                        let c = rich_blocks::cell_index(&tb.col_edges, clamped_x).unwrap_or(0).min(tb.cells[0].len() - 1);
+                        let cell = &tb.cells[0][c];
+                        let (i2, end) = cell.para.hit_test(point(px(x - cell.x), px(0.0)));
+                        let target = cell.src.start + rich_model::display_to_source(&cell.disp, i2);
+                        return Some((target, end));
+                    }
+                }
+            }
             let (i2, end) = next.para.index_at_row(0, x - next.text_x);
             Some((self.source_of(&next, i2), end))
         }
@@ -2072,6 +2144,51 @@ impl RichEditor {
     }
 
     fn vertical(&mut self, window: &Window, delta: isize, extend: bool, cx: &mut Context<Self>) {
+        if !extend {
+            if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines.clone()], self.cursor()) {
+                    let mut f = self.frame(window, self.view_width);
+                    let widget_row = self.build_row(&mut f, lines.start, 0.0);
+                    let tb_opt = match &widget_row.widget {
+                        Some(w) => match &w.body {
+                            rich_blocks::Body::Table(tb) => Some(tb),
+                            _ => None,
+                        },
+                        None => None,
+                    };
+                    let x = self.desired_x;
+                    let action = if delta < 0 {
+                        crate::rich_table::nav_up(&self.content, &table, tb_opt, lines.clone(), r, c, self.cursor(), x)
+                    } else {
+                        crate::rich_table::nav_down(&self.content, &table, tb_opt, lines.clone(), self.model.lines.len(), r, c, self.cursor(), x)
+                    };
+                    match action {
+                        crate::rich_table::NavAction::Move(target) => {
+                            self.place(target, false, false, true, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::LeaveBefore(target_line) => {
+                            let target = self.model.lines[target_line].range.end;
+                            self.place(target, false, false, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::LeaveAfter(target_line) => {
+                            let target = self.model.lines[target_line].range.start;
+                            self.place(target, false, false, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::InsertLineBefore(at) => {
+                            self.commit(Edit { range: at..at, insert: "\n".to_string(), selection: at..at }, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::InsertLineAfter(at) => {
+                            self.commit(Edit { range: at..at, insert: "\n".to_string(), selection: at + 1..at + 1 }, false, cx);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         let target = self.vertical_target(window, delta);
         if delta > 0 && !extend {
             // Down onto a closing fence or rule that ends the document: give
@@ -2126,6 +2243,14 @@ impl RichEditor {
 
     fn act_backspace(&mut self, _: &editor::Backspace, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_empty() {
+            if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines], self.cursor()) {
+                    if let Some(edit) = crate::rich_table::cell_backspace(&self.content, &table, r, c, self.cursor()) {
+                        self.apply_edit(edit, cx);
+                    }
+                    return;
+                }
+            }
             if let Some(edit) = rich_ops::backspace_at_line_start(&self.content, self.selection.clone()) {
                 self.apply_edit(edit, cx);
                 return;
@@ -2138,6 +2263,14 @@ impl RichEditor {
 
     fn act_delete(&mut self, _: &editor::Delete, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_empty() {
+            if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines], self.cursor()) {
+                    if let Some(edit) = crate::rich_table::cell_delete(&self.content, &table, r, c, self.cursor()) {
+                        self.apply_edit(edit, cx);
+                    }
+                    return;
+                }
+            }
             if let Some(edit) = rich_ops::join_paragraphs_forward(&self.content, self.selection.clone()) {
                 self.apply_edit(edit, cx);
                 return;
@@ -2162,6 +2295,21 @@ impl RichEditor {
     fn act_cancel(&mut self, _: &editor::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         if self.overlay_key(OverlayKey::Escape, cx) {
             return;
+        }
+        if let Some((lines, _, _)) = self.table_info_at(self.cursor()) {
+            let action = crate::rich_table::nav_escape(&self.content, lines, self.model.lines.len());
+            match action {
+                crate::rich_table::NavAction::LeaveAfter(target_line) => {
+                    let target = self.model.lines[target_line].range.start;
+                    self.place(target, false, false, false, cx);
+                    return;
+                }
+                crate::rich_table::NavAction::InsertLineAfter(at) => {
+                    self.commit(Edit { range: at..at, insert: "\n".to_string(), selection: at + 1..at + 1 }, false, cx);
+                    return;
+                }
+                _ => {}
+            }
         }
         if let Some(on_cancel) = self.on_cancel.as_ref() {
             on_cancel(cx);
@@ -2198,6 +2346,27 @@ impl RichEditor {
 
     fn act_left(&mut self, _: &editor::Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_empty() {
+            if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines.clone()], self.cursor()) {
+                    let action = crate::rich_table::nav_left(&self.content, &table, lines, r, c, self.cursor());
+                    match action {
+                        crate::rich_table::NavAction::Move(target) => {
+                            self.place(target, false, false, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::LeaveBefore(target_line) => {
+                            let target = self.model.lines[target_line].range.end;
+                            self.place(target, false, false, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::InsertLineBefore(at) => {
+                            self.commit(Edit { range: at..at, insert: "\n".to_string(), selection: at..at }, false, cx);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let prev = self.prev_boundary(self.cursor());
             let target = clamp_out_of_marker(&self.model, prev, false);
             self.place(target, false, false, false, cx);
@@ -2209,6 +2378,27 @@ impl RichEditor {
 
     fn act_right(&mut self, _: &editor::Right, _: &mut Window, cx: &mut Context<Self>) {
         if self.selection.is_empty() {
+            if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines.clone()], self.cursor()) {
+                    let action = crate::rich_table::nav_right(&self.content, &table, lines, self.model.lines.len(), r, c, self.cursor());
+                    match action {
+                        crate::rich_table::NavAction::Move(target) => {
+                            self.place(target, false, false, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::LeaveAfter(target_line) => {
+                            let target = self.model.lines[target_line].range.start;
+                            self.place(target, false, false, false, cx);
+                            return;
+                        }
+                        crate::rich_table::NavAction::InsertLineAfter(at) => {
+                            self.commit(Edit { range: at..at, insert: "\n".to_string(), selection: at + 1..at + 1 }, false, cx);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let next = self.next_boundary(self.cursor());
             let target = clamp_out_of_marker(&self.model, next, true);
             self.place(target, false, false, false, cx);
@@ -2219,12 +2409,47 @@ impl RichEditor {
     }
 
     fn act_select_left(&mut self, _: &editor::SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+            if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines.clone()], self.cursor()) {
+                let cell_src = &table.rows[r][c];
+                let cursor = self.cursor();
+                if cursor > cell_src.start {
+                    let prev = self.prev_boundary(cursor).max(cell_src.start);
+                    self.place(prev, false, true, false, cx);
+                    return;
+                } else if c > 0 {
+                    self.place(table.rows[r][c - 1].end, false, true, false, cx);
+                    return;
+                } else if r > 0 {
+                    let last_c = table.cols().saturating_sub(1);
+                    self.place(table.rows[r - 1][last_c].end, false, true, false, cx);
+                    return;
+                }
+            }
+        }
         let prev = self.prev_boundary(self.cursor());
         let target = clamp_out_of_marker(&self.model, prev, false);
         self.place(target, false, true, false, cx);
     }
 
     fn act_select_right(&mut self, _: &editor::SelectRight, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((lines, table, _)) = self.table_info_at(self.cursor()) {
+            if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines.clone()], self.cursor()) {
+                let cell_src = &table.rows[r][c];
+                let cursor = self.cursor();
+                if cursor < cell_src.end {
+                    let next = self.next_boundary(cursor).min(cell_src.end);
+                    self.place(next, false, true, false, cx);
+                    return;
+                } else if c + 1 < table.cols() {
+                    self.place(table.rows[r][c + 1].start, false, true, false, cx);
+                    return;
+                } else if r + 1 < table.rows.len() {
+                    self.place(table.rows[r + 1][0].start, false, true, false, cx);
+                    return;
+                }
+            }
+        }
         let next = self.next_boundary(self.cursor());
         let target = clamp_out_of_marker(&self.model, next, true);
         self.place(target, false, true, false, cx);
@@ -2327,6 +2552,11 @@ impl RichEditor {
         };
         let text = normalise_newlines(&text);
         let sel = self.selection.clone();
+        if self.in_table() {
+            let clean = crate::rich_table::sanitize_cell_text(&text);
+            self.replace_range(sel, &clean, cx);
+            return;
+        }
         match rich_ops::smart_paste(&self.content, sel.clone(), &text) {
             Some(edit) => self.apply_edit(edit, cx),
             None => self.splice(sel, &text, false, cx),
@@ -2513,6 +2743,25 @@ impl RichEditor {
         )
     }
 
+    /// Information about a rendered table containing `offset`: line range, table model, and byte range.
+    fn table_info_at(&self, offset: usize) -> Option<(Range<usize>, rich_blocks::SrcTable, Range<usize>)> {
+        let line = self.line_of(offset);
+        let block_idx = *self.block_of.get(line)?;
+        let block = self.blocks.get(block_idx)?;
+        if block.kind != BlockKind::Table {
+            return None;
+        }
+        let lines_range = block.lines.clone();
+        let (lines, kind) = self.rendered_widget(lines_range.start)?;
+        if kind != WidgetKind::Table {
+            return None;
+        }
+        let first = self.model.lines[lines.start].range.start;
+        let last = self.model.lines[lines.end - 1].range.end;
+        let table = rich_blocks::parse_table(&self.content, &self.model.lines[lines.clone()]);
+        Some((lines, table, first..last))
+    }
+
     /// Leaving a table edited as source: when the caret moves to `target`
     /// outside it, the table is re-aligned first. Returns `target` shifted
     /// past the change.
@@ -2586,9 +2835,25 @@ impl RichEditor {
         }
         self.selecting = true;
         if event.click_count >= 3 {
+            if let Some((lines, table, _)) = self.table_info_at(offset) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines], offset) {
+                    let range = table.rows[r][c].clone();
+                    self.set_selection(range, cx);
+                    return;
+                }
+            }
             let range = self.model.lines[self.line_of(offset)].range.clone();
             self.set_selection(range, cx);
         } else if event.click_count == 2 {
+            if let Some((lines, table, _)) = self.table_info_at(offset) {
+                if let Some((r, c)) = crate::rich_table::cell_at_offset(&table, &self.model.lines[lines], offset) {
+                    let cell_src = table.rows[r][c].clone();
+                    let raw_range = editor::word_range(&self.content, offset);
+                    let range = raw_range.start.clamp(cell_src.start, cell_src.end)..raw_range.end.clamp(cell_src.start, cell_src.end);
+                    self.set_selection(range, cx);
+                    return;
+                }
+            }
             let range = editor::word_range(&self.content, offset);
             self.set_selection(range, cx);
         } else {

@@ -429,7 +429,13 @@ impl Widget {
     /// source position for a table, otherwise the widget's entry offset.
     pub fn caret_at(&self, x: f32, y: f32) -> usize {
         if let Body::Table(tb) = &self.body {
-            if let (Some(r), Some(c)) = (cell_index(&tb.row_edges, y), cell_index(&tb.col_edges, x)) {
+            let rows = tb.row_edges.len().saturating_sub(1);
+            let cols = tb.col_edges.len().saturating_sub(1);
+            if rows > 0 && cols > 0 {
+                let clamped_x = x.clamp(tb.col_edges[0], tb.col_edges[cols] - 0.1);
+                let clamped_y = y.clamp(tb.row_edges[0], tb.row_edges[rows] - 0.1);
+                let r = cell_index(&tb.row_edges, clamped_y).unwrap_or(0).min(rows - 1);
+                let c = cell_index(&tb.col_edges, clamped_x).unwrap_or(0).min(cols - 1);
                 let cell = &tb.cells[r][c];
                 let (idx, _) = cell
                     .para
@@ -502,6 +508,7 @@ pub struct Ctx<'a> {
     pub hover: Option<Hover>,
     /// First line of the code fence whose copy button shows "Copied".
     pub copied: Option<usize>,
+    pub selection: Range<usize>,
 }
 
 fn text_width(p: &WrappedText) -> f32 {
@@ -516,7 +523,7 @@ fn tint(c: Rgba, alpha: f32) -> Hsla {
 
 /// Display of one table cell (or any inline text): its markers are concealed
 /// the same way a paragraph's are. The text is `cell` on its own.
-fn cell_display(cell: &str) -> DisplayLine {
+pub fn cell_display(cell: &str, sel: Option<Range<usize>>) -> DisplayLine {
     let model = rich_model::parse(cell);
     let inlines = model
         .lines
@@ -530,7 +537,7 @@ fn cell_display(cell: &str) -> DisplayLine {
         kind: LineKind::Paragraph,
         inlines,
     };
-    rich_model::display_line(cell, &line, None)
+    rich_model::display_line(cell, &line, sel)
 }
 
 /// Text runs for a display line: inline styles over one base font and colour.
@@ -665,7 +672,17 @@ fn build_table(ctx: &mut Ctx, lines: Range<usize>, top: f32, hover: Option<Hover
         let mut drow = Vec::with_capacity(n);
         for c in 0..n {
             let text = &ctx.content[row[c].clone()];
-            let disp = cell_display(text);
+            let cell_range = &row[c];
+            let touches = ctx.selection.start <= cell_range.end && cell_range.start <= ctx.selection.end;
+            let cell_sel = if touches {
+                let (a, z) = (ctx.selection.start.min(ctx.selection.end), ctx.selection.start.max(ctx.selection.end));
+                let local_start = a.clamp(cell_range.start, cell_range.end) - cell_range.start;
+                let local_end = z.clamp(cell_range.start, cell_range.end) - cell_range.start;
+                Some(local_start..local_end)
+            } else {
+                None
+            };
+            let disp = cell_display(text, cell_sel);
             let para = cell_para(ctx, &disp, r == 0, None);
             natural[c] = natural[c].max(text_width(&para) + 2.0 * CELL_PAD_X);
             drow.push(disp);

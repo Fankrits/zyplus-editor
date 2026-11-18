@@ -30,6 +30,7 @@ mod rich_blocks;
 mod rich_editor;
 mod rich_model;
 mod rich_ops;
+pub(crate) mod rich_table;
 mod session;
 mod theme;
 mod tree;
