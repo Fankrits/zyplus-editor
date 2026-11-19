@@ -4519,6 +4519,9 @@ impl Zyplus {
                 .items_center()
                 .justify_center()
                 .bg(rgba(0x00000040))
+                // Occlude so wheel/hover events stop here instead of scrolling the
+                // editor and tree behind the dialog.
+                .occlude()
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                     this.close_modal();
                     cx.notify();
@@ -4692,7 +4695,7 @@ impl Zyplus {
                     )
             }
             SettingsSection::Appearance => {
-                // One heading per group, then rows of three cards, as in the web grid.
+                // One labelled group per THEMES group, each a grid of equal-width cards.
                 // (id, label, swatch) per card; copied out of the THEMES const.
                 type Card = (&'static str, &'static str, [u32; 3]);
                 let mut groups: Vec<(&'static str, Vec<Card>)> = Vec::new();
@@ -4706,38 +4709,39 @@ impl Zyplus {
                 let mut body = div()
                     .flex()
                     .flex_col()
-                    .gap_3()
+                    .gap_4()
                     .p_4()
-                    .child(settings_heading(theme, "Theme"))
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_size(px(12.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(theme.fg)
-                                    .child("Appearance"),
-                            )
+                            .gap_0p5()
+                            .child(settings_heading(theme, "Theme"))
                             .child(
                                 div()
                                     .text_size(px(11.0))
                                     .text_color(theme.muted)
-                                    .child("System follows your OS setting."),
+                                    .child("Choose how Zyplus looks. System follows your OS setting."),
                             ),
                     );
                 for (group, cards) in groups {
                     let mut grid = div().flex().flex_col().gap_2().child(
                         div()
-                            .text_size(px(10.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.muted)
-                            .child(group.to_uppercase()),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.muted)
+                                    .child(group.to_uppercase()),
+                            )
+                            .child(div().flex_1().h(px(1.0)).bg(theme.border)),
                     );
                     for chunk in cards.chunks(3) {
-                        let mut row = div().flex().flex_row().gap_3();
+                        let mut row = div().flex().flex_row().gap_2();
                         for &(id, label, swatch) in chunk {
                             let selected = self.theme_name == id;
                             row = row.child(
@@ -5192,9 +5196,9 @@ fn keycaps(theme: &Theme, keys: &[&'static str]) -> Div {
         }))
 }
 
-/// One card of the appearance picker, as `ThemePreview` and the button in
-/// SettingsModal.tsx draw it: a miniature window painted from the theme's swatch,
-/// the label underneath, and an accent ring on the selected card.
+/// One card of the appearance picker: a miniature app window painted from the
+/// theme's swatch, the label and, when selected, a check in the theme's accent
+/// plus an accent ring. Cards are equal width (`flex_1`) so rows form a clean grid.
 fn theme_card(
     theme: &Theme,
     id: &'static str,
@@ -5213,13 +5217,15 @@ fn theme_card(
         .id(SharedString::from(format!("theme-{id}")))
         .flex()
         .flex_col()
+        .flex_1()
+        .min_w(px(0.0))
         .gap_2()
-        .p_2()
+        .p_1p5()
         .rounded(px(10.0))
         .border_1()
         .border_color(if selected { accent } else { theme.border })
         .cursor_pointer()
-        .when(selected, |el| el.shadow(vec![ring]))
+        .when(selected, |el| el.shadow(vec![ring]).bg(theme.hover))
         .when(!selected, |el| {
             let hover = theme.hover;
             el.hover(move |style| style.bg(hover))
@@ -5227,56 +5233,92 @@ fn theme_card(
         .child(theme_preview(theme, id == "system", swatch))
         .child(
             div()
-                .px_0p5()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(12.0))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.fg)
-                .child(label),
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap_1()
+                .px_1()
+                .pb_0p5()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(12.0))
+                        .font_weight(if selected {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::MEDIUM
+                        })
+                        .text_color(theme.fg)
+                        .child(label),
+                )
+                .when(selected, |el| {
+                    el.child(
+                        app_icon::icon("checkmark-circle02", 14.0)
+                            .flex_shrink_0()
+                            .text_color(accent),
+                    )
+                }),
         )
 }
 
-/// The miniature window: a background, a sidebar-width surface strip and an
-/// accent bar, per `ThemePreview`. "System" shows its light and dark halves.
+/// A miniature app window: sidebar strip on the left, a heading bar in the accent
+/// colour and three text lines on the right. "System" shows a light half and a dark half.
 fn theme_preview(theme: &Theme, system: bool, swatch: [u32; 3]) -> Div {
     let [bg, surface, accent] = swatch.map(rgb);
-    let halves: [(Rgba, Rgba, Rgba); 2] = if system {
-        [
-            (rgb(0xffffff), rgba(0x00000018), rgba(0x0000000d)),
-            (rgb(0x18181b), rgba(0xffffff33), rgba(0xffffff1a)),
+    let halves: Vec<(Rgba, Rgba, Rgba)> = if system {
+        vec![
+            (rgb(0xffffff), rgb(0xe4e4e7), rgb(0x006fee)),
+            (rgb(0x18181b), rgb(0x3f3f46), rgb(0x63b3ff)),
         ]
     } else {
-        [(bg, surface, accent), (bg, surface, accent)]
+        vec![(bg, surface, accent)]
     };
     let mut window = div()
         .flex()
         .flex_row()
         .w_full()
-        .h(px(40.0))
+        .h(px(54.0))
         .overflow_hidden()
-        .rounded(px(6.0))
+        .rounded(px(7.0))
         .border_1()
         .border_color(theme.border);
     for (background, strip, bar) in halves {
+        let line = |width: f32| div().w(gpui::relative(width)).h(px(3.0)).rounded(px(2.0)).bg(strip);
         window = window.child(
             div()
                 .flex()
                 .flex_row()
                 .flex_1()
+                .min_w(px(0.0))
                 .h_full()
-                .gap_0p5()
-                .p_1()
+                .gap_1p5()
+                .p_1p5()
                 .bg(background)
                 .child(
                     div()
-                        .w(gpui::relative(1.0 / 3.0))
+                        .w(gpui::relative(0.28))
                         .h_full()
                         .rounded(px(3.0))
                         .bg(strip),
                 )
-                .child(div().flex_1().h_full().rounded(px(3.0)).bg(bar)),
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .h_full()
+                        .gap_1()
+                        .child(div().w(gpui::relative(0.55)).h(px(5.0)).rounded(px(2.0)).bg(bar))
+                        .child(line(1.0))
+                        .child(line(0.85))
+                        .child(line(0.6)),
+                ),
         );
     }
     window
