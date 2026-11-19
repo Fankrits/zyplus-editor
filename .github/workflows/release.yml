@@ -17,7 +17,40 @@ on:
         default: ""
 
 jobs:
+  # Nothing is built for release, signed or published unless the same checks CI
+  # runs pass on this exact commit.
+  verify:
+    name: Verify (fmt, lint, unit, e2e)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: release-verify
+      - run: ./scripts/test.sh quick
+      - name: End-to-end suite
+        env:
+          TMPDIR: ${{ runner.temp }}/e
+        run: |
+          mkdir -p "$TMPDIR"
+          ./scripts/test.sh e2e -- --report e2e-report.json
+      - name: Upload e2e report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-report
+          path: e2e-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
   release:
+    needs: verify
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:
@@ -73,7 +106,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - uses: swatinem/rust-cache@v2
 
@@ -83,17 +116,9 @@ jobs:
       - name: Run release script unit tests
         run: python3 -m unittest discover -s scripts/release -v
 
-      - name: Build universal macOS binary
-        run: |
-          set -euo pipefail
-          cargo build --release --locked --target aarch64-apple-darwin
-          cargo build --release --locked --target x86_64-apple-darwin
-          mkdir -p target/release
-          lipo -create \
-            target/aarch64-apple-darwin/release/zyplus-gpui \
-            target/x86_64-apple-darwin/release/zyplus-gpui \
-            -output target/release/zyplus-gpui
-          lipo -info target/release/zyplus-gpui
+      # Apple Silicon only: Intel Macs are not a supported target.
+      - name: Build macOS arm64 binary
+        run: cargo build --release --locked --target aarch64-apple-darwin
 
       # A stable signature so macOS keeps Files & Folders grants across updates
       # (see scripts/make-signing-cert.sh). Skipped when the secret is absent.
@@ -121,14 +146,23 @@ jobs:
           set -euo pipefail
           DIST="$RUNNER_TEMP/dist"
           mkdir -p "$DIST"
+          # bundle-macos.sh expects the binary at <target>/release/zyplus-gpui.
+          mkdir -p target/release
+          cp target/aarch64-apple-darwin/release/zyplus-gpui target/release/zyplus-gpui
           SKIP_BUILD=1 SIGN_IDENTITY="${SIGN_IDENTITY:--}" ./scripts/bundle-macos.sh "$DIST"
+
+      # The artifact that ships is a release build, which has no scripted-input
+      # runner, so launch the real bundle: it must start, stay up and quit on
+      # SIGTERM.
+      - name: Smoke test the packaged app
+        run: ./scripts/release/smoke-app.sh "$RUNNER_TEMP/dist/Zyplus.app" 8 --arch arm64
 
       - name: Package DMG and updater tarball
         run: |
           set -euo pipefail
           V="${{ steps.meta.outputs.version }}"
           DIST="$RUNNER_TEMP/dist"
-          ./scripts/release/make-dmg.sh "$DIST/Zyplus.app" "$DIST/Zyplus_${V}_universal.dmg"
+          ./scripts/release/make-dmg.sh "$DIST/Zyplus.app" "$DIST/Zyplus_${V}_aarch64.dmg"
           # Disable macOS AppleDouble (._*) entries so updater::check_archive_entries accepts every path.
           COPYFILE_DISABLE=1 tar -C "$DIST" -czf "$DIST/Zyplus.app.tar.gz" Zyplus.app
           tar -tzf "$DIST/Zyplus.app.tar.gz" | head -n 20
@@ -181,7 +215,7 @@ jobs:
         with:
           name: zyplus-${{ steps.meta.outputs.version }}-dry-run
           path: |
-            ${{ runner.temp }}/dist/Zyplus_${{ steps.meta.outputs.version }}_universal.dmg
+            ${{ runner.temp }}/dist/Zyplus_${{ steps.meta.outputs.version }}_aarch64.dmg
             ${{ runner.temp }}/dist/Zyplus.app.tar.gz
             ${{ runner.temp }}/dist/Zyplus.app.tar.gz.sig
             ${{ runner.temp }}/dist/latest.json
@@ -198,7 +232,7 @@ jobs:
           PRERELEASE="${{ steps.meta.outputs.prerelease }}"
           DIST="$RUNNER_TEMP/dist"
           ASSETS=(
-            "$DIST/Zyplus_${V}_universal.dmg"
+            "$DIST/Zyplus_${V}_aarch64.dmg"
             "$DIST/Zyplus.app.tar.gz"
             "$DIST/Zyplus.app.tar.gz.sig"
             "$DIST/latest.json"
@@ -235,7 +269,7 @@ jobs:
           set -euo pipefail
           V="${{ needs.release.outputs.version }}"
           TAG="${{ needs.release.outputs.tag }}"
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Zyplus_${V}_universal.dmg"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Zyplus_${V}_aarch64.dmg"
           SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
           sed -i -e "s/^  version .*/  version \"$V\"/" -e "s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/zyplus.rb
           python3 scripts/release/stamp-version.py "$V"

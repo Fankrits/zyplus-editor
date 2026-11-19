@@ -10,6 +10,10 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "See https://github.com/$REPO/releases" >&2
   exit 1
 fi
+if [ "$(uname -m)" != "arm64" ]; then
+  echo "Zyplus releases are Apple Silicon (arm64) only; this Mac is $(uname -m)." >&2
+  exit 1
+fi
 
 API="https://api.github.com/repos/$REPO/releases"
 [ -n "${ZYPLUS_VERSION:-}" ] && API="$API/tags/v${ZYPLUS_VERSION}" || API="$API/latest"
@@ -23,7 +27,7 @@ VERSION=$(printf '%s' "$RELEASE" | sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".
 URLS=$(printf '%s' "$RELEASE" | tr ',' '\n' |
   sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p')
 
-URL=$(printf '%s\n' "$URLS" | grep -E '\.dmg$' | head -1)
+URL=$(printf '%s\n' "$URLS" | grep -E '_aarch64\.dmg$' | head -1)
 if [ -z "$URL" ]; then
   echo "No Zyplus ${VERSION:-} macOS DMG published for $(uname -s) $(uname -m)." >&2
   echo "Available: https://github.com/$REPO/releases" >&2

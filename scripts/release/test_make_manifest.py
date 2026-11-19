@@ -37,7 +37,7 @@ def fake_sig_b64(trusted: str = "timestamp:1700000000\tfile:Zyplus.app.tar.gz") 
 
 
 class MakeManifestTests(unittest.TestCase):
-    def test_generates_universal_macos_manifest_deterministically(self) -> None:
+    def test_generates_apple_silicon_macos_manifest_deterministically(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             sig_path = tmp_path / "Zyplus.app.tar.gz.sig"
@@ -69,13 +69,13 @@ class MakeManifestTests(unittest.TestCase):
             self.assertEqual(parsed["pub_date"], "2026-11-19T12:00:00Z")
             self.assertEqual(
                 list(parsed["platforms"].keys()),
-                ["darwin-aarch64", "darwin-x86_64"],
+                ["darwin-aarch64"],
             )
             expected_url = (
                 "https://github.com/Fankrits/zyplus-editor/releases/download/"
                 "v0.2.4/Zyplus.app.tar.gz"
             )
-            for key in ("darwin-aarch64", "darwin-x86_64"):
+            for key in ("darwin-aarch64",):
                 self.assertEqual(parsed["platforms"][key]["url"], expected_url)
                 self.assertEqual(parsed["platforms"][key]["signature"], sig_b64)
 

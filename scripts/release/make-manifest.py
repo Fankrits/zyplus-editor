@@ -14,7 +14,7 @@ import re
 import sys
 
 SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$")
-DEFAULT_MAC_PLATFORMS = ("darwin-aarch64", "darwin-x86_64")
+DEFAULT_MAC_PLATFORMS = ("darwin-aarch64",)
 DEFAULT_ASSET = "Zyplus.app.tar.gz"
 
 
@@ -135,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--asset",
         default=DEFAULT_ASSET,
-        help=f"Universal macOS archive filename under --url-base (default: {DEFAULT_ASSET}).",
+        help=f"Apple Silicon macOS archive filename under --url-base (default: {DEFAULT_ASSET}).",
     )
     parser.add_argument(
         "--sig",

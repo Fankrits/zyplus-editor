@@ -3,7 +3,7 @@
 # /Applications symlink for drag-and-drop installation.
 #
 # Usage:
-#   ./make-dmg.sh <path/to/Zyplus.app> <output/Zyplus_<version>_universal.dmg> [volume_name]
+#   ./make-dmg.sh <path/to/Zyplus.app> <output/Zyplus_<version>_aarch64.dmg> [volume_name]
 set -euo pipefail
 
 if [ "$(uname -s)" != "Darwin" ]; then

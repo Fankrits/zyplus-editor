@@ -50,7 +50,7 @@ Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux and Wi
 
 ## Install
 
-Zyplus currently distributes macOS universal builds (Apple Silicon + Intel) from [GitHub Releases](https://github.com/Fankrits/zyplus-editor/releases/latest).
+Zyplus currently distributes Apple Silicon (arm64) macOS builds only; Intel Macs are not supported. Releases are on [GitHub Releases](https://github.com/Fankrits/zyplus-editor/releases/latest).
 
 ### Homebrew (macOS)
 
@@ -72,7 +72,7 @@ Downloads the latest `.dmg`, installs `/Applications/Zyplus.app`, and clears the
 
 ### Manual
 
-Download `Zyplus_<version>_universal.dmg` from [GitHub Releases](https://github.com/Fankrits/zyplus-editor/releases/latest) and drag `Zyplus.app` into `/Applications`. If the build is not notarized with a Developer ID, right-click → **Open** on first launch (or clear quarantine with `xattr -dr com.apple.quarantine /Applications/Zyplus.app`).
+Download `Zyplus_<version>_aarch64.dmg` from [GitHub Releases](https://github.com/Fankrits/zyplus-editor/releases/latest) and drag `Zyplus.app` into `/Applications`. If the build is not notarized with a Developer ID, right-click → **Open** on first launch (or clear quarantine with `xattr -dr com.apple.quarantine /Applications/Zyplus.app`).
 
 ## Build and Run
 
@@ -197,7 +197,7 @@ install.sh                     macOS DMG install script
 ## CI and Releases
 
 - **CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):** Runs on every push, pull request, and manual dispatch. The required `macos` job runs `scripts/test.sh` stages (`fmt`, `lint`, `unit`, `build`, `bundle`, `e2e`) and uploads `Zyplus.app.zip` and `e2e-report.json`. An informational (`continue-on-error: true`) `cross-platform` job checks `cargo check --all-targets` on `ubuntu-22.04` and `windows-latest`, and `ci-ok` gates branch protection on `macos`.
-- **Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml)):** Triggered by pushing a `vX.Y.Z` tag (or `workflow_dispatch` with optional `dry_run` / `tag`). Builds a universal macOS binary (`aarch64-apple-darwin` + `x86_64-apple-darwin` via `lipo`), packages `Zyplus_<version>_universal.dmg` and `Zyplus.app.tar.gz`, signs the updater tarball with `scripts/release/signer`, generates `latest.json` via `scripts/release/make-manifest.py`, publishes the GitHub release, and updates `Casks/zyplus.rb`, `Cargo.toml`, and `Cargo.lock` on `main` (for stable releases).
+- **Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml)):** Triggered by pushing a `vX.Y.Z` tag (or `workflow_dispatch` with optional `dry_run` / `tag`). Runs the same checks as CI first (fmt, clippy, unit, e2e), builds the `aarch64-apple-darwin` binary (Apple Silicon only), smoke-launches the packaged app, packages `Zyplus_<version>_aarch64.dmg` and `Zyplus.app.tar.gz`, signs the updater tarball with `scripts/release/signer`, generates `latest.json` via `scripts/release/make-manifest.py`, publishes the GitHub release, and updates `Casks/zyplus.rb`, `Cargo.toml`, and `Cargo.lock` on `main` (for stable releases).
   - **Required / optional GitHub Secrets:**
     - `TAURI_SIGNING_PRIVATE_KEY` (required for real releases; optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) — minisign private key matching `PUBKEY_B64` in `src/updater.rs` (kept in Tauri-compatible format for updater continuity; see [`docs/migration-from-tauri.md`](docs/migration-from-tauri.md)).
     - `MACOS_SIGNING_CERT` and `MACOS_SIGNING_CERT_PASSWORD` (optional; falls back to ad-hoc `-` signing when unset) — base64-encoded `.p12` certificate (`Zyplus Self-Signed`, created with `scripts/make-signing-cert.sh`) so macOS preserves Files & Folders permissions across updates.

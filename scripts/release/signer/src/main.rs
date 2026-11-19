@@ -302,7 +302,8 @@ fn cmd_check_manifest(args: Vec<String>) -> Result<(), String> {
         .ok_or("Manifest 'platforms' must be an object")?;
     let bytes = fs::read(&file).map_err(|e| format!("Could not read {}: {e}", file.display()))?;
 
-    for key in ["darwin-aarch64", "darwin-x86_64"] {
+    {
+        let key = "darwin-aarch64";
         let entry = platforms
             .get(key)
             .ok_or_else(|| format!("Manifest missing platform {key}"))?;
@@ -321,7 +322,7 @@ fn cmd_check_manifest(args: Vec<String>) -> Result<(), String> {
             .map_err(|e| format!("Manifest {key} signature failed verification: {e}"))?;
     }
 
-    println!("Verified manifest v{version} for darwin-aarch64 and darwin-x86_64");
+    println!("Verified manifest v{version} for darwin-aarch64");
     Ok(())
 }
 
