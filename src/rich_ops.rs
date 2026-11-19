@@ -1446,8 +1446,10 @@ fn caret_pair(text: &str, s: usize, mark: InlineMark) -> Option<(usize, usize)> 
             i += 1;
         }
     }
-    runs.chunks_exact(2)
-        .map(|pair| (pair[0], pair[1]))
+    runs.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[open, close]| (open, close))
         .find(|&(o, c)| o <= s && s <= c + l)
 }
 

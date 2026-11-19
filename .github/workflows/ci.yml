@@ -101,6 +101,10 @@ jobs:
 
   # Informational cross-platform compile check (non-blocking).
   #
+  # Cargo.lock pins libc 0.2.189 (and mio 1.2.4, which allows it): libc 0.2.190+
+  # dropped `ENOATTR` on Linux, which breaks `xattr` 0.2.3 (via gpui's
+  # zed-async-tar). Drop the pin once gpui moves to a fixed xattr.
+  #
   # The GPUI crate is macOS-first: Cargo.toml specifies
   # `gpui = { version = "0.2.2", features = ["macos-blade"] }` unconditionally,
   # while keeping gpui's default features (`font-kit`, `wayland`, `x11`,
