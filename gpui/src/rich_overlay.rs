@@ -35,7 +35,7 @@ const DD_ROW: f32 = 28.0;
 const SLASH_W: f32 = 268.0;
 const SLASH_ROW: f32 = 30.0;
 /// Rows the slash menu shows at once; the list scrolls to keep the selection.
-const SLASH_VISIBLE: usize = 8;
+const SLASH_VISIBLE: usize = 10;
 const LINK_W: f32 = 340.0;
 const LINK_H: f32 = 156.0;
 const TIP_W: f32 = 380.0;
@@ -575,11 +575,34 @@ pub fn place_popup(anchor: Rect, size: (f32, f32), view: (f32, f32), prefer_abov
 
 // ---------------------------------------------------------------- state
 
-/// An open slash menu: the `/` offset and the highlighted row.
+/// An open slash menu: the `/` offset, the highlighted row, and how far the
+/// list is scrolled (`top`, in pixels, so a trackpad can scroll smoothly).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SlashMenu {
     pub start: usize,
     pub selected: usize,
+    pub top: i32,
+}
+
+impl SlashMenu {
+    /// Largest scroll offset for a list of `n` rows.
+    fn max_top(n: usize) -> i32 {
+        (n.saturating_sub(SLASH_VISIBLE) as f32 * SLASH_ROW) as i32
+    }
+
+    /// `top` clamped to the list, then moved just far enough to show the selected row.
+    fn reveal(mut self, n: usize) -> Self {
+        let row = SLASH_ROW as i32;
+        let sel_top = self.selected as i32 * row;
+        let view = SLASH_VISIBLE as i32 * row;
+        if sel_top < self.top {
+            self.top = sel_top;
+        } else if sel_top + row > self.top + view {
+            self.top = sel_top + row - view;
+        }
+        self.top = self.top.clamp(0, Self::max_top(n));
+        self
+    }
 }
 
 /// An open link popover. `target` is the link being edited, or `None` for a
@@ -821,7 +844,7 @@ impl RichEditor {
                     } else {
                         (menu.selected + 1) % n
                     };
-                    self.overlays.slash = Some(SlashMenu { selected: next, ..menu });
+                    self.overlays.slash = Some(SlashMenu { selected: next, ..menu }.reveal(n));
                     cx.notify();
                     return true;
                 }
@@ -916,7 +939,7 @@ impl RichEditor {
                     self.overlays.slash = None;
                 } else {
                     let selected = menu.selected.min(n.saturating_sub(1));
-                    self.overlays.slash = Some(SlashMenu { selected, ..menu });
+                    self.overlays.slash = Some(SlashMenu { selected, ..menu }.reveal(n));
                 }
             }
         }
@@ -928,7 +951,7 @@ impl RichEditor {
                 && self.overlays.link.is_none()
             {
                 if let Some(start) = slash_span(&self.model, &self.content, cursor) {
-                    self.overlays.slash = Some(SlashMenu { start, selected: 0 });
+                    self.overlays.slash = Some(SlashMenu { start, selected: 0, top: 0 });
                 }
             }
         }
@@ -1221,13 +1244,28 @@ impl RichEditor {
     }
 
     fn slash_el(&self, t: &Theme, at: (f32, f32), ranked: &[usize], cx: &mut Context<Self>) -> AnyElement {
-        let selected = self.overlays.slash.map(|m| m.selected).unwrap_or(0);
-        let first = if selected >= SLASH_VISIBLE {
-            selected + 1 - SLASH_VISIBLE
-        } else {
-            0
-        };
-        let mut panel = panel(t).left(px(at.0)).top(px(at.1)).w(px(SLASH_W)).p_1();
+        let menu = self.overlays.slash;
+        let selected = menu.map(|m| m.selected).unwrap_or(0);
+        let top = menu.map(|m| m.top).unwrap_or(0).clamp(0, SlashMenu::max_top(ranked.len()));
+        let first = (top as f32 / SLASH_ROW).floor() as usize;
+        let mut panel = panel(t)
+            .left(px(at.0))
+            .top(px(at.1))
+            .w(px(SLASH_W))
+            .p_1()
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                // The panel blocks the mouse, so the wheel scrolls the list, not the page.
+                let n = this.slash_ranked().len();
+                if let Some(menu) = this.overlays.slash {
+                    let delta = f32::from(event.delta.pixel_delta(px(SLASH_ROW)).y);
+                    let top = (menu.top - delta as i32).clamp(0, SlashMenu::max_top(n));
+                    if top != menu.top {
+                        this.overlays.slash = Some(SlashMenu { top, ..menu });
+                        cx.notify();
+                    }
+                }
+                cx.stop_propagation();
+            }));
         if ranked.is_empty() {
             panel = panel.child(
                 div()
@@ -1870,5 +1908,28 @@ mod tests {
         assert_eq!(OverlayCmd::from_name("slash-3"), Some(OverlayCmd::SlashItem(3)));
         assert_eq!(OverlayCmd::from_name("slash-99"), None);
         assert_eq!(OverlayCmd::from_name("nope"), None);
+    }
+}
+
+#[cfg(test)]
+mod slash_scroll_tests {
+    use super::*;
+
+    #[test]
+    fn reveal_keeps_the_selected_row_in_view() {
+        let n = SLASH_ITEMS.len();
+        let row = SLASH_ROW as i32;
+        let menu = SlashMenu { start: 0, selected: 0, top: 0 };
+        assert_eq!(SlashMenu { selected: SLASH_VISIBLE - 1, ..menu }.reveal(n).top, 0);
+        assert_eq!(SlashMenu { selected: SLASH_VISIBLE, ..menu }.reveal(n).top, row);
+        // Table is the 10th item: reachable and visible with the keyboard.
+        let table = SLASH_ITEMS.iter().position(|i| i.label == "Table").unwrap();
+        let shown = SlashMenu { selected: table, ..menu }.reveal(n);
+        let first = (shown.top / row) as usize;
+        assert!(table >= first && table < first + SLASH_VISIBLE);
+        // The last item is the last row of the window, and scrolling cannot go past it.
+        let last = SlashMenu { selected: n - 1, top: 10_000, start: 0 }.reveal(n);
+        assert_eq!(last.top, SlashMenu::max_top(n));
+        assert_eq!(SlashMenu { selected: 0, top: 500, start: 0 }.reveal(n).top, 0);
     }
 }
