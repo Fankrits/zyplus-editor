@@ -392,6 +392,30 @@ fn to_hex(c: gpui::Rgba) -> String {
     format!("#{:02x}{:02x}{:02x}", ch(c.r), ch(c.g), ch(c.b))
 }
 
+/// The same SVG with its root `width` and `height` multiplied by `factor`. The
+/// `viewBox` is untouched, so it is the same picture, drawn bigger: gpui rasterises
+/// an SVG once at a fixed multiple of its size, so a zoomed view asks for a bigger
+/// one to stay sharp. An SVG whose root has no pixel width and height comes back as is.
+pub fn scale_svg(svg: &str, factor: f32) -> String {
+    let Some((w, h)) = svg_size(svg) else {
+        return svg.to_string();
+    };
+    let Some(start) = svg.find("<svg") else {
+        return svg.to_string();
+    };
+    let Some(tag_len) = svg[start..].find('>') else {
+        return svg.to_string();
+    };
+    let tag = &svg[start..start + tag_len];
+    let (Some(old_w), Some(old_h)) = (attr(tag, "width"), attr(tag, "height")) else {
+        return svg.to_string();
+    };
+    let tag = tag
+        .replacen(&format!("width=\"{old_w}\""), &format!("width=\"{}\"", w * factor), 1)
+        .replacen(&format!("height=\"{old_h}\""), &format!("height=\"{}\"", h * factor), 1);
+    format!("{}{}{}", &svg[..start], tag, &svg[start + tag_len..])
+}
+
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     let needle = format!("{name}=\"");
     let mut from = 0;
@@ -439,6 +463,17 @@ fn create_private_dir(dir: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scale_svg_multiplies_the_root_size_only() {
+        let svg = r#"<svg xmlns="x" width="200" height="100" viewBox="0 0 200 100"><rect width="10" height="10"/></svg>"#;
+        let scaled = super::scale_svg(svg, 2.0);
+        assert_eq!(super::svg_size(&scaled), Some((400.0, 200.0)));
+        assert!(scaled.contains(r#"viewBox="0 0 200 100""#));
+        assert!(scaled.contains(r#"<rect width="10" height="10"/>"#));
+        let no_size = r#"<svg viewBox="0 0 200 100"></svg>"#;
+        assert_eq!(super::scale_svg(no_size, 2.0), no_size);
+    }
+
     use super::*;
 
     const FLOWCHART: &str = "flowchart TD\n    Start[Start here] --> Decide{Is it ready?}\n    Decide -->|yes| Ship[Ship it]\n    Decide -->|no| Wait[Wait longer]";

@@ -46,6 +46,8 @@ const TABLE_TOP: f32 = 6.0;
 /// Space under a table for the column controls and the add-row button.
 const CONTROLS_H: f32 = 26.0;
 const BUTTON_W: f32 = 18.0;
+/// The chart's full-screen button.
+const FULLSCREEN_BTN: f32 = 24.0;
 const WIDGET_BOTTOM: f32 = 4.0;
 const IMG_TOP: f32 = 6.0;
 const IMG_MAX_H: f32 = 560.0;
@@ -410,6 +412,8 @@ pub struct Button {
 pub enum Action {
     /// Copies the code of the fence that starts on this line.
     CopyCode(usize),
+    /// Opens the chart or diagram that starts on this line full screen.
+    Fullscreen(usize),
     Table(usize, TableOp),
 }
 
@@ -644,6 +648,7 @@ fn button(
         Action::Table(_, TableOp::AddRow) => Some("row-insert"),
         Action::Table(_, TableOp::DelRow(_)) => Some("row-delete"),
         Action::Table(_, TableOp::DelCol(_)) => Some("column-delete"),
+        Action::Fullscreen(_) => Some("full-screen"),
         _ => None,
     };
     let g = (rect.w.min(rect.h) - 6.0).max(10.0);
@@ -929,7 +934,23 @@ fn build_card(ctx: &mut Ctx, lines: Range<usize>, top: f32, kind: WidgetKind) ->
                     rect,
                     path: diagram.path,
                 },
-                buttons: Vec::new(),
+                // Only Mermaid diagrams open full screen; a formula is small.
+                buttons: if kind == WidgetKind::Mermaid {
+                    vec![button(
+                        ctx,
+                        "",
+                        Rect {
+                            x: rect.x + rect.w - FULLSCREEN_BTN - 6.0,
+                            y: rect.y + 6.0,
+                            w: FULLSCREEN_BTN,
+                            h: FULLSCREEN_BTN,
+                        },
+                        Action::Fullscreen(lines.start),
+                        12.0,
+                    )]
+                } else {
+                    Vec::new()
+                },
             }
         }
         Err(err) => build_error_card(ctx, lines, top, kind, &err, &text),
@@ -1022,7 +1043,18 @@ fn build_chart(ctx: &mut Ctx, lines: Range<usize>, top: f32) -> Widget {
         rect: Rect { x: rect.x, y: top, w: rect.w, h: rect.h + WIDGET_GAP },
         enter: ctx.lines[lines.start].range.start,
         body: Body::Chart { rect, src },
-        buttons: Vec::new(),
+        buttons: vec![button(
+            ctx,
+            "",
+            Rect {
+                x: rect.x + rect.w - FULLSCREEN_BTN - 6.0,
+                y: top + 8.0 + 6.0,
+                w: FULLSCREEN_BTN,
+                h: FULLSCREEN_BTN,
+            },
+            Action::Fullscreen(lines.start),
+            12.0,
+        )],
     }
 }
 
@@ -1147,6 +1179,10 @@ pub fn paint_widget(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut 
         }
         Body::Chart { .. } | Body::Diagram { .. } => {}
     }
+    // A chart's controls paint after the chart itself (`paint_embed_buttons`).
+    if matches!(w.body, Body::Chart { .. } | Body::Diagram { .. }) {
+        return;
+    }
     for b in &w.buttons {
         let r = abs(bounds, b.rect);
         window.paint_quad(quad(
@@ -1158,6 +1194,17 @@ pub fn paint_widget(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut 
             BorderStyle::default(),
         ));
         paint_button_face(b, bounds, t, window, cx);
+    }
+}
+
+/// The controls of a widget whose body is an embedded element (a chart), drawn
+/// over it.
+pub fn paint_embed_buttons(w: &Widget, bounds: Bounds<Pixels>, t: &Theme, window: &mut Window, cx: &mut App) {
+    if !matches!(w.body, Body::Chart { .. } | Body::Diagram { .. }) {
+        return;
+    }
+    for b in &w.buttons {
+        paint_button(b, bounds, t, window, cx);
     }
 }
 

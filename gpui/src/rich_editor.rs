@@ -612,6 +612,8 @@ pub struct RichEditor {
     /// Called with the whole source after every edit.
     pub on_change: Option<Box<dyn Fn(&str, &mut App)>>,
     pub on_cancel: Option<Box<dyn Fn(&mut App)>>,
+    /// Called with a chart or Mermaid fence's kind and source when its full-screen button is pressed.
+    pub on_fullscreen: Option<Box<dyn Fn(WidgetKind, &str, &mut App)>>,
     overlays: Overlays,
 }
 
@@ -647,6 +649,7 @@ impl RichEditor {
             widgets: rich_blocks::BlockState::default(),
             on_change: None,
             on_cancel: None,
+            on_fullscreen: None,
             overlays: Overlays::new(cx),
         };
         this.reparse();
@@ -2710,6 +2713,19 @@ impl RichEditor {
         })
     }
 
+    /// Window-space centre of the first chart's full-screen button (scripted tests).
+    #[cfg(debug_assertions)]
+    pub(crate) fn test_fullscreen_button(&self) -> Option<Point<Pixels>> {
+        let bounds = self.last_bounds?;
+        self.last_rows.iter().find_map(|row| {
+            let b = row.widget.as_ref()?.buttons.iter().find(|b| matches!(b.action, Action::Fullscreen(_)))?;
+            Some(point(
+                bounds.left() + px(b.rect.x + b.rect.w / 2.0),
+                bounds.top() + px(b.rect.y + b.rect.h / 2.0),
+            ))
+        })
+    }
+
     /// Runs a widget control: copies a code fence, or edits a table.
     fn run_action(&mut self, action: Action, cx: &mut Context<Self>) {
         match action {
@@ -2725,6 +2741,13 @@ impl RichEditor {
                 })
                 .detach();
                 cx.notify();
+            }
+            Action::Fullscreen(line) => {
+                let range = self.blocks[self.block_of[line]].lines.clone();
+                let text = rich_blocks::fence_text(&self.content, &self.model.lines, range);
+                if let (Some(open), Some((_, kind))) = (&self.on_fullscreen, self.rendered_widget(line)) {
+                    open(kind, &text, cx);
+                }
             }
             Action::Table(line, op) => {
                 let range = self.blocks[self.block_of[line]].lines.clone();
@@ -3237,6 +3260,10 @@ impl Element for RichElement {
             }
             if let Some(el) = row.embed.as_mut() {
                 el.paint(window, cx);
+            }
+            // A chart's controls sit on top of the chart, so they paint after it.
+            if let Some(w) = &row.widget {
+                rich_blocks::paint_embed_buttons(w, bounds, &rows_theme, window, cx);
             }
         }
 

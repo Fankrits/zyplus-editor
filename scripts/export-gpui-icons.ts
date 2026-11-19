@@ -22,7 +22,7 @@ const NAMES = [
   "Heading01Icon", "Heading02Icon", "Heading03Icon", "LeftToRightListBulletIcon",
   "LeftToRightListNumberIcon", "CheckListIcon", "QuoteDownIcon", "Image01Icon", "CodeSquareIcon",
   "Chart01Icon", "MinusSignIcon", "RowInsertIcon", "ColumnInsertIcon", "RowDeleteIcon",
-  "ColumnDeleteIcon", "Tick02Icon", "InformationCircleIcon",
+  "ColumnDeleteIcon", "Tick02Icon", "InformationCircleIcon", "FullScreenIcon",
 ];
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();

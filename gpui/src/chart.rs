@@ -1045,11 +1045,32 @@ pub fn render_error(message: &str, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-fn to_point(origin: Point<Pixels>, x: f32, y: f32) -> Point<Pixels> {
-    point(origin.x + px(x), origin.y + px(y))
+/// A zoom and a pan applied to a scene when it is painted: a scene point
+/// `(x, y)` lands at `(x * zoom + dx, y * zoom + dy)` from the paint origin.
+/// Everything is drawn from vectors, so a zoomed chart stays sharp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Xf {
+    pub zoom: f32,
+    pub dx: f32,
+    pub dy: f32,
+}
+
+impl Xf {
+    pub const IDENTITY: Xf = Xf { zoom: 1.0, dx: 0.0, dy: 0.0 };
+}
+
+fn to_point(origin: Point<Pixels>, xf: Xf, x: f32, y: f32) -> Point<Pixels> {
+    point(origin.x + px(x * xf.zoom + xf.dx), origin.y + px(y * xf.zoom + xf.dy))
 }
 
 fn paint_scene(scene: &[Prim], origin: Point<Pixels>, window: &mut Window, cx: &mut App) {
+    paint_scene_xf(scene, origin, Xf::IDENTITY, window, cx);
+}
+
+/// Paints `scene` with `xf` applied. Clip it with a content mask (an
+/// `overflow_hidden` parent) when it can leave its box.
+pub fn paint_scene_xf(scene: &[Prim], origin: Point<Pixels>, xf: Xf, window: &mut Window, cx: &mut App) {
+    let z = xf.zoom;
     let style = window.text_style();
     let font = style.font();
     for prim in scene {
@@ -1062,10 +1083,10 @@ fn paint_scene(scene: &[Prim], origin: Point<Pixels>, window: &mut Window, cx: &
                 radius,
                 color,
             } => {
-                let bounds = Bounds::new(to_point(origin, *x, *y), size(px(*w), px(*h)));
+                let bounds = Bounds::new(to_point(origin, xf, *x, *y), size(px(*w * z), px(*h * z)));
                 window.paint_quad(quad(
                     bounds,
-                    px(*radius),
+                    px(*radius * z),
                     *color,
                     px(0.0),
                     transparent_black(),
@@ -1077,9 +1098,9 @@ fn paint_scene(scene: &[Prim], origin: Point<Pixels>, window: &mut Window, cx: &
                     continue;
                 }
                 let mut builder = PathBuilder::fill();
-                builder.move_to(to_point(origin, points[0].0, points[0].1));
+                builder.move_to(to_point(origin, xf, points[0].0, points[0].1));
                 for &(x, y) in &points[1..] {
-                    builder.line_to(to_point(origin, x, y));
+                    builder.line_to(to_point(origin, xf, x, y));
                 }
                 builder.close();
                 if let Ok(path) = builder.build() {
@@ -1094,10 +1115,10 @@ fn paint_scene(scene: &[Prim], origin: Point<Pixels>, window: &mut Window, cx: &
                 if points.len() < 2 {
                     continue;
                 }
-                let mut builder = PathBuilder::stroke(px(*width));
-                builder.move_to(to_point(origin, points[0].0, points[0].1));
+                let mut builder = PathBuilder::stroke(px(*width * z));
+                builder.move_to(to_point(origin, xf, points[0].0, points[0].1));
                 for &(x, y) in &points[1..] {
-                    builder.line_to(to_point(origin, x, y));
+                    builder.line_to(to_point(origin, xf, x, y));
                 }
                 if let Ok(path) = builder.build() {
                     window.paint_path(path, *color);
@@ -1122,14 +1143,15 @@ fn paint_scene(scene: &[Prim], origin: Point<Pixels>, window: &mut Window, cx: &
                 }];
                 let shaped = window
                     .text_system()
-                    .shape_line(text, px(*font_size), &runs, None);
+                    .shape_line(text, px(*font_size * z), &runs, None);
                 let width = f32::from(shaped.width);
                 let dx = match align {
                     Align::Left => 0.0,
                     Align::Center => -width / 2.0,
                     Align::Right => -width,
                 };
-                let _ = shaped.paint(to_point(origin, x + dx, *y), px(LABEL_LINE), window, cx);
+                let at = to_point(origin, xf, *x, *y);
+                let _ = shaped.paint(point(at.x + px(dx), at.y), px(LABEL_LINE * z), window, cx);
             }
         }
     }

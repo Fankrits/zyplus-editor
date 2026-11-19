@@ -43,6 +43,11 @@
 //! dialog delete <path>      opens the delete confirmation for a path
 //! dialog unsaved <path>     opens the unsaved-changes dialog for a tab
 //! update check|download|action  the About update button's calls (action presses the shown button)
+//! fullscreen open           presses the first chart or Mermaid diagram's full-screen button (a real click)
+//! fullscreen wheel <x> <y> <lines> [ctrl]  zoom by wheel lines (ctrl: trackpad pixels with Ctrl held)
+//! fullscreen scroll <dx> <dy>    two-finger scroll (pan) over the viewer
+//! fullscreen drag <x1> <y1> <x2> <y2>  drag in the viewer
+//! fullscreen dblclick <x> <y>    double click in the viewer
 //! quit                      exits the app
 //! ```
 //!
@@ -106,6 +111,8 @@ enum Cmd {
     Dialog(String),
     Update(String),
     ReplaceAll,
+    /// Full-screen viewer commands (`open`, `wheel`, `scroll`, `drag`, `dblclick`).
+    Fullscreen(String),
     Quit,
 }
 
@@ -199,6 +206,7 @@ fn parse(text: &str) -> Result<Vec<(usize, Cmd)>, String> {
             "dialog" => Cmd::Dialog(rest.trim().to_string()),
             "update" => Cmd::Update(rest.trim().to_string()),
             "replace-all" => Cmd::ReplaceAll,
+            "fullscreen" => Cmd::Fullscreen(rest.trim().to_string()),
             "quit" => Cmd::Quit,
             other => return Err(format!("line {line_no}: unknown command {other:?}")),
         };
@@ -373,6 +381,25 @@ async fn execute(cmd: &Cmd, handle: WindowHandle<Zyplus>, cx: &mut AsyncApp) {
                     root.update(cx, |root, cx| root.test_focus(&target, window, cx));
                 }
             });
+        }
+        Cmd::Fullscreen(spec) => {
+            if spec == "open" {
+                let target = cx
+                    .update_window(handle.into(), |view, _window, cx| {
+                        let root = view.downcast::<Zyplus>().ok()?;
+                        let rich = root.read(cx).test_rich()?;
+                        rich.read(cx).test_fullscreen_button()
+                    })
+                    .ok()
+                    .flatten();
+                match target {
+                    Some(position) => mouse_down(handle, cx, position, 1, Modifiers::default()),
+                    None => eprintln!("[script] fullscreen open: no full-screen button on screen"),
+                }
+            } else {
+                let spec = spec.clone();
+                let _ = handle.update(cx, |root, _, cx| root.test_fullscreen(&spec, cx));
+            }
         }
         Cmd::ReplaceAll => {
             let _ = handle.update(cx, |root, _, cx| root.replace_all(cx));
@@ -677,6 +704,65 @@ impl Zyplus {
     }
 
     /// The rich editor of the active tab, when that tab is in Rich mode.
+    /// `fullscreen wheel|scroll|drag|dblclick ...`: drives the full-screen viewer's
+    /// handlers with the same events the window would send.
+    pub(crate) fn test_fullscreen(&mut self, spec: &str, cx: &mut Context<Self>) {
+        let nums: Vec<f32> = spec.split_whitespace().skip(1).filter_map(|s| s.parse().ok()).collect();
+        let word = spec.split_whitespace().next().unwrap_or("");
+        let at = |x: f32, y: f32| point(px(x), px(y));
+        let ctrl = spec.contains("ctrl");
+        match (word, nums.as_slice()) {
+            ("wheel", [x, y, lines, ..]) => {
+                let (position, delta, modifiers) = if ctrl {
+                    (at(*x, *y), ScrollDelta::Pixels(point(px(0.0), px(*lines))), Modifiers { control: true, ..Default::default() })
+                } else {
+                    (at(*x, *y), ScrollDelta::Lines(point(0.0, *lines)), Modifiers::default())
+                };
+                let event = ScrollWheelEvent { position, delta, modifiers, touch_phase: TouchPhase::Moved };
+                self.fs_wheel(&event, cx);
+            }
+            ("scroll", [dx, dy, ..]) => {
+                let event = ScrollWheelEvent {
+                    position: at(400.0, 300.0),
+                    delta: ScrollDelta::Pixels(point(px(*dx), px(*dy))),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                };
+                self.fs_wheel(&event, cx);
+            }
+            ("dblclick", [x, y, ..]) => {
+                let event = MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: at(*x, *y),
+                    modifiers: Modifiers::default(),
+                    click_count: 2,
+                    first_mouse: false,
+                };
+                self.fs_mouse_down(&event, cx);
+            }
+            ("drag", [x1, y1, x2, y2, ..]) => {
+                let down = MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: at(*x1, *y1),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                };
+                self.fs_mouse_down(&down, cx);
+                let mv = MouseMoveEvent {
+                    position: at(*x2, *y2),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                };
+                self.fs_mouse_move(&mv, cx);
+                if let Some(viewer) = self.fullscreen.as_mut() {
+                    viewer.release();
+                }
+            }
+            _ => eprintln!("[script] unknown fullscreen command {spec:?}"),
+        }
+    }
+
     pub(crate) fn test_rich(&self) -> Option<Entity<RichEditor>> {
         let tab = self.active_tab()?;
         if tab.is_rich() {
@@ -800,6 +886,13 @@ impl Zyplus {
             None => "",
         };
         out.push_str(&format!("modal={modal}\n"));
+        match &self.fullscreen {
+            Some(viewer) => out.push_str(&format!(
+                "fullscreen=open zoom={:.3} dx={:.1} dy={:.1}\n",
+                viewer.view.zoom, viewer.view.dx, viewer.view.dy
+            )),
+            None => out.push_str("fullscreen=closed\n"),
+        }
         let panel = self.update_status.panel_view();
         out.push_str(&format!("update={}\n", self.update_status.kind()));
         out.push_str(&format!("update_button={}\n", panel.button));

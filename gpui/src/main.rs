@@ -14,6 +14,7 @@
 
 mod app_icon;
 mod chart;
+mod fullscreen_view;
 mod csv_view;
 mod diagram_cache;
 mod editor;
@@ -294,6 +295,18 @@ fn edit_reporter(workspace: Entity<Zyplus>, tab_id: u64) -> Box<dyn Fn(&str, &mu
 /// Escape in a tab's editor. It closes the open overlay (menu, dialog,
 /// settings, find bar), which the editor's own Cancel binding would otherwise
 /// swallow. With nothing open it does nothing.
+/// Opens the full-screen viewer for a chart fence's source. Deferred like the
+/// other reporters: the click comes from inside the editor's update.
+fn fullscreen_reporter(workspace: Entity<Zyplus>) -> Box<dyn Fn(rich_blocks::WidgetKind, &str, &mut App)> {
+    Box::new(move |kind, src, cx| {
+        let src = src.to_string();
+        let workspace = workspace.clone();
+        cx.defer(move |cx| {
+            let _ = workspace.update(cx, |this, cx| this.open_fullscreen(kind, &src, cx));
+        });
+    })
+}
+
 fn cancel_reporter(workspace: Entity<Zyplus>) -> Box<dyn Fn(&mut App)> {
     Box::new(move |cx| {
         let workspace = workspace.clone();
@@ -480,6 +493,10 @@ struct Zyplus {
     /// Set when a dialog opens from code without a window; the next render
     /// moves keyboard focus into it (its name field, or the window itself).
     focus_modal: bool,
+    /// The full-screen chart viewer, when one is open.
+    fullscreen: Option<fullscreen_view::FullscreenView>,
+    /// Set when the viewer opens without a window; the next render focuses it.
+    focus_fullscreen: bool,
     /// Cmd-Q found unsaved tabs and is asking about them one at a time; the
     /// app quits once none is left. Cancelling a dialog stops it.
     quitting: bool,
@@ -822,6 +839,8 @@ impl Zyplus {
             find: None,
             refocus_editor: false,
             focus_modal: false,
+            fullscreen: None,
+            focus_fullscreen: false,
             quitting: false,
             restore_failed: false,
             menu: None,
@@ -1003,6 +1022,7 @@ impl Zyplus {
         });
         rich.update(cx, |editor, _| {
             editor.on_change = Some(edit_reporter(workspace.clone(), tab_id));
+            editor.on_fullscreen = Some(fullscreen_reporter(workspace.clone()));
             editor.on_cancel = Some(cancel_reporter(workspace));
         });
         self.tabs[index].rich = Some(rich);
@@ -2848,6 +2868,13 @@ impl Zyplus {
     /// Returns whether anything was open. Used by Escape from the app and from
     /// the editors (`cancel_reporter`), so Escape works whichever has focus.
     fn close_overlay(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) -> bool {
+        if self.fullscreen.is_some() {
+            self.close_fullscreen(cx);
+            if let Some(window) = window {
+                self.focus_editor(window, cx);
+            }
+            return true;
+        }
         if self.menu.is_some() {
             self.menu = None;
         } else if self.modal.is_some() {
@@ -5538,6 +5565,11 @@ impl Zyplus {
         if std::mem::take(&mut self.focus_modal) {
             self.focus_open_modal(window, cx);
         }
+        if std::mem::take(&mut self.focus_fullscreen) {
+            if let Some(viewer) = &self.fullscreen {
+                window.focus(&viewer.focus);
+            }
+        }
         let theme = self.theme(window);
         let welcome_up = self.welcome;
 
@@ -5586,6 +5618,7 @@ impl Zyplus {
         let error_banner = self.render_error(&theme, cx);
         let menu = self.render_menu(&theme, window.viewport_size(), cx);
         let modal = self.render_modal(&theme, cx);
+        let fullscreen = self.render_fullscreen(&theme, window.viewport_size(), cx);
 
         let root = div()
             .key_context("Zyplus")
@@ -5655,6 +5688,7 @@ impl Zyplus {
         .children(error_banner)
         .children(menu)
         .children(modal)
+        .children(fullscreen)
         .children(welcome)
         .into_any_element()
     }
