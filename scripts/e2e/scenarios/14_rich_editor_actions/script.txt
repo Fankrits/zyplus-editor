@@ -1,0 +1,19 @@
+type Heading
+rich-action h1
+key enter
+type /
+wait 100
+rich-action slash-4
+type item
+key enter
+key enter
+type hello
+key shift-left
+key shift-left
+key shift-left
+key shift-left
+key shift-left
+rich-action bold
+state {out}/state.txt
+dump {out}/dump.txt
+quit

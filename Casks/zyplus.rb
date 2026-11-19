@@ -11,13 +11,12 @@ cask "zyplus" do
   depends_on macos: :big_sur
 
   app "Zyplus.app"
-  binary "#{appdir}/Zyplus.app/Contents/MacOS/zyplus-editor", target: "zyplus"
+  binary "#{appdir}/Zyplus.app/Contents/MacOS/zyplus-gpui", target: "zyplus"
 
   # Application Support is left alone: it holds the user's notes (Zyplus/).
   zap trash: [
     "~/Library/Caches/com.fankrits.zyplus-editor",
     "~/Library/Preferences/com.fankrits.zyplus-editor.plist",
     "~/Library/Saved Application State/com.fankrits.zyplus-editor.savedState",
-    "~/Library/WebKit/com.fankrits.zyplus-editor",
   ]
 end

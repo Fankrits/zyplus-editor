@@ -1,0 +1,6 @@
+state {out}/s1_table.txt
+key cmd-e
+state {out}/s2_text.txt
+key cmd-e
+state {out}/s3_table_again.txt
+quit

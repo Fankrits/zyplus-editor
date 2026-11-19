@@ -1,0 +1,17 @@
+settings general
+state {out}/s1_general.txt
+settings appearance
+state {out}/s2_appearance.txt
+settings extensions
+state {out}/s3_extensions.txt
+settings shortcuts
+state {out}/s4_shortcuts.txt
+settings about
+state {out}/s5_about.txt
+key escape
+state {out}/s6_closed.txt
+key cmd-,
+state {out}/s7_cmd_comma.txt
+key escape
+state {out}/s8_closed2.txt
+quit

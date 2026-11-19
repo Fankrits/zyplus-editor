@@ -1,0 +1,26 @@
+{
+  "description": "First run with no session.json creates Welcome.md and opens it",
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "state.txt",
+      "expected": {
+        "active": "{app_support}/Zyplus/Welcome.md",
+        "mode": "rich",
+        "tabs": "1",
+        "roots": "1",
+        "welcome": "false",
+        "dirty": "false"
+      }
+    },
+    {
+      "type": "file_exists",
+      "path": "{app_support}/Zyplus/Welcome.md"
+    },
+    {
+      "type": "json_valid",
+      "path": "{app_support}/Zyplus-session/session.json",
+      "expected_keys": ["roots", "tabs", "active_file_path"]
+    }
+  ]
+}

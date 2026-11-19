@@ -1,0 +1,8 @@
+clip pasted-from-clipboard
+key cmd-v
+dump {out}/dump.txt
+clip cleared
+key cmd-a
+key cmd-c
+dumpclip {out}/clip.txt
+quit

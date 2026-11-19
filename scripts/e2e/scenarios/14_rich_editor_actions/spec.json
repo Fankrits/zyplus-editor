@@ -1,0 +1,28 @@
+{
+  "description": "Rich editor actions (bold, h1, slash menu bullet list) produce expected markdown",
+  "fixtures": [
+    {"src": "empty.md", "dst": "rich.md"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "state.txt",
+      "expected": {"mode": "rich", "dirty": "true"}
+    },
+    {
+      "type": "file_contains",
+      "path": "{out}/dump.txt",
+      "substr": "**hello**"
+    },
+    {
+      "type": "file_contains",
+      "path": "{out}/dump.txt",
+      "substr": "# Heading"
+    },
+    {
+      "type": "file_contains",
+      "path": "{out}/dump.txt",
+      "substr": "- item"
+    }
+  ]
+}

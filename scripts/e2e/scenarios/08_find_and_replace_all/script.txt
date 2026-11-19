@@ -1,0 +1,17 @@
+key cmd-f
+type alpha
+state {out}/s1_find.txt
+key cmd-g
+key cmd-g
+state {out}/s2_next.txt
+key cmd-alt-f
+focus replace
+state {out}/s3_replace_focus.txt
+type omega
+replace-all
+state {out}/s4_replaced.txt
+dump {out}/dump.txt
+key cmd-s
+key escape
+state {out}/s5_closed.txt
+quit

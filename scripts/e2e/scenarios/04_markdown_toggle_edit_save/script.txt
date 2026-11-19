@@ -1,0 +1,12 @@
+state {out}/s1_rich.txt
+key cmd-e
+state {out}/s2_plain.txt
+key cmd-down
+type \nAppended line
+state {out}/s3_dirty.txt
+dump {out}/dump_dirty.txt
+key cmd-s
+state {out}/s4_saved.txt
+key cmd-e
+state {out}/s5_rich_again.txt
+quit

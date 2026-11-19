@@ -1,0 +1,5 @@
+type สวัสดีครับ
+state {out}/state.txt
+dump {out}/dump.txt
+key cmd-s
+quit

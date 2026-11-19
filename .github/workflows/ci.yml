@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch or PR ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: macos-latest
+
+      # Run `scripts/test.sh quick` stages separately for readable per-stage logs.
+      - name: Format check
+        run: ./scripts/test.sh fmt
+
+      - name: Clippy lint
+        run: ./scripts/test.sh lint
+
+      - name: Unit tests
+        run: ./scripts/test.sh unit
+
+      # The release pipeline's own tooling (manifest/version scripts and the
+      # minisign-compatible signer) so a broken release is caught before a tag.
+      - name: Release tooling tests
+        run: |
+          python3 -m unittest discover -s scripts/release
+          cargo test --manifest-path scripts/release/signer/Cargo.toml --target-dir target/release-signer
+
+      - name: Release build
+        run: ./scripts/test.sh build
+
+      - name: Bundle Zyplus.app
+        run: ./scripts/test.sh bundle
+
+      - name: End-to-end suite
+        env:
+          # Keep TMPDIR short so single-instance Unix socket paths stay < 100 bytes,
+          # and isolate retained failure scratch directories for artifact upload.
+          TMPDIR: ${{ runner.temp }}/e
+        run: |
+          mkdir -p "$TMPDIR"
+          ./scripts/test.sh e2e -- --report e2e-report.json
+
+      - name: Zip Zyplus.app bundle
+        if: success()
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            target/release/bundle/osx/Zyplus.app \
+            target/release/bundle/osx/Zyplus.app.zip
+
+      - name: Upload Zyplus.app bundle
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zyplus-macos-app
+          path: target/release/bundle/osx/Zyplus.app.zip
+          retention-days: 7
+
+      - name: Upload e2e report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: e2e-report.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload e2e logs and scratch on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-logs
+          path: |
+            e2e-report.json
+            ${{ runner.temp }}/e
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Informational cross-platform compile check (non-blocking).
+  #
+  # The GPUI crate is macOS-first: Cargo.toml specifies
+  # `gpui = { version = "0.2.2", features = ["macos-blade"] }` unconditionally,
+  # while keeping gpui's default features (`font-kit`, `wayland`, `x11`,
+  # `windows-manifest`). `objc2` and `objc2-metal` are target-gated inside gpui,
+  # and `src/` already gates macOS-only APIs (`app_icon.rs`, `os.rs`,
+  # `updater.rs`), so `cargo check --all-targets` can plausibly run on Linux
+  # once system dev libraries are installed—though `macos-blade` still pulls
+  # `blade-graphics` on Windows unnecessarily. Until Linux/Windows builds are
+  # proven on GitHub-hosted runners, this job is informational only.
+  cross-platform:
+    name: Cross-platform check (${{ matrix.platform }})
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxcb1-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libvulkan-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+
+      - name: Cargo check (all targets)
+        run: cargo check --all-targets
+
+  # Single required status check for branch protection.
+  ci-ok:
+    name: CI OK
+    needs: [macos]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require macOS job to succeed
+        run: |
+          if [ "${{ needs.macos.result }}" != "success" ]; then
+            echo "Required job 'macos' did not succeed (result: ${{ needs.macos.result }})" >&2
+            exit 1
+          fi

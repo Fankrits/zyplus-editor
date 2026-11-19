@@ -1,0 +1,21 @@
+{
+  "description": "Second launch forwards file argument to running primary instance over single-instance socket",
+  "fixtures": [
+    {"src": "tree_workspace", "dst": "."}
+  ],
+  "second_launch": {
+    "delay_ms": 1200,
+    "args": ["{ws}/beta.md"],
+    "expect_exit": 0
+  },
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "state.txt",
+      "expected": {
+        "active": "{ws}/beta.md",
+        "tabs": "2"
+      }
+    }
+  ]
+}

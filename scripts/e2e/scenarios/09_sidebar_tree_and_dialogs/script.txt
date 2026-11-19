@@ -1,0 +1,27 @@
+focus tree
+state {out}/s1_tree_focus.txt
+click-row {ws}/sub
+click-row {ws}/sub/nested.md
+state {out}/s2_nested.txt
+click-row {ws}/alpha.md
+key cmd-n
+state {out}/s3_new_file.txt
+key cmd-shift-n
+state {out}/s4_new_folder_modal.txt
+type newdir
+key enter
+state {out}/s5_new_folder_done.txt
+click-row {ws}/Untitled.md
+focus tree
+key f2
+state {out}/s6_rename_modal.txt
+key cmd-a
+type renamed.md
+key enter
+state {out}/s7_renamed.txt
+focus tree
+key delete
+state {out}/s8_delete_modal.txt
+key escape
+state {out}/s9_delete_cancelled.txt
+quit

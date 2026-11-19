@@ -1,0 +1,18 @@
+{
+  "description": "CLI file and folder args open on launch without welcome screen",
+  "fixtures": [
+    {"src": "sample.md", "dst": "cli_note.md"}
+  ],
+  "cli_args": ["{ws}", "{ws}/cli_note.md"],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "state.txt",
+      "expected": {
+        "active": "{ws}/cli_note.md",
+        "mode": "rich",
+        "welcome": "false"
+      }
+    }
+  ]
+}

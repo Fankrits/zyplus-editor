@@ -1,9 +1,9 @@
 /**
- * Writes the Hugeicons the web app uses as standalone SVG files for the GPUI
- * port (gpui/assets/icons/<kebab-name>.svg). GPUI paints an SVG as an alpha
+ * Writes the Hugeicons the app uses as standalone SVG files
+ * (assets/icons/<kebab-name>.svg). GPUI paints an SVG as an alpha
  * mask tinted by the element's text colour, so strokes are plain black here.
  *
- *   bun scripts/export-gpui-icons.ts
+ *   cd scripts && bun install && bun export-gpui-icons.ts
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import * as icons from "@hugeicons/core-free-icons";
@@ -28,7 +28,7 @@ const NAMES = [
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 const attr = (k: string, v: unknown) => `${kebab(k)}="${String(v).replace("currentColor", "#000")}"`;
 
-const out = new URL("../gpui/assets/icons/", import.meta.url);
+const out = new URL("../assets/icons/", import.meta.url);
 mkdirSync(out, { recursive: true });
 
 for (const name of NAMES) {

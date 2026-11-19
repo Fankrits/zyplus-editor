@@ -1,0 +1,7 @@
+type UNSAVED_EDIT
+key cmd-w
+state {out}/s1_unsaved_modal.txt
+key escape
+state {out}/s2_cancelled.txt
+dump {out}/dump.txt
+quit

@@ -1,0 +1,23 @@
+{
+  "description": "Type Thai UTF-8 text, verify byte-offset selection in state, dump, and save to disk",
+  "fixtures": [
+    {"src": "empty.md", "dst": "thai.md"}
+  ],
+  "checks": [
+    {
+      "type": "state_selection_bytes",
+      "file": "state.txt",
+      "text": "สวัสดีครับ"
+    },
+    {
+      "type": "file_equals",
+      "path": "{out}/dump.txt",
+      "expected": "สวัสดีครับ"
+    },
+    {
+      "type": "file_equals",
+      "path": "{ws}/thai.md",
+      "expected": "สวัสดีครับ"
+    }
+  ]
+}

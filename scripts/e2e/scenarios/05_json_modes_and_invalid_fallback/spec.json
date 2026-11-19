@@ -1,0 +1,39 @@
+{
+  "description": "JSON cycles tree -> table -> text -> tree; invalid JSON falls back to text and stays there",
+  "fixtures": [
+    {"src": "sample.json", "dst": "sample.json"},
+    {"src": "invalid.json", "dst": "invalid.json"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_tree.txt",
+      "expected": {"active": "{ws}/sample.json", "mode": "tree"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_table.txt",
+      "expected": {"mode": "table"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_text.txt",
+      "expected": {"mode": "text"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s4_tree_again.txt",
+      "expected": {"mode": "tree"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s5_invalid_text.txt",
+      "expected": {"active": "{ws}/invalid.json", "mode": "text"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s6_invalid_stays_text.txt",
+      "expected": {"mode": "text"}
+    }
+  ]
+}

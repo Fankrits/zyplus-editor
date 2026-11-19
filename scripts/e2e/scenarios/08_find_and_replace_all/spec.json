@@ -1,0 +1,60 @@
+{
+  "description": "Find (cmd-f), step matches (cmd-g), replace-all, save to disk, close find bar",
+  "fixtures": [
+    {"src": "find_target.md", "dst": "find_target.md"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_find.txt",
+      "expected": {
+        "find_open": "true",
+        "find_query": "alpha",
+        "find_total": "3",
+        "find_index": "0",
+        "find_query_focused": "true"
+      }
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_next.txt",
+      "expected": {
+        "find_index": "1",
+        "find_total": "3"
+      }
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_replace_focus.txt",
+      "expected": {
+        "find_replace_focused": "true"
+      }
+    },
+    {
+      "type": "state_equals",
+      "file": "s4_replaced.txt",
+      "expected": {
+        "find_total": "0",
+        "dirty": "true"
+      }
+    },
+    {
+      "type": "file_equals",
+      "path": "{out}/dump.txt",
+      "expected": "omega one\nbeta omega two\ngamma omega three\n"
+    },
+    {
+      "type": "file_equals",
+      "path": "{ws}/find_target.md",
+      "expected": "omega one\nbeta omega two\ngamma omega three\n"
+    },
+    {
+      "type": "state_equals",
+      "file": "s5_closed.txt",
+      "expected": {
+        "find_open": "false",
+        "dirty": "false"
+      }
+    }
+  ]
+}

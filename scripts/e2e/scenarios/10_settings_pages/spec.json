@@ -1,0 +1,16 @@
+{
+  "description": "Open all Settings sections (general, appearance, extensions, shortcuts, about) and close with Escape",
+  "fixtures": [
+    {"src": "sample.md", "dst": "sample.md"}
+  ],
+  "checks": [
+    {"type": "state_equals", "file": "s1_general.txt", "expected": {"modal": "settings"}},
+    {"type": "state_equals", "file": "s2_appearance.txt", "expected": {"modal": "settings"}},
+    {"type": "state_equals", "file": "s3_extensions.txt", "expected": {"modal": "settings"}},
+    {"type": "state_equals", "file": "s4_shortcuts.txt", "expected": {"modal": "settings"}},
+    {"type": "state_equals", "file": "s5_about.txt", "expected": {"modal": "settings"}},
+    {"type": "state_equals", "file": "s6_closed.txt", "expected": {"modal": ""}},
+    {"type": "state_equals", "file": "s7_cmd_comma.txt", "expected": {"modal": "settings"}},
+    {"type": "state_equals", "file": "s8_closed2.txt", "expected": {"modal": ""}}
+  ]
+}

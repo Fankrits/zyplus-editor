@@ -1,0 +1,30 @@
+{
+  "description": "Session state (active tab, view mode, sidebar collapsed) persists across relaunch",
+  "fixtures": [
+    {"src": "tree_workspace", "dst": "."}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_before_quit.txt",
+      "expected": {
+        "active": "{ws}/beta.md",
+        "mode": "plain",
+        "sidebar_collapsed": "true",
+        "tabs": "2"
+      }
+    }
+  ],
+  "relaunch_checks": [
+    {
+      "type": "state_equals",
+      "file": "s2_after_relaunch.txt",
+      "expected": {
+        "active": "{ws}/beta.md",
+        "mode": "plain",
+        "sidebar_collapsed": "true",
+        "tabs": "2"
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "description": "Toggle markdown rich/plain via cmd-e, type, verify dirty, save via cmd-s",
+  "fixtures": [
+    {"src": "sample.md", "dst": "sample.md"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_rich.txt",
+      "expected": {"mode": "rich", "dirty": "false"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_plain.txt",
+      "expected": {"mode": "plain", "dirty": "false"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_dirty.txt",
+      "expected": {"mode": "plain", "dirty": "true"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s4_saved.txt",
+      "expected": {"mode": "plain", "dirty": "false"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s5_rich_again.txt",
+      "expected": {"mode": "rich", "dirty": "false"}
+    },
+    {
+      "type": "file_contains",
+      "path": "{out}/dump_dirty.txt",
+      "substr": "Appended line"
+    },
+    {
+      "type": "file_contains",
+      "path": "{ws}/sample.md",
+      "substr": "Appended line"
+    }
+  ]
+}

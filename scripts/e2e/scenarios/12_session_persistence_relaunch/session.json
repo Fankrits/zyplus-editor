@@ -1,0 +1,12 @@
+{
+  "roots": ["{ws}"],
+  "default_folder": "{ws}",
+  "tabs": [
+    {"file_path": "{ws}/alpha.md", "mode": "rich"},
+    {"file_path": "{ws}/beta.md", "mode": "rich"}
+  ],
+  "active_file_path": "{ws}/alpha.md",
+  "open_folders": ["{ws}"],
+  "theme": "dark",
+  "disabled_extensions": []
+}

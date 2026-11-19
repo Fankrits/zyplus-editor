@@ -1,0 +1,11 @@
+{
+  "roots": ["{ws}"],
+  "default_folder": "{ws}",
+  "tabs": [
+    {"file_path": "{ws}/find_target.md", "mode": "plain"}
+  ],
+  "active_file_path": "{ws}/find_target.md",
+  "open_folders": ["{ws}"],
+  "theme": "dark",
+  "disabled_extensions": []
+}

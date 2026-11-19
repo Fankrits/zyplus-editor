@@ -1,0 +1,12 @@
+{
+  "roots": ["{ws}"],
+  "default_folder": "{ws}",
+  "tabs": [
+    {"file_path": "{ws}/sample.json", "mode": "tree"},
+    {"file_path": "{ws}/invalid.json", "mode": "tree"}
+  ],
+  "active_file_path": "{ws}/sample.json",
+  "open_folders": ["{ws}"],
+  "theme": "dark",
+  "disabled_extensions": []
+}

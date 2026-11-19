@@ -1,0 +1,43 @@
+{
+  "description": "Switch tabs (cmd-1, cmd-9, cmd-alt-left/right), open via sidebar, close via cmd-w",
+  "fixtures": [
+    {"src": "tree_workspace", "dst": "."}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_init.txt",
+      "expected": {"tabs": "2", "active": "{ws}/alpha.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_next.txt",
+      "expected": {"active": "{ws}/beta.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_opened_nested.txt",
+      "expected": {"tabs": "3", "active": "{ws}/sub/nested.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s4_tab1.txt",
+      "expected": {"active": "{ws}/alpha.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s5_last.txt",
+      "expected": {"active": "{ws}/sub/nested.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s6_prev.txt",
+      "expected": {"active": "{ws}/beta.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s7_closed.txt",
+      "expected": {"tabs": "2"}
+    }
+  ]
+}

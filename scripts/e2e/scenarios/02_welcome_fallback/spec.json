@@ -1,0 +1,21 @@
+{
+  "description": "Welcome screen shown when first-run notes folder cannot be created",
+  "pre_create_files": [
+    {
+      "path": "{app_support}/Zyplus",
+      "content": "block directory creation"
+    }
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "state.txt",
+      "expected": {
+        "welcome": "true",
+        "tabs": "0",
+        "roots": "0",
+        "active": ""
+      }
+    }
+  ]
+}

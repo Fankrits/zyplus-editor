@@ -1,0 +1,8 @@
+{
+  "name": "Zyplus",
+  "version": 2,
+  "items": [
+    {"id": 1, "label": "one"},
+    {"id": 2, "label": "two"}
+  ]
+}

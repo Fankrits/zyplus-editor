@@ -1,0 +1,11 @@
+{
+  "roots": ["{ws}"],
+  "default_folder": "{ws}",
+  "tabs": [
+    {"file_path": "{ws}/rich.md", "mode": "rich"}
+  ],
+  "active_file_path": "{ws}/rich.md",
+  "open_folders": ["{ws}"],
+  "theme": "dark",
+  "disabled_extensions": []
+}

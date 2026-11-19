@@ -1,0 +1,12 @@
+state {out}/s1_tree.txt
+key cmd-e
+state {out}/s2_table.txt
+key cmd-e
+state {out}/s3_text.txt
+key cmd-e
+state {out}/s4_tree_again.txt
+key cmd-2
+state {out}/s5_invalid_text.txt
+key cmd-e
+state {out}/s6_invalid_stays_text.txt
+quit

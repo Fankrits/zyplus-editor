@@ -1,0 +1,44 @@
+{
+  "description": "Open md, csv, json, txt files from session and verify default view modes",
+  "fixtures": [
+    {"src": "sample.md", "dst": "sample.md"},
+    {"src": "sample.csv", "dst": "sample.csv"},
+    {"src": "sample.json", "dst": "sample.json"},
+    {"src": "sample.txt", "dst": "sample.txt"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_md.txt",
+      "expected": {
+        "tabs": "4",
+        "active": "{ws}/sample.md",
+        "mode": "rich"
+      }
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_csv.txt",
+      "expected": {
+        "active": "{ws}/sample.csv",
+        "mode": "table"
+      }
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_json.txt",
+      "expected": {
+        "active": "{ws}/sample.json",
+        "mode": "tree"
+      }
+    },
+    {
+      "type": "state_equals",
+      "file": "s4_txt.txt",
+      "expected": {
+        "active": "{ws}/sample.txt",
+        "mode": "rich"
+      }
+    }
+  ]
+}

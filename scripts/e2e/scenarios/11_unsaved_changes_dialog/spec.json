@@ -1,0 +1,28 @@
+{
+  "description": "Unsaved-changes dialog opens on dirty cmd-w and Escape cancels without losing edits",
+  "fixtures": [
+    {"src": "sample.md", "dst": "sample.md"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_unsaved_modal.txt",
+      "expected": {"modal": "unsaved", "dirty": "true", "tabs": "1"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_cancelled.txt",
+      "expected": {"modal": "", "dirty": "true", "tabs": "1"}
+    },
+    {
+      "type": "file_contains",
+      "path": "{out}/dump.txt",
+      "substr": "UNSAVED_EDIT"
+    },
+    {
+      "type": "file_not_contains",
+      "path": "{ws}/sample.md",
+      "substr": "UNSAVED_EDIT"
+    }
+  ]
+}

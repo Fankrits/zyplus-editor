@@ -1,0 +1,8 @@
+state {out}/s1_md.txt
+key cmd-2
+state {out}/s2_csv.txt
+key cmd-3
+state {out}/s3_json.txt
+key cmd-4
+state {out}/s4_txt.txt
+quit

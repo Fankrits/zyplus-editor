@@ -1,0 +1,23 @@
+{
+  "description": "CSV toggles between table and text modes via cmd-e",
+  "fixtures": [
+    {"src": "sample.csv", "dst": "sample.csv"}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_table.txt",
+      "expected": {"active": "{ws}/sample.csv", "mode": "table"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_text.txt",
+      "expected": {"mode": "text"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_table_again.txt",
+      "expected": {"mode": "table"}
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+key cmd-2
+key cmd-e
+key cmd-b
+wait 100
+state {out}/s1_before_quit.txt
+quit

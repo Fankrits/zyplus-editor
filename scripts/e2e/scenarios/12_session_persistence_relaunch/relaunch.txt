@@ -1,0 +1,2 @@
+state {out}/s2_after_relaunch.txt
+quit

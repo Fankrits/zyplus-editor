@@ -3,61 +3,101 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and package without publishing a GitHub release or bumping the cask"
+        type: boolean
+        required: false
+        default: true
+      tag:
+        description: "Version tag to build (e.g. v0.2.4); defaults to Cargo.toml version"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   release:
+    runs-on: macos-latest
+    timeout-minutes: 60
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            args: --target universal-apple-darwin
-          - platform: ubuntu-22.04
-            args: ""
-          - platform: ubuntu-22.04-arm
-            args: ""
-          - platform: windows-latest
-            args: ""
-
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Linux dependencies
-        if: startsWith(matrix.platform, 'ubuntu-')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
-
-      - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Set version from tag
+      - name: Resolve and validate release version
+        id: meta
         shell: bash
         run: |
-          V="${GITHUB_REF_NAME#v}"
-          # The tag name is text anyone with push access chose; it goes nowhere
-          # near a script until it is known to be a version.
-          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Not a version tag: $GITHUB_REF_NAME" >&2; exit 1; }
-          V="$V" node -e "for (const f of ['package.json','src-tauri/tauri.conf.json']) { const j=JSON.parse(require('fs').readFileSync(f)); j.version=process.env.V; require('fs').writeFileSync(f, JSON.stringify(j,null,2)+'\n'); }"
-          # perl, not sed: the `0,/re/` first-match address is GNU-only and BSD sed
-          # on the macOS runner rejects it, which failed that leg's version stamp.
-          V="$V" perl -0pi -e 's/^version = .*/version = "$ENV{V}"/m' src-tauri/Cargo.toml
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DRY_RUN="${{ inputs.dry_run }}"
+            RAW_TAG="${{ inputs.tag }}"
+            if [ -z "$RAW_TAG" ]; then
+              RAW_TAG="v$(awk -F'"' '/^\[/{sec=$0} /^version = /{ if (sec == "[package]") { print $2; exit } }' Cargo.toml)"
+            fi
+          else
+            DRY_RUN="false"
+            RAW_TAG="${GITHUB_REF_NAME}"
+          fi
 
-      - run: bun install
+          V="${RAW_TAG#v}"
+          # The tag name is text anyone with push access chose; validate it before
+          # passing it to any script or filename.
+          [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "Not a version tag: $RAW_TAG" >&2
+            exit 1
+          }
+          TAG="v${V}"
+          PRERELEASE="false"
+          if [[ "$V" == *-* ]]; then
+            PRERELEASE="true"
+          fi
+
+          if [ "$DRY_RUN" != "true" ] && [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY secret is required for a non-dry-run release." >&2
+            exit 1
+          fi
+
+          {
+            echo "version=$V"
+            echo "tag=$TAG"
+            echo "dry_run=$DRY_RUN"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Stamp version into Cargo.toml and Cargo.lock
+        run: python3 scripts/release/stamp-version.py "${{ steps.meta.outputs.version }}"
+
+      - name: Run release script unit tests
+        run: python3 -m unittest discover -s scripts/release -v
+
+      - name: Build universal macOS binary
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create \
+            target/aarch64-apple-darwin/release/zyplus-gpui \
+            target/x86_64-apple-darwin/release/zyplus-gpui \
+            -output target/release/zyplus-gpui
+          lipo -info target/release/zyplus-gpui
 
       # A stable signature so macOS keeps Files & Folders grants across updates
       # (see scripts/make-signing-cert.sh). Skipped when the secret is absent.
       - name: Import macOS signing identity
-        if: startsWith(matrix.platform, 'macos-')
         env:
           CERT: ${{ secrets.MACOS_SIGNING_CERT }}
           CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
@@ -71,25 +111,114 @@ jobs:
           security unlock-keychain -p "$KC_PASS" "$KC"
           security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -k "$KC_PASS" "$KC" >/dev/null
+          # shellcheck disable=SC2046  # the keychain list is meant to split
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/cert.p12"
-          echo "APPLE_SIGNING_IDENTITY=Zyplus Self-Signed" >> "$GITHUB_ENV"
+          echo "SIGN_IDENTITY=Zyplus Self-Signed" >> "$GITHUB_ENV"
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Bundle and sign Zyplus.app
+        run: |
+          set -euo pipefail
+          DIST="$RUNNER_TEMP/dist"
+          mkdir -p "$DIST"
+          SKIP_BUILD=1 SIGN_IDENTITY="${SIGN_IDENTITY:--}" ./scripts/bundle-macos.sh "$DIST"
+
+      - name: Package DMG and updater tarball
+        run: |
+          set -euo pipefail
+          V="${{ steps.meta.outputs.version }}"
+          DIST="$RUNNER_TEMP/dist"
+          ./scripts/release/make-dmg.sh "$DIST/Zyplus.app" "$DIST/Zyplus_${V}_universal.dmg"
+          # Disable macOS AppleDouble (._*) entries so updater::check_archive_entries accepts every path.
+          COPYFILE_DISABLE=1 tar -C "$DIST" -czf "$DIST/Zyplus.app.tar.gz" Zyplus.app
+          tar -tzf "$DIST/Zyplus.app.tar.gz" | head -n 20
+
+      - name: Sign updater tarball and generate latest.json
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.meta.outputs.version }}"
+          TAG="${{ steps.meta.outputs.tag }}"
+          DRY_RUN="${{ steps.meta.outputs.dry_run }}"
+          DIST="$RUNNER_TEMP/dist"
+
+          cargo build --release --locked --manifest-path scripts/release/signer/Cargo.toml --target-dir target/release-signer
+          SIGNER="target/release-signer/release/zyplus-release-signer"
+
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            "$SIGNER" sign --file "$DIST/Zyplus.app.tar.gz" --out "$DIST/Zyplus.app.tar.gz.sig"
+            PUBKEY_B64="$(python3 -c 'import pathlib, re; print(re.search(r"const PUBKEY_B64:\s*&str\s*=\s*\"([^\"]+)\"", pathlib.Path("src/updater.rs").read_text()).group(1))')"
+            [ -n "$PUBKEY_B64" ] || { echo "Could not read PUBKEY_B64 from src/updater.rs" >&2; exit 1; }
+          else
+            if [ "$DRY_RUN" != "true" ]; then
+              echo "TAURI_SIGNING_PRIVATE_KEY secret is missing on a real release." >&2
+              exit 1
+            fi
+            echo "dry_run without TAURI_SIGNING_PRIVATE_KEY: signing with an ephemeral throwaway key"
+            "$SIGNER" keygen --out-key "$RUNNER_TEMP/dry-run.key" --out-pub "$RUNNER_TEMP/dry-run.pub"
+            "$SIGNER" sign --file "$DIST/Zyplus.app.tar.gz" --out "$DIST/Zyplus.app.tar.gz.sig" --key-file "$RUNNER_TEMP/dry-run.key"
+            PUBKEY_B64="$(tr -d '\r\n' < "$RUNNER_TEMP/dry-run.pub")"
+          fi
+
+          python3 scripts/release/make-manifest.py \
+            --version "$V" \
+            --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
+            --asset "Zyplus.app.tar.gz" \
+            --sig "$DIST/Zyplus.app.tar.gz.sig" \
+            --notes "See the assets below to download and install." \
+            --output "$DIST/latest.json"
+
+          "$SIGNER" check-manifest \
+            --manifest "$DIST/latest.json" \
+            --file "$DIST/Zyplus.app.tar.gz" \
+            --pubkey "$PUBKEY_B64"
+
+      - name: Upload dry-run artifacts
+        if: ${{ steps.meta.outputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@v7
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Zyplus ${{ github.ref_name }}
-          releaseBody: "See the assets below to download and install."
-          releaseDraft: false
-          includeUpdaterJson: true
-          args: ${{ matrix.args }}
+          name: zyplus-${{ steps.meta.outputs.version }}-dry-run
+          path: |
+            ${{ runner.temp }}/dist/Zyplus_${{ steps.meta.outputs.version }}_universal.dmg
+            ${{ runner.temp }}/dist/Zyplus.app.tar.gz
+            ${{ runner.temp }}/dist/Zyplus.app.tar.gz.sig
+            ${{ runner.temp }}/dist/latest.json
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: ${{ steps.meta.outputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.meta.outputs.version }}"
+          TAG="${{ steps.meta.outputs.tag }}"
+          PRERELEASE="${{ steps.meta.outputs.prerelease }}"
+          DIST="$RUNNER_TEMP/dist"
+          ASSETS=(
+            "$DIST/Zyplus_${V}_universal.dmg"
+            "$DIST/Zyplus.app.tar.gz"
+            "$DIST/Zyplus.app.tar.gz.sig"
+            "$DIST/latest.json"
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            REL_FLAGS=(--title "Zyplus $TAG" --notes "See the assets below to download and install.")
+            if [ "$PRERELEASE" = "true" ]; then
+              REL_FLAGS+=(--prerelease)
+            else
+              REL_FLAGS+=(--latest)
+            fi
+            gh release create "$TAG" "${ASSETS[@]}" "${REL_FLAGS[@]}"
+          fi
 
   cask:
     needs: release
+    if: ${{ needs.release.outputs.dry_run != 'true' && needs.release.outputs.prerelease != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -104,18 +233,12 @@ jobs:
           # Without pipefail a failed download leaves shasum hashing empty input,
           # and the hash of nothing would be committed as the release's.
           set -euo pipefail
-          V="${GITHUB_REF_NAME#v}"
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Zyplus_${V}_universal.dmg"
+          V="${{ needs.release.outputs.version }}"
+          TAG="${{ needs.release.outputs.tag }}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/Zyplus_${V}_universal.dmg"
           SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
           sed -i -e "s/^  version .*/  version \"$V\"/" -e "s/^  sha256 .*/  sha256 \"$SHA\"/" Casks/zyplus.rb
-          # main's version files are otherwise never bumped (the build above only
-          # stamps its own checkout), so the web build deployed from main kept
-          # reporting 0.1.0.
-          # Targeted replaces rather than re-serialising the JSON, so main gets a
-          # one-line diff per file instead of reformatting.
-          V="$V" perl -0pi -e 's/^(\s*"version":\s*)"[^"]*"/$1"$ENV{V}"/m' package.json src-tauri/tauri.conf.json
-          V="$V" perl -0pi -e 's/^version = .*/version = "$ENV{V}"/m' src-tauri/Cargo.toml
-          V="$V" perl -0pi -e 's/(name = "zyplus-editor"\nversion = )"[^"]*"/$1"$ENV{V}"/' src-tauri/Cargo.lock
+          python3 scripts/release/stamp-version.py "$V"
           # A re-run of the same tag changes nothing; that is success, not a failed commit.
           if git diff --quiet; then
             echo "Cask and version already at $V"
@@ -123,7 +246,7 @@ jobs:
           fi
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add Casks/zyplus.rb package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+          git add Casks/zyplus.rb Cargo.toml Cargo.lock
           git commit -m "chore(release): zyplus $V"
           # main may have moved since this job checked it out.
           git pull --rebase origin main

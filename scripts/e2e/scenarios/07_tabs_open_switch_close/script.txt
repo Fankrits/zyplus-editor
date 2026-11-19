@@ -1,0 +1,14 @@
+state {out}/s1_init.txt
+key cmd-alt-right
+state {out}/s2_next.txt
+click-row {ws}/sub/nested.md
+state {out}/s3_opened_nested.txt
+key cmd-1
+state {out}/s4_tab1.txt
+key cmd-9
+state {out}/s5_last.txt
+key cmd-alt-left
+state {out}/s6_prev.txt
+key cmd-w
+state {out}/s7_closed.txt
+quit

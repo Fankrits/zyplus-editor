@@ -1,0 +1,69 @@
+{
+  "description": "Sidebar tree navigation (focus/click-row/keys), new file, new folder, rename, delete cancel",
+  "fixtures": [
+    {"src": "tree_workspace", "dst": "."}
+  ],
+  "checks": [
+    {
+      "type": "state_equals",
+      "file": "s1_tree_focus.txt",
+      "expected": {"tree_focused": "true"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s2_nested.txt",
+      "expected": {"active": "{ws}/sub/nested.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s3_new_file.txt",
+      "expected": {"active": "{ws}/Untitled.md"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s4_new_folder_modal.txt",
+      "expected": {"modal": "new-folder"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s5_new_folder_done.txt",
+      "expected": {"modal": ""}
+    },
+    {
+      "type": "dir_exists",
+      "path": "{ws}/newdir"
+    },
+    {
+      "type": "state_equals",
+      "file": "s6_rename_modal.txt",
+      "expected": {"modal": "rename"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s7_renamed.txt",
+      "expected": {"modal": "", "active": "{ws}/renamed.md"}
+    },
+    {
+      "type": "file_not_exists",
+      "path": "{ws}/Untitled.md"
+    },
+    {
+      "type": "file_exists",
+      "path": "{ws}/renamed.md"
+    },
+    {
+      "type": "state_equals",
+      "file": "s8_delete_modal.txt",
+      "expected": {"modal": "delete"}
+    },
+    {
+      "type": "state_equals",
+      "file": "s9_delete_cancelled.txt",
+      "expected": {"modal": ""}
+    },
+    {
+      "type": "file_exists",
+      "path": "{ws}/renamed.md"
+    }
+  ]
+}

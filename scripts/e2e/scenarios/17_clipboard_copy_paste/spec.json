@@ -1,0 +1,19 @@
+{
+  "description": "Clipboard paste, copy, and dumpclip roundtrip",
+  "uses_clipboard": true,
+  "fixtures": [
+    {"src": "empty.md", "dst": "clip.md"}
+  ],
+  "checks": [
+    {
+      "type": "file_equals",
+      "path": "{out}/dump.txt",
+      "expected": "pasted-from-clipboard"
+    },
+    {
+      "type": "file_equals",
+      "path": "{out}/clip.txt",
+      "expected": "pasted-from-clipboard"
+    }
+  ]
+}
