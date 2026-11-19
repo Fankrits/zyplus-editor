@@ -535,4 +535,62 @@ mod tests {
 
         fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn renaming_rejects_collisions_and_invalid_names_without_clobbering() {
+        let dir = scratch("rename-errors");
+        let a = display_join(&dir, "a.md");
+        let b = display_join(&dir, "b.md");
+        fs::write(&a, "alpha").unwrap();
+        fs::write(&b, "beta").unwrap();
+
+        // Collision: must fail and leave both files untouched.
+        let err = rename_path(&a, &b).unwrap_err();
+        assert!(err.contains("already exists"), "got {err}");
+        assert_eq!(fs::read_to_string(&a).unwrap(), "alpha");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "beta");
+
+        // Invalid names: empty, reserved, bad chars.
+        assert!(rename_path(&a, &display_join(&dir, "")).is_err());
+        assert!(rename_path(&a, &display_join(&dir, "CON.md")).is_err());
+        assert!(rename_path(&a, &display_join(&dir, "bad:name.md")).is_err());
+        assert_eq!(fs::read_to_string(&a).unwrap(), "alpha");
+
+        // Folder cannot be moved inside itself.
+        let folder = display_join(&dir, "sub");
+        fs::create_dir_all(&folder).unwrap();
+        let nested = display_join(&folder, "sub");
+        let self_err = rename_path(&folder, &nested).unwrap_err();
+        assert!(self_err.contains("into itself"), "got {self_err}");
+
+        // Folder rename moves its contents on disk.
+        let renamed_folder = display_join(&dir, "renamed-sub");
+        fs::write(display_join(&folder, "note.md"), "inside").unwrap();
+        rename_path(&folder, &renamed_folder).unwrap();
+        assert!(!Path::new(&folder).exists());
+        assert_eq!(
+            fs::read_to_string(display_join(&renamed_folder, "note.md")).unwrap(),
+            "inside"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn renaming_allows_case_only_change_on_macos() {
+        let dir = scratch("rename-case");
+        let lower = display_join(&dir, "note.md");
+        let upper = display_join(&dir, "Note.md");
+        fs::write(&lower, "hello").unwrap();
+
+        rename_path(&lower, &upper).unwrap();
+        let entries: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, vec!["Note.md".to_string()]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
 }

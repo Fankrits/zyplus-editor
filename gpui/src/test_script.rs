@@ -600,6 +600,7 @@ impl Zyplus {
             eprintln!("[script] click-row: no visible row {path:?}");
             return;
         };
+        self.refocus_editor = false;
         window.focus(&self.tree_focus);
         self.select_row(path, &gpui::Modifiers::default(), cx);
         if row.is_folder {
@@ -698,7 +699,8 @@ impl Zyplus {
     }
 
     /// Moves focus to one of the editors (or find-bar fields) by name.
-    pub(crate) fn test_focus(&self, target: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
+    pub(crate) fn test_focus(&mut self, target: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        self.refocus_editor = false;
         let field = match (target, &self.find) {
             ("replace", Some(find)) => Some(find.replace.read(cx).focus_handle(cx)),
             ("query", Some(find)) => Some(find.query.read(cx).focus_handle(cx)),

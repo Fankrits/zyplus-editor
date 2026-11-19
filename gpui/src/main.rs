@@ -154,6 +154,7 @@ Happy writing!
 "#;
 
 struct Tab {
+    id: u64,
     path: String,
     title: String,
     /// The last content known to be on disk.
@@ -277,16 +278,15 @@ impl Searchable {
     }
 }
 
-/// Sends a viewer's edits to the tab for `path`. Deferred, because the edit
+/// Sends a viewer's edits to the tab with `tab_id`. Deferred, because the edit
 /// can come from inside a workspace update (switching modes, replacing text),
 /// and the workspace cannot be updated while it is already being updated.
-fn edit_reporter(workspace: Entity<Zyplus>, path: String) -> Box<dyn Fn(&str, &mut App)> {
+fn edit_reporter(workspace: Entity<Zyplus>, tab_id: u64) -> Box<dyn Fn(&str, &mut App)> {
     Box::new(move |text, cx| {
         let text = text.to_string();
         let workspace = workspace.clone();
-        let path = path.clone();
         cx.defer(move |cx| {
-            let _ = workspace.update(cx, |this, cx| this.tab_edited(&path, text, cx));
+            let _ = workspace.update(cx, |this, cx| this.tab_edited(tab_id, text, cx));
         });
     })
 }
@@ -460,6 +460,7 @@ impl Render for DragGhost {
 
 struct Zyplus {
     focus: FocusHandle,
+    next_tab_id: u64,
     roots: Vec<String>,
     tree: Vec<TreeNode>,
     open_folders: BTreeSet<String>,
@@ -805,6 +806,7 @@ impl Zyplus {
     fn new(cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             focus: cx.focus_handle(),
+            next_tab_id: 1,
             roots: Vec::new(),
             tree: Vec::new(),
             open_folders: BTreeSet::new(),
@@ -983,6 +985,7 @@ impl Zyplus {
         }
         let content = self.tabs[index].content.clone();
         let path = self.tabs[index].path.clone();
+        let tab_id = self.tabs[index].id;
         let theme_name = self.theme_name.clone();
         let charts = self.extension_enabled("chart");
         let mermaid = self.extension_enabled("mermaid");
@@ -999,7 +1002,7 @@ impl Zyplus {
             editor
         });
         rich.update(cx, |editor, _| {
-            editor.on_change = Some(edit_reporter(workspace.clone(), path.clone()));
+            editor.on_change = Some(edit_reporter(workspace.clone(), tab_id));
             editor.on_cancel = Some(cancel_reporter(workspace));
         });
         self.tabs[index].rich = Some(rich);
@@ -1078,13 +1081,14 @@ impl Zyplus {
         };
         let theme_name = self.theme_name.clone();
         let workspace = cx.entity();
-        let tab_path = path.to_string();
+        let tab_id = self.next_tab_id;
+        self.next_tab_id += 1;
 
         let (view, mode) = match kind {
             ViewKind::Csv => {
                 let csv = cx.new(|cx| CsvView::new(path, &content, &theme_name, cx));
                 csv.update(cx, |view, cx| {
-                    view.on_change = Some(edit_reporter(workspace.clone(), tab_path.clone()));
+                    view.on_change = Some(edit_reporter(workspace.clone(), tab_id));
                     if let Some(wanted) = wanted {
                         view.select_mode(wanted, None, cx);
                     }
@@ -1099,7 +1103,7 @@ impl Zyplus {
             ViewKind::Json => {
                 let json = cx.new(|cx| JsonView::new(&content, &theme_name, cx));
                 json.update(cx, |view, cx| {
-                    view.on_change = Some(edit_reporter(workspace.clone(), tab_path.clone()));
+                    view.on_change = Some(edit_reporter(workspace.clone(), tab_id));
                     if let Some(wanted) = wanted {
                         view.set_mode(wanted, cx);
                     }
@@ -1119,7 +1123,7 @@ impl Zyplus {
                     editor
                 });
                 editor.update(cx, |editor, cx| {
-                    editor.on_change = Some(edit_reporter(workspace.clone(), tab_path.clone()));
+                    editor.on_change = Some(edit_reporter(workspace.clone(), tab_id));
                     editor.on_cancel = Some(cancel_reporter(workspace.clone()));
                     editor.set_language(language);
                     cx.notify();
@@ -1129,6 +1133,7 @@ impl Zyplus {
         };
 
         self.tabs.push(Tab {
+            id: tab_id,
             path: path.to_string(),
             title: paths::basename_of(path),
             saved: content.clone(),
@@ -1139,7 +1144,7 @@ impl Zyplus {
             view,
             rich: None,
         });
-        if let Some(index) = self.tabs.iter().position(|tab| tab.path == path) {
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) {
             if self.tabs[index].is_rich() {
                 self.ensure_rich(index, cx);
             }
@@ -1148,8 +1153,8 @@ impl Zyplus {
         self.error = None;
     }
 
-    fn tab_edited(&mut self, path: &str, text: String, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.path == path) {
+    fn tab_edited(&mut self, tab_id: u64, text: String, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
             tab.dirty = text != tab.saved;
             tab.content = text;
         }
@@ -1296,11 +1301,26 @@ impl Zyplus {
 
     /// Rewrites the tabs, the active path, the sidebar selection and cursor,
     /// and the open folders after `old` changed its name or moved somewhere else.
-    fn remap_paths(&mut self, old: &str, new: &str) {
+    fn remap_paths(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
+        let disabled = self.disabled_extensions.clone();
         for tab in &mut self.tabs {
             if paths::is_under(&tab.path, old) {
                 tab.path = remapped_path(&tab.path, old, new);
                 tab.title = paths::basename_of(&tab.path);
+                if let Some(rich) = &tab.rich {
+                    let new_file = std::path::PathBuf::from(&tab.path);
+                    rich.update(cx, |editor, cx| editor.set_file_path(Some(new_file), cx));
+                }
+                if let TabView::Text(editor) = &tab.view {
+                    let new_kind = view_kind::kind_for_path(&tab.path, |id| !disabled.contains(id));
+                    if let ViewKind::Markdown { language } | ViewKind::Text { language } = new_kind {
+                        tab.kind = new_kind;
+                        tab.mode = view_kind::normalize_mode(new_kind, &tab.mode)
+                            .unwrap_or("plain")
+                            .to_string();
+                        editor.update(cx, |editor, _| editor.set_language(language));
+                    }
+                }
             }
         }
         if let Some(active) = self.active.clone() {
@@ -1341,7 +1361,7 @@ impl Zyplus {
             }
             match tree::rename_path(src, &new_path) {
                 Ok(()) => {
-                    self.remap_paths(src, &new_path);
+                    self.remap_paths(src, &new_path, cx);
                     moved = true;
                 }
                 Err(err) => {
@@ -1469,6 +1489,7 @@ impl Zyplus {
                 self.toggle_folder(&id, cx);
             }
         }
+        self.refocus_editor = false;
         window.focus(&self.tree_focus);
         cx.notify();
     }
@@ -1515,14 +1536,14 @@ impl Zyplus {
     }
 
     /// F2 on the cursor row. Project roots cannot be renamed, as in `FileTree.tsx`.
-    fn tree_rename(&mut self, cx: &mut Context<Self>) {
+    fn tree_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.tree_cursor_row() else {
             return;
         };
         if row.is_root {
             return;
         }
-        self.open_rename(&row.id, row.is_folder, cx);
+        self.open_rename(&row.id, row.is_folder, Some(window), cx);
     }
 
     fn tree_up(&mut self, _: &TreeUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -1551,8 +1572,8 @@ impl Zyplus {
         cx.notify();
     }
 
-    fn tree_rename_action(&mut self, _: &TreeRename, _: &mut Window, cx: &mut Context<Self>) {
-        self.tree_rename(cx);
+    fn tree_rename_action(&mut self, _: &TreeRename, window: &mut Window, cx: &mut Context<Self>) {
+        self.tree_rename(window, cx);
     }
 
     /// Cmd-G / Cmd-Shift-G and Shift-Enter in the query: step the open find
@@ -1741,6 +1762,7 @@ impl Zyplus {
         }
         let mut loaded = BTreeSet::new();
         tree::loaded_folder_ids(&self.tree, &mut loaded);
+        loaded.extend(self.open_folders.iter().cloned());
         let mut next = Vec::new();
         for root in self.roots.clone() {
             match tree::read_project_node(&root, &loaded) {
@@ -2208,12 +2230,19 @@ impl Zyplus {
     }
 
     fn export_md(&mut self, path: &str, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.iter().find(|tab| tab.path == path) else {
+        let content = self
+            .tabs
+            .iter()
+            .find(|tab| tab.path == path)
+            .map(|tab| tab.content.clone())
+            .or_else(|| tree::read_text_file(path).ok());
+        let Some(content) = content else {
+            self.error = Some("Could not read that file.".into());
+            cx.notify();
             return;
         };
         let dir = paths::dirname_of(path);
-        let suggested = paths::with_extension(&tab.title, ".md");
-        let content = tab.content.clone();
+        let suggested = paths::with_extension(&paths::basename_of(path), ".md");
         let receiver = cx.prompt_for_new_path(Path::new(&dir), Some(&suggested));
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(target))) = receiver.await {
@@ -2517,7 +2546,13 @@ impl Zyplus {
 
     // ---- rename and delete ----------------------------------------------
 
-    fn open_rename(&mut self, path: &str, is_folder: bool, cx: &mut Context<Self>) {
+    fn open_rename(
+        &mut self,
+        path: &str,
+        is_folder: bool,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
         let name = paths::basename_of(path);
         let theme_name = self.theme_name.clone();
         let input = cx.new(|cx| {
@@ -2528,7 +2563,11 @@ impl Zyplus {
             editor.theme_name = theme_name;
             editor
         });
-        let stem = name.rfind('.').filter(|dot| *dot > 0).unwrap_or(name.len());
+        let stem = if is_folder {
+            name.len()
+        } else {
+            name.rfind('.').filter(|dot| *dot > 0).unwrap_or(name.len())
+        };
         input.update(cx, |editor, cx| editor.select(0..stem, cx));
         let this = cx.entity();
         let for_submit = this.clone();
@@ -2559,12 +2598,16 @@ impl Zyplus {
             }));
         });
         self.dialog_error = None;
-        self.focus_modal = true;
+        self.refocus_editor = false;
         self.modal = Some(Modal::Rename {
             path: path.to_string(),
             is_folder,
             input,
         });
+        match window {
+            Some(window) => self.focus_open_modal(window, cx),
+            None => self.focus_modal = true,
+        }
         cx.notify();
     }
 
@@ -2586,6 +2629,8 @@ impl Zyplus {
         let old_name = paths::basename_of(&path);
         if name == old_name {
             self.modal = None;
+            self.dialog_error = None;
+            self.refocus_editor = true;
             cx.notify();
             return;
         }
@@ -2597,7 +2642,7 @@ impl Zyplus {
                 self.refocus_editor = true;
                 self.dialog_error = None;
                 self.error = None;
-                self.remap_paths(&path, &new_path);
+                self.remap_paths(&path, &new_path, cx);
                 self.refresh_tree(cx);
                 self.persist();
             }
@@ -2683,7 +2728,7 @@ impl Zyplus {
             MenuAction::NewFolder(dir) if dir.is_empty() => self.new_folder(cx),
             MenuAction::NewFolder(dir) => self.new_folder_in(&dir, cx),
             MenuAction::OpenFolder => self.pick_folder(cx, false),
-            MenuAction::Rename(path, is_folder) => self.open_rename(&path, is_folder, cx),
+            MenuAction::Rename(path, is_folder) => self.open_rename(&path, is_folder, Some(window), cx),
             MenuAction::Delete(path, is_folder) => {
                 self.dialog_error = None;
                 self.focus_modal = true;
@@ -3202,6 +3247,7 @@ impl Zyplus {
                     MouseButton::Right,
                     cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                         // Rows stop this event themselves, so it is the empty area here.
+                        this.refocus_editor = false;
                         window.focus(&this.tree_focus);
                         let items = this.tree_area_menu();
                         this.open_menu(
@@ -3310,6 +3356,7 @@ impl Zyplus {
                         .on_mouse_down(MouseButton::Left, {
                             let select_id = row_id.clone();
                             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                this.refocus_editor = false;
                                 window.focus(&this.tree_focus);
                                 this.select_row(&select_id, &event.modifiers, cx);
                             })
@@ -3325,12 +3372,12 @@ impl Zyplus {
                             let double = this.register_row_click(&row_id);
                             if is_folder {
                                 if double && !is_root {
-                                    this.open_rename(&row_id, true, cx);
+                                    this.open_rename(&row_id, true, Some(window), cx);
                                 } else {
                                     this.toggle_folder(&row_id, cx);
                                 }
                             } else if double {
-                                this.open_rename(&row_id, false, cx);
+                                this.open_rename(&row_id, false, Some(window), cx);
                             } else if nav::tree_opens(&file_name, |id| this.extension_enabled(id)) {
                                 this.open_document(&row_id, Some(window), cx);
                             }
@@ -3341,6 +3388,7 @@ impl Zyplus {
                             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
                                 // Stops the empty-area menu from opening over this one.
                                 cx.stop_propagation();
+                                this.refocus_editor = false;
                                 window.focus(&this.tree_focus);
                                 if !this.selected.iter().any(|path| path == &menu_path) {
                                     this.selected = vec![menu_path.clone()];
@@ -4048,6 +4096,12 @@ impl Zyplus {
             .bg(theme.surface)
             .border_1()
             .border_color(theme.border)
+            // The panel must hide the backdrop beneath it: otherwise a press on an
+            // item also hits the backdrop, which closes the menu before the click
+            // finishes and the item never runs.
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
             .children(items);
 
         Some(
@@ -4063,6 +4117,8 @@ impl Zyplus {
                         .top_0()
                         .left_0()
                         .size_full()
+                        // Presses outside the menu only dismiss it, not the rows below.
+                        .occlude()
                         .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
                             this.menu = None;
                             cx.notify();
