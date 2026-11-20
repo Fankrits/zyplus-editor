@@ -7835,7 +7835,7 @@ dependencies = [
 
 [[package]]
 name = "zyplus-gpui"
-version = "0.2.3"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "cocoa 0.26.0",

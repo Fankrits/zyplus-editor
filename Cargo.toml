@@ -1,6 +1,6 @@
 [package]
 name = "zyplus-gpui"
-version = "0.2.3"
+version = "0.4.1"
 edition = "2021"
 description = "Zyplus, a markdown editor that gets out of the way"
 license = "MIT"
@@ -42,7 +42,7 @@ ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
 [package.metadata.bundle]
 name = "Zyplus"
 identifier = "com.fankrits.zyplus-editor"
-version = "0.2.3"
+version = "0.4.1"
 category = "Productivity"
 short_description = "A markdown editor that gets out of the way"
 long_description = "Zyplus is a local-first markdown editor: a project tree, tabs, a rendered preview, and your files stay on your machine."
