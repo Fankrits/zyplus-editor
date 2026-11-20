@@ -254,7 +254,7 @@ jobs:
 
           ### Linux and Windows (experimental)
 
-          If attached below: \`Zyplus_${V}_linux-x86_64.tar.gz\` (x86_64, needs Vulkan, X11 or Wayland, fontconfig) and \`Zyplus_${V}_windows-x86_64.zip\` (extract and run \`zyplus-gpui.exe\`). These are only build- and launch-checked, have no auto-update, and some macOS-only features (PDF export, default-app setting) are missing.
+          If attached below: \`Zyplus_${V}_windows-x64-setup.exe\` (Windows installer), \`Zyplus_${V}_linux-amd64.deb\` (Debian/Ubuntu) and \`Zyplus_${V}_linux-x86_64.AppImage\` (any distro: make it executable and run it). They are only build-, install- and launch-checked, have no auto-update, and some macOS-only features (PDF export, default-app setting) are missing.
 
           ## Other files (you do not need these)
 
@@ -273,8 +273,9 @@ jobs:
             gh release create "$TAG" "${ASSETS[@]}" "${REL_FLAGS[@]}"
           fi
 
-  # Experimental Linux and Windows builds. Only build- and launch-checked (see
-  # ci.yml); no auto-update, so they are not listed in latest.json.
+  # Experimental Linux and Windows installers (.deb + AppImage, setup .exe).
+  # Only build-, install- and launch-checked; no auto-update, so they are not
+  # listed in latest.json.
   experimental:
     name: Experimental ${{ matrix.name }}
     needs: release
@@ -289,14 +290,14 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-22.04
             python: python3
-            ext: tar.gz
           - name: windows-x86_64
             os: windows-latest
             python: python
-            ext: zip
     defaults:
       run:
         shell: bash
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -305,7 +306,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev \
-            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev
+            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev \
+            libvulkan-dev mesa-vulkan-drivers xvfb
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
@@ -313,54 +315,80 @@ jobs:
           key: experimental-${{ matrix.name }}
 
       - name: Stamp version
-        run: ${{ matrix.python }} scripts/release/stamp-version.py "${{ needs.release.outputs.version }}"
+        run: ${{ matrix.python }} scripts/release/stamp-version.py "$VERSION"
 
       - name: Build
         run: cargo build --release --locked
 
-      - name: Package
+      # ---- Linux: .deb and AppImage -------------------------------------
+      - name: Package (.deb, AppImage)
+        if: startsWith(matrix.os, 'ubuntu-')
+        run: ./scripts/release/make-linux-packages.sh "$VERSION" target/release/zyplus-gpui out
+
+      # Install the .deb for real, then launch it and the AppImage under Xvfb
+      # with Mesa's software Vulkan. Each must stay up for 8 seconds.
+      - name: Install and launch the packages
+        if: startsWith(matrix.os, 'ubuntu-')
         run: |
           set -euo pipefail
-          V="${{ needs.release.outputs.version }}"
-          OUT="Zyplus_${V}_${{ matrix.name }}.${{ matrix.ext }}"
-          if [ "${{ matrix.name }}" = "linux-x86_64" ]; then
-            D="Zyplus-${V}-linux-x86_64"
-            mkdir -p "$D"
-            cp target/release/zyplus-gpui "$D/"
-            cp assets/icon.png "$D/zyplus.png"
-            cat > "$D/zyplus.desktop" <<'DESKTOP'
-          [Desktop Entry]
-          Type=Application
-          Name=Zyplus
-          Comment=A markdown editor that gets out of the way
-          Exec=zyplus-gpui %F
-          Icon=zyplus
-          Categories=Utility;TextEditor;
-          MimeType=text/markdown;text/plain;text/csv;application/json;
-          DESKTOP
-            tar -czf "$OUT" "$D"
-          else
-            D="Zyplus-${V}-windows-x86_64"
-            mkdir -p "$D"
-            cp target/release/zyplus-gpui.exe "$D/"
-            7z a -tzip "$OUT" "$D" >/dev/null
-          fi
-          ls -la "$OUT"
-          echo "ASSET=$OUT" >> "$GITHUB_ENV"
+          export HOME="$RUNNER_TEMP/h" TMPDIR="$RUNNER_TEMP/t"
+          mkdir -p "$HOME" "$TMPDIR"
+          sudo -S -p '' apt-get install -y ./out/*.deb
+          dpkg -L zyplus | head
+          cat > "$RUNNER_TEMP/launch.sh" <<'SH'
+          "$@" > "$TMPDIR/app.log" 2>&1 &
+          pid=$!
+          sleep 8
+          if kill -0 "$pid" 2>/dev/null; then echo "alive after 8s: $*"; kill "$pid"; exit 0; fi
+          echo "exited early: $*"; cat "$TMPDIR/app.log"; exit 1
+          SH
+          xvfb-run -a bash "$RUNNER_TEMP/launch.sh" /usr/bin/zyplus-gpui
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a bash "$RUNNER_TEMP/launch.sh" ./out/*.AppImage
 
-      - name: Upload dry-run artifact
+      # ---- Windows: Inno Setup installer --------------------------------
+      - name: Package (setup .exe)
+        if: startsWith(matrix.os, 'windows-')
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          New-Item -ItemType Directory -Force out | Out-Null
+          & $iscc "/DAppVersion=$env:VERSION" "/DSourceExe=$PWD\target\release\zyplus-gpui.exe" "/DOutDir=$PWD\out" "/DOutName=Zyplus_${env:VERSION}_windows-x64-setup" packaging\windows\zyplus.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
+          Get-ChildItem out
+
+      - name: Install and launch the installer
+        if: startsWith(matrix.os, 'windows-')
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem out\*-setup.exe).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'zyplus-install'
+          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
+          $exe = Join-Path $dir 'zyplus-gpui.exe'
+          if (-not (Test-Path $exe)) { throw "installed exe missing: $exe" }
+          $env:USERPROFILE = Join-Path $env:RUNNER_TEMP 'smoke-home'
+          New-Item -ItemType Directory -Force $env:USERPROFILE | Out-Null
+          $app = Start-Process -FilePath $exe -PassThru -RedirectStandardError "$env:RUNNER_TEMP\app.err" -RedirectStandardOutput "$env:RUNNER_TEMP\app.out"
+          Start-Sleep -Seconds 8
+          if ($app.HasExited) { Get-Content "$env:RUNNER_TEMP\app.err"; throw "installed app exited early, code $($app.ExitCode)" }
+          Write-Host "alive after 8s"; Stop-Process -Id $app.Id
+          $un = Join-Path $dir 'unins000.exe'
+          Start-Process -FilePath $un -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES' -Wait
+
+      - name: Upload dry-run artifacts
         if: ${{ needs.release.outputs.dry_run == 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ env.ASSET }}
-          path: ${{ env.ASSET }}
+          name: installers-${{ matrix.name }}
+          path: out/*
           if-no-files-found: error
 
       - name: Attach to the GitHub release
         if: ${{ needs.release.outputs.dry_run != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ needs.release.outputs.tag }}" "$ASSET" --clobber
+        run: gh release upload "${{ needs.release.outputs.tag }}" out/* --clobber
 
   cask:
     needs: release

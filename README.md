@@ -45,7 +45,7 @@ Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux (x86_6
 - **No downloadable JS-bundle extensions:** There is no JavaScript engine or webview; all six extensions above are compiled natively into the binary.
 - **`.mdown` opens as plain text:** `.mdown` is declared in `Info.plist` for Finder associations, while inside the app `.md`, `.markdown`, `.mkd`, and `.txt` open as Markdown.
 - **PDF export uses macOS system fonts only:** `Arial`, `Courier New`, `Arial Unicode`, and `Thonburi`.
-- **Linux and Windows are experimental:** the release workflow attaches an x86_64 `.tar.gz` / `.zip`. CI builds them, runs the unit tests (a few fail there: Thai text in math, Windows path and rename cases) and checks the app launches, but there are no end-to-end tests, no auto-update, and macOS-only features (PDF export, default-app setting, update install) are missing.
+- **Linux and Windows are experimental:** the release workflow attaches a Windows setup `.exe` and a Linux `.deb` / AppImage. CI builds them, runs the unit tests (a few fail there: Thai text in math, Windows path and rename cases) and checks the app launches, but there are no end-to-end tests, no auto-update, and macOS-only features (PDF export, default-app setting, update install) are missing.
 - **No block drag handle** in the rich editor.
 
 ## Install
@@ -72,7 +72,13 @@ Downloads the latest `.dmg`, installs `/Applications/Zyplus.app`, and clears the
 
 ### Linux and Windows (experimental)
 
-Releases also carry `Zyplus_<version>_linux-x86_64.tar.gz` (extract, run `zyplus-gpui`; needs Vulkan plus X11 or Wayland, and fontconfig; a `.desktop` file and icon are included) and `Zyplus_<version>_windows-x86_64.zip` (extract, run `zyplus-gpui.exe`). They are only build- and launch-checked in CI and do not update themselves. Intel Macs are not supported.
+Releases also carry installers you can run directly, with nothing to extract:
+
+- **Windows (x64):** `Zyplus_<version>_windows-x64-setup.exe`. Per-user install by default, Start menu entry, uninstaller.
+- **Debian / Ubuntu:** `Zyplus_<version>_linux-amd64.deb` (`sudo apt install ./Zyplus_<version>_linux-amd64.deb`). It pulls in Vulkan, X11/Wayland and fontconfig.
+- **Any other Linux (x86_64):** `Zyplus_<version>_linux-x86_64.AppImage` (`chmod +x` it and run).
+
+CI installs and launches each of these, but they are not tested beyond that and do not update themselves. Intel Macs are not supported.
 
 ### Manual
 

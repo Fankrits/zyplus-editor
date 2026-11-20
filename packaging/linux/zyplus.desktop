@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Zyplus
+GenericName=Markdown Editor
+Comment=A markdown editor that gets out of the way
+Exec=zyplus-gpui %F
+Icon=zyplus
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/markdown;text/plain;text/csv;text/tab-separated-values;application/json;
+StartupWMClass=zyplus-gpui
