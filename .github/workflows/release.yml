@@ -238,10 +238,29 @@ jobs:
             "$DIST/latest.json"
           )
 
+          # The release page lists the updater files next to the DMG; say which one is for people.
+          NOTES="$DIST/release-notes.md"
+          cat > "$NOTES" <<EOF
+          ## Install (Apple Silicon Mac)
+
+          Download **Zyplus_${V}_aarch64.dmg**, open it, and drag **Zyplus** into **Applications**.
+
+          The app is not notarized by Apple yet, so macOS may say it cannot be verified. Right-click the app, choose **Open**, then **Open** again (first launch only). Or run:
+          \`xattr -dr com.apple.quarantine /Applications/Zyplus.app\`
+
+          Or from a terminal, which skips that prompt: \`curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | ZYPLUS_VERSION=${V} sh\`
+
+          Intel Macs, Windows and Linux are not supported.
+
+          ## Other files (you do not need these)
+
+          \`Zyplus.app.tar.gz\`, \`.sig\` and \`latest.json\` are what the in-app updater downloads and verifies. "Source code" is added by GitHub.
+          EOF
+
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
-            REL_FLAGS=(--title "Zyplus $TAG" --notes "See the assets below to download and install.")
+            REL_FLAGS=(--title "Zyplus $TAG" --notes-file "$NOTES")
             if [ "$PRERELEASE" = "true" ]; then
               REL_FLAGS+=(--prerelease)
             else
