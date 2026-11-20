@@ -250,7 +250,11 @@ jobs:
 
           Or from a terminal, which skips that prompt: \`curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/install.sh | ZYPLUS_VERSION=${V} sh\`
 
-          Intel Macs, Windows and Linux are not supported.
+          Intel Macs are not supported.
+
+          ### Linux and Windows (experimental)
+
+          If attached below: \`Zyplus_${V}_linux-x86_64.tar.gz\` (x86_64, needs Vulkan, X11 or Wayland, fontconfig) and \`Zyplus_${V}_windows-x86_64.zip\` (extract and run \`zyplus-gpui.exe\`). These are only build- and launch-checked, have no auto-update, and some macOS-only features (PDF export, default-app setting) are missing.
 
           ## Other files (you do not need these)
 
@@ -268,6 +272,95 @@ jobs:
             fi
             gh release create "$TAG" "${ASSETS[@]}" "${REL_FLAGS[@]}"
           fi
+
+  # Experimental Linux and Windows builds. Only build- and launch-checked (see
+  # ci.yml); no auto-update, so they are not listed in latest.json.
+  experimental:
+    name: Experimental ${{ matrix.name }}
+    needs: release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            python: python3
+            ext: tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            python: python
+            ext: zip
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.os, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libfontconfig1-dev libfreetype6-dev libvulkan-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: experimental-${{ matrix.name }}
+
+      - name: Stamp version
+        run: ${{ matrix.python }} scripts/release/stamp-version.py "${{ needs.release.outputs.version }}"
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          V="${{ needs.release.outputs.version }}"
+          OUT="Zyplus_${V}_${{ matrix.name }}.${{ matrix.ext }}"
+          if [ "${{ matrix.name }}" = "linux-x86_64" ]; then
+            D="Zyplus-${V}-linux-x86_64"
+            mkdir -p "$D"
+            cp target/release/zyplus-gpui "$D/"
+            cp assets/icon.png "$D/zyplus.png"
+            cat > "$D/zyplus.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Zyplus
+          Comment=A markdown editor that gets out of the way
+          Exec=zyplus-gpui %F
+          Icon=zyplus
+          Categories=Utility;TextEditor;
+          MimeType=text/markdown;text/plain;text/csv;application/json;
+          DESKTOP
+            tar -czf "$OUT" "$D"
+          else
+            D="Zyplus-${V}-windows-x86_64"
+            mkdir -p "$D"
+            cp target/release/zyplus-gpui.exe "$D/"
+            7z a -tzip "$OUT" "$D" >/dev/null
+          fi
+          ls -la "$OUT"
+          echo "ASSET=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload dry-run artifact
+        if: ${{ needs.release.outputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+      - name: Attach to the GitHub release
+        if: ${{ needs.release.outputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ needs.release.outputs.tag }}" "$ASSET" --clobber
 
   cask:
     needs: release
