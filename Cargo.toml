@@ -16,7 +16,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 pdf-writer = "0.15.0"
 rustybuzz = "0.20"
 subsetter = "0.2.6"
-base64 = "0.22"
+base64 = "0.23"
 minisign-verify = "0.3"
 unicode-segmentation = "1.13"
 mermaid-svg = "0.7"
@@ -26,7 +26,7 @@ ratex-layout = { version = "0.1.16", default-features = false }
 ratex-svg = { version = "0.1.16", default-features = false, features = ["standalone", "embed-fonts"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cocoa = "0.26"
+cocoa = "0.27"
 objc = "0.2"
 # LaunchServices default-app claiming (os.rs).
 core-foundation = "0.10"
@@ -59,4 +59,4 @@ osx_info_plist_exts = ["bundle/macos-document-types.plist"]
 
 [dev-dependencies]
 minisign = "0.10"
-resvg = { version = "0.45", default-features = false }
+resvg = { version = "0.50", default-features = false }
