@@ -25,7 +25,7 @@ use gpui::{
     Window,
 };
 
-use crate::editor::{Editor, FONT_SIZE, MONO_FONT};
+use crate::editor::{mono_font, Editor, FONT_SIZE};
 use crate::theme::Theme;
 
 // ---------------------------------------------------------------------------
@@ -1094,7 +1094,7 @@ impl CsvView {
             .px_2()
             .rounded_full()
             .text_size(px(12.0))
-            .font_family(MONO_FONT);
+            .font_family(mono_font());
         if active {
             button = button.bg(theme.accent_soft).text_color(theme.accent);
         } else if enabled {
@@ -1323,7 +1323,7 @@ impl Render for CsvView {
             .bg(theme.bg)
             .text_color(theme.fg)
             .text_size(px(FONT_SIZE))
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             // The table toolbar belongs to the table only; the Text view has none.
             .children((self.mode == Mode::Table).then(|| self.render_toolbar(theme, cx)))
             .when_some(error, |this, message| {

@@ -342,6 +342,7 @@ impl Zyplus {
         &mut self,
         theme: &Theme,
         viewport: gpui::Size<Pixels>,
+        chrome: &window_chrome::Chrome,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         if let Some(Err(message)) = self.fullscreen.as_mut().map(|v| v.ensure_image(theme)) {
@@ -393,38 +394,74 @@ impl Zyplus {
         let close = tool("chart-close", "cancel01")
             .on_click(cx.listener(|this, _, _, cx| this.close_fullscreen(cx)));
 
+        let close_entity = cx.entity().downgrade();
+        let win_controls =
+            window_chrome::window_controls(chrome, theme, "fullscreen", move |window, cx| {
+                let should_close = close_entity
+                    .update(cx, |this, cx| {
+                        let ok = this.confirm_quit(window, cx);
+                        if !ok {
+                            this.quitting = true;
+                            this.fullscreen = None;
+                        }
+                        ok
+                    })
+                    .unwrap_or(true);
+                if should_close {
+                    window.remove_window();
+                }
+            });
+
         let bar = div()
             .h(px(TOP_BAR_H))
             .flex_shrink_0()
             .flex()
+            .flex_row()
             .items_center()
-            .gap_1()
-            // Room for the traffic lights, which float over the content.
-            .pl(px(84.0))
-            .pr_3()
             .border_b_1()
             .border_color(theme.border)
-            .window_control_area(WindowControlArea::Drag)
+            .when(chrome.os == platform::Os::Mac, |el| {
+                el.window_control_area(WindowControlArea::Drag)
+            })
             .child(
-                div()
-                    .flex_1()
-                    .text_size(px(13.0))
-                    .text_color(fg)
-                    .child(title),
+                window_chrome::drag_area(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        // Room for the traffic lights on macOS, normal padding elsewhere.
+                        .pl(px(chrome.fullscreen_left_pad())),
+                    chrome,
+                )
+                .text_size(px(13.0))
+                .text_color(fg)
+                .child(title),
             )
-            .child(zoom_out)
             .child(
                 div()
-                    .w(px(48.0))
                     .flex()
-                    .justify_center()
-                    .text_size(px(12.0))
-                    .text_color(muted)
-                    .child(format!("{}%", view.percent())),
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .pr_3()
+                    .child(zoom_out)
+                    .child(
+                        div()
+                            .w(px(48.0))
+                            .flex()
+                            .justify_center()
+                            .text_size(px(12.0))
+                            .text_color(muted)
+                            .child(format!("{}%", view.percent())),
+                    )
+                    .child(zoom_in)
+                    .child(fit)
+                    .child(close),
             )
-            .child(zoom_in)
-            .child(fit)
-            .child(close);
+            .children(win_controls);
 
         let surface = div()
             .id("chart-viewer-canvas")

@@ -22,7 +22,7 @@ use gpui::{
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::chart;
-use crate::editor::MONO_FONT;
+use crate::editor::mono_font;
 use crate::highlight::{self, TokenKind};
 use crate::theme::Theme;
 
@@ -720,7 +720,7 @@ fn source_card(label: impl Into<SharedString>, text: &str, theme: &Theme) -> Div
             div()
                 .w_full()
                 .p_3()
-                .font_family(MONO_FONT)
+                .font_family(mono_font())
                 .text_size(px(12.5))
                 .text_color(theme.code)
                 .child(SharedString::from(if text.is_empty() {
@@ -814,7 +814,7 @@ fn code_block(lang: &str, text: &str, theme: &Theme) -> Div {
         div()
             .w_full()
             .p_3()
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.5))
             .text_color(theme.code)
             .child(body),

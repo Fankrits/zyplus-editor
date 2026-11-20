@@ -28,10 +28,31 @@ SCENARIOS_DIR = E2E_ROOT / "scenarios"
 class ScenarioResult:
     name: str
     description: str
-    status: str  # PASS, FAIL, XFAIL, XPASS
+    status: str  # PASS, FAIL, XFAIL, XPASS, SKIP
     duration_s: float
     message: str = ""
     xfail_reason: str | None = None
+
+
+def current_platform() -> str:
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "win32":
+        return "windows"
+    return sys.platform
+
+
+def app_data_for(platform: str, home_dir: Path) -> tuple[Path, dict[str, str]]:
+    """Matches src/paths.rs::app_data_dir_for and returns isolation env vars."""
+    if platform == "macos":
+        return home_dir / "Library" / "Application Support", {}
+    if platform == "windows":
+        data = home_dir / "AppData" / "Roaming"
+        return data, {"APPDATA": str(data), "USERPROFILE": str(home_dir)}
+    data = home_dir / ".local" / "share"
+    return data, {"XDG_DATA_HOME": str(data)}
 
 
 def parse_state_file(path: Path) -> dict[str, str]:
@@ -100,19 +121,23 @@ def run_app_once(
     binary: Path,
     home_dir: Path,
     tmp_dir: Path,
-    shim_bin_dir: Path,
+    shim_bin_dir: Path | None,
     script_path: Path | None,
     cli_args: list[str],
     log_path: Path,
     timeout_s: int,
     winid_bin: Path | None,
+    extra_env: dict[str, str] | None = None,
     second_launch: dict[str, Any] | None = None,
     vars_map: dict[str, str] | None = None,
 ) -> tuple[int, str, list[str]]:
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
     env["TMPDIR"] = str(tmp_dir)
-    env["PATH"] = f"{shim_bin_dir}:{env.get('PATH', '')}"
+    if extra_env:
+        env.update(extra_env)
+    if shim_bin_dir is not None:
+        env["PATH"] = f"{shim_bin_dir}:{env.get('PATH', '')}"
     if script_path is not None:
         env["ZYPLUS_TEST_SCRIPT"] = str(script_path)
     else:
@@ -315,6 +340,17 @@ def run_scenario(
     name = scenario_dir.name
     description = spec.get("description", "")
     xfail_reason = spec.get("xfail")
+    platform = current_platform()
+
+    platforms = spec.get("platforms")
+    if platforms is not None and platform not in platforms:
+        return ScenarioResult(
+            name=name,
+            description=description,
+            status="SKIP",
+            duration_s=0.0,
+            message=f"only runs on {', '.join(platforms)} (current: {platform})",
+        )
 
     # Keep scratch path short so $TMPDIR/zyplus-gpui-<user>.sock stays < 100 bytes.
     run_dir = session_root / f"s{idx}"
@@ -322,21 +358,24 @@ def run_scenario(
     tmp_dir = run_dir / "t"
     ws_dir = run_dir / "w"
     out_dir = run_dir / "o"
-    shim_dir = run_dir / "b"
     shots_dir = out_dir / "shots"
-    app_support = home_dir / "Library" / "Application Support"
+    app_data, extra_env = app_data_for(platform, home_dir)
 
-    for d in (home_dir, tmp_dir, ws_dir, out_dir, shim_dir, app_support):
+    for d in (home_dir, tmp_dir, ws_dir, out_dir, app_data):
         d.mkdir(parents=True, exist_ok=True)
 
-    write_open_shim(shim_dir, home_dir, tmp_dir)
+    shim_dir: Path | None = None
+    if platform == "macos":
+        shim_dir = run_dir / "b"
+        write_open_shim(shim_dir, home_dir, tmp_dir)
 
     vars_map = {
         "home": str(home_dir),
         "tmp": str(tmp_dir),
         "ws": str(ws_dir),
         "out": str(out_dir),
-        "app_support": str(app_support),
+        "app_data": str(app_data),
+        "app_support": str(app_data),
     }
 
     # Copy fixtures into workspace.
@@ -359,7 +398,7 @@ def run_scenario(
     # Optional initial session.json.
     session_template = scenario_dir / "session.json"
     if session_template.is_file():
-        session_dir = app_support / "Zyplus-session"
+        session_dir = app_data / "Zyplus-session"
         session_dir.mkdir(parents=True, exist_ok=True)
         session_text = substitute(
             session_template.read_text(encoding="utf-8"), vars_map
@@ -391,6 +430,7 @@ def run_scenario(
             log_path=out_dir / "run1.log",
             timeout_s=timeout_s,
             winid_bin=winid_bin,
+            extra_env=extra_env,
             second_launch=spec.get("second_launch"),
             vars_map=vars_map,
         )
@@ -422,6 +462,7 @@ def run_scenario(
                 log_path=out_dir / "run2.log",
                 timeout_s=timeout_s,
                 winid_bin=winid_bin,
+                extra_env=extra_env,
             )
             errs.extend(extra2)
             if rc2 != 0:
@@ -472,7 +513,7 @@ def write_report(report_path: Path, results: list[ScenarioResult], total_s: floa
     report_path.parent.mkdir(parents=True, exist_ok=True)
     if report_path.suffix.lower() == ".xml":
         failures = sum(1 for r in results if r.status in ("FAIL", "XPASS"))
-        skipped = sum(1 for r in results if r.status == "XFAIL")
+        skipped = sum(1 for r in results if r.status in ("XFAIL", "SKIP"))
         suite = ET.Element(
             "testsuite",
             name="zyplus-e2e",
@@ -491,15 +532,20 @@ def write_report(report_path: Path, results: list[ScenarioResult], total_s: floa
             elif r.status == "XFAIL":
                 sk = ET.SubElement(tc, "skipped", message=r.xfail_reason or "xfail")
                 sk.text = r.message
+            elif r.status == "SKIP":
+                sk = ET.SubElement(tc, "skipped", message=r.message or "skipped")
+                sk.text = r.message
         tree = ET.ElementTree(suite)
         ET.indent(tree, space="  ")
         tree.write(report_path, encoding="utf-8", xml_declaration=True)
     else:
         payload = {
+            "platform": current_platform(),
             "total": len(results),
             "passed": sum(1 for r in results if r.status == "PASS"),
             "failed": sum(1 for r in results if r.status in ("FAIL", "XPASS")),
             "xfailed": sum(1 for r in results if r.status == "XFAIL"),
+            "skipped": sum(1 for r in results if r.status == "SKIP"),
             "duration_s": round(total_s, 3),
             "scenarios": [
                 {
@@ -553,7 +599,12 @@ def main() -> int:
         for s in scenarios:
             spec = json.loads((s / "spec.json").read_text(encoding="utf-8"))
             xf = f" [xfail: {spec['xfail']}]" if spec.get("xfail") else ""
-            print(f"{s.name:<34} {spec.get('description', '')}{xf}")
+            plat = (
+                f" [platforms: {', '.join(spec['platforms'])}]"
+                if spec.get("platforms")
+                else ""
+            )
+            print(f"{s.name:<34} {spec.get('description', '')}{plat}{xf}")
         return 0
 
     if not scenarios:
@@ -577,8 +628,17 @@ def main() -> int:
     shutil.copy2(src_bin, copied_bin)
     copied_bin.chmod(0o755)
 
+    platform = current_platform()
+    shots_enabled = args.shots
     winid_bin: Path | None = None
-    if args.shots:
+    if shots_enabled and platform != "macos":
+        print(
+            f"Note: --shots is macOS-only (uses tools/winid.swift and screencapture); "
+            f"ignoring --shots on {platform}.",
+            file=sys.stderr,
+        )
+        shots_enabled = False
+    elif shots_enabled:
         winid_src = REPO_ROOT / "tools" / "winid.swift"
         if winid_src.is_file():
             winid_bin = session_root / "winid"
@@ -600,7 +660,7 @@ def main() -> int:
     if jobs == 1:
         for i, sc in enumerate(scenarios, start=1):
             res = run_scenario(
-                i, sc, session_root, copied_bin, args.shots, winid_bin, args.keep, clipboard_lock
+                i, sc, session_root, copied_bin, shots_enabled, winid_bin, args.keep, clipboard_lock
             )
             results.append(res)
     else:
@@ -612,7 +672,7 @@ def main() -> int:
                     sc,
                     session_root,
                     copied_bin,
-                    args.shots,
+                    shots_enabled,
                     winid_bin,
                     args.keep,
                     clipboard_lock,
@@ -634,8 +694,10 @@ def main() -> int:
     passed = sum(1 for r in results if r.status == "PASS")
     failed = sum(1 for r in results if r.status in ("FAIL", "XPASS"))
     xfailed = sum(1 for r in results if r.status == "XFAIL")
+    skipped = sum(1 for r in results if r.status == "SKIP")
+    skip_part = f" | SKIP: {skipped}" if skipped else ""
     print(
-        f"Total: {len(results)} | PASS: {passed} | FAIL: {failed} | XFAIL: {xfailed} | Time: {total_s:.2f}s"
+        f"Total: {len(results)} | PASS: {passed} | FAIL: {failed} | XFAIL: {xfailed}{skip_part} | Time: {total_s:.2f}s"
     )
 
     if args.report:

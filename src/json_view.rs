@@ -25,7 +25,7 @@ use gpui::{
 };
 
 use crate::app_icon;
-use crate::editor::{Editor, MONO_FONT};
+use crate::editor::{mono_font, Editor};
 use crate::theme::Theme;
 
 // ---------------------------------------------------------------------------
@@ -1867,7 +1867,7 @@ impl JsonView {
             .gap_1()
             .pl(px(8.0 + row.depth as f32 * INDENT_W))
             .pr_2()
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(13.0))
             .when(row.matched, |el| el.bg(theme.accent_soft))
             .hover(|s| s.bg(theme.hover))
@@ -1895,7 +1895,7 @@ impl JsonView {
             .flex()
             .flex_row()
             .items_center()
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_size(px(12.0))
             .border_b_1()
             .border_color(theme.border)

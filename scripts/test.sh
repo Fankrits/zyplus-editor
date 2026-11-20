@@ -12,7 +12,7 @@
 #   unit    Run Rust unit tests (cargo test)
 #   build   Build release binary and verify it is executable
 #   bundle  Assemble Zyplus.app and verify Info.plist + codesign (macOS only)
-#   e2e     Build debug binary and run scripts/e2e/run.py (macOS only)
+#   e2e     Build debug binary and run scripts/e2e/run.py (macOS and Linux)
 #   quick   Run: fmt lint unit
 #   all     Run: fmt lint unit build bundle e2e
 
@@ -51,7 +51,7 @@ Stages:
   unit    Run Rust unit tests (cargo test)
   build   Build release binary and verify it exists/is executable
   bundle  Run scripts/bundle-macos.sh and verify Info.plist & codesign (macOS only)
-  e2e     Build debug binary and run scripts/e2e/run.py (macOS only)
+  e2e     Build debug binary and run scripts/e2e/run.py (macOS and Linux)
   quick   Run: fmt lint unit
   all     Run: fmt lint unit build bundle e2e
 
@@ -262,8 +262,8 @@ print(
 
 run_e2e() {
   header "e2e" "Debug build + scripts/e2e/run.py"
-  if [ "$OS_NAME" != "Darwin" ]; then
-    echo "SKIP: e2e stage only runs on macOS (current OS: $OS_NAME)"
+  if [ "$OS_NAME" != "Darwin" ] && [ "$OS_NAME" != "Linux" ]; then
+    echo "SKIP: e2e stage only runs on macOS and Linux (current OS: $OS_NAME)"
     record_result "e2e" "SKIP"
     return
   fi
@@ -274,7 +274,12 @@ run_e2e() {
   fi
 
   local debug_bin="$TARGET_DIR/debug/zyplus-gpui"
-  if python3 "$REPO_ROOT/scripts/e2e/run.py" --bin "$debug_bin" ${E2E_ARGS[@]+"${E2E_ARGS[@]}"}; then
+  local e2e_cmd=(python3 "$REPO_ROOT/scripts/e2e/run.py" --bin "$debug_bin" ${E2E_ARGS[@]+"${E2E_ARGS[@]}"})
+  if [ "$OS_NAME" = "Linux" ] && [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+    e2e_cmd=(xvfb-run -a -s "-screen 0 1280x800x24" "${e2e_cmd[@]}")
+  fi
+
+  if "${e2e_cmd[@]}"; then
     record_result "e2e" "PASS"
   else
     record_result "e2e" "FAIL"

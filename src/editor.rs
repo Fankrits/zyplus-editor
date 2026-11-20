@@ -23,8 +23,8 @@ use gpui::prelude::*;
 use gpui::{
     actions, div, fill, point, px, relative, rgba, size, App, Bounds, ClipboardItem, Context,
     CursorStyle, Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, FocusHandle,
-    Focusable, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, KeyBinding,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    Focusable, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ScrollWheelEvent, SharedString, Style, TextRun, UTF16Selection, Window, WindowTextSystem,
 };
 
@@ -37,8 +37,51 @@ pub const FONT_SIZE: f32 = 14.0;
 pub const LINE_HEIGHT: f32 = 22.0;
 pub const PAD_X: f32 = 20.0;
 pub const PAD_Y: f32 = 14.0;
-/// Menlo ships on every Mac; the fallbacks cover Linux and Windows.
-pub const MONO_FONT: &str = "Menlo";
+/// Monospace families to look for, best first. Menlo ships on every Mac. gpui
+/// has no generic `monospace` family off macOS and falls back to a PROPORTIONAL
+/// sans font for an unknown name, which breaks column-aligned code, so the
+/// installed family is picked once at startup (`init_mono_font`).
+#[cfg(target_os = "macos")]
+const MONO_CANDIDATES: &[&str] = &["Menlo", "Monaco", "Courier New"];
+#[cfg(target_os = "windows")]
+const MONO_CANDIDATES: &[&str] = &["Consolas", "Cascadia Mono", "Courier New"];
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const MONO_CANDIDATES: &[&str] = &[
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Noto Sans Mono",
+    "Ubuntu Mono",
+    "Cousine",
+    "Hack",
+    "Source Code Pro",
+    "Fira Mono",
+];
+
+static MONO_FONT_CHOICE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// The monospace family used for code, tables and the plain editor.
+pub fn mono_font() -> &'static str {
+    MONO_FONT_CHOICE
+        .get()
+        .copied()
+        .unwrap_or(MONO_CANDIDATES[0])
+}
+
+/// First candidate present in `available` (family names from the text
+/// system); the platform's first choice when none is installed.
+pub fn pick_mono_font(available: &[String]) -> &'static str {
+    MONO_CANDIDATES
+        .iter()
+        .copied()
+        .find(|candidate| available.iter().any(|name| name == candidate))
+        .unwrap_or(MONO_CANDIDATES[0])
+}
+
+/// Picks the monospace family once; call at startup with
+/// `cx.text_system().all_font_names()`.
+pub fn init_mono_font(available: &[String]) {
+    let _ = MONO_FONT_CHOICE.set(pick_mono_font(available));
+}
 
 /// Width of the caret bar.
 const CARET_WIDTH: f32 = 1.5;
@@ -84,23 +127,13 @@ actions!(
     ]
 );
 
-/// Key bindings for the navigation keys both editors share: Cmd-Up/Down move
-/// to the document start/end, and Cmd-Left/Right to the visual row's start/end
-/// (the Home/End actions). Single-line inputs get the Cmd-Left/Right pair only.
+/// Key bindings for the navigation keys both editors share: Cmd-Up/Down and
+/// Cmd-Left/Right on macOS, or Ctrl-Home/End off macOS. Single-line inputs
+/// keep only the horizontal line-edge actions.
 pub fn bind_nav_keys(cx: &mut App) {
-    for context in ["Editor", "RichEditor"] {
-        let c = Some(context);
-        cx.bind_keys([
-            KeyBinding::new("cmd-up", DocStart, c),
-            KeyBinding::new("cmd-down", DocEnd, c),
-            KeyBinding::new("shift-cmd-up", SelectDocStart, c),
-            KeyBinding::new("shift-cmd-down", SelectDocEnd, c),
-            KeyBinding::new("cmd-left", Home, c),
-            KeyBinding::new("cmd-right", End, c),
-            KeyBinding::new("shift-cmd-left", SelectHome, c),
-            KeyBinding::new("shift-cmd-right", SelectEnd, c),
-        ]);
-    }
+    cx.bind_keys(crate::keymap::editor_nav_bindings(
+        crate::platform::Os::current(),
+    ));
 }
 
 type Snapshot = (String, Range<usize>);
@@ -1818,7 +1851,7 @@ impl Render for Editor {
             .bg(theme.bg)
             .text_size(px(FONT_SIZE))
             .line_height(px(LINE_HEIGHT))
-            .font_family(MONO_FONT)
+            .font_family(mono_font())
             .text_color(theme.fg)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -2000,5 +2033,20 @@ mod tests {
         assert_eq!(prev_word(text, 0), 0);
         assert_eq!(next_word("ab\ncd", 2), 3);
         assert_eq!(prev_word("ab\ncd", 3), 2);
+    }
+
+    #[test]
+    fn mono_font_prefers_the_first_installed_candidate() {
+        let installed = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        // Nothing relevant installed: the platform's first choice.
+        assert_eq!(pick_mono_font(&installed(&["Arial"])), MONO_CANDIDATES[0]);
+        // Only a later candidate installed: that one wins.
+        let last = *MONO_CANDIDATES.last().unwrap();
+        assert_eq!(pick_mono_font(&installed(&["Arial", last])), last);
+        // Both installed: candidate order, not font-list order.
+        assert_eq!(
+            pick_mono_font(&installed(&[last, MONO_CANDIDATES[0]])),
+            MONO_CANDIDATES[0]
+        );
     }
 }

@@ -37,12 +37,12 @@ use gpui::{
     actions, div, fill, point, px, quad, size, transparent_black, App, BorderStyle, Bounds,
     ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, FocusHandle, Focusable, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
-    InspectorElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, Rgba, ScrollWheelEvent, StrikethroughStyle, Style,
-    TextRun, UTF16Selection, UnderlineStyle, Window, WindowTextSystem,
+    InspectorElementId, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, Pixels, Point, Rgba, ScrollWheelEvent, StrikethroughStyle, Style, TextRun,
+    UTF16Selection, UnderlineStyle, Window, WindowTextSystem,
 };
 
-use crate::editor::{self, Scroll, MONO_FONT};
+use crate::editor::{self, mono_font, Scroll};
 use crate::highlight::{self, TokenKind};
 use crate::rich_blocks::{self, Action, Button, Hover, Widget, WidgetKind};
 use crate::rich_model::{
@@ -668,53 +668,7 @@ impl RichEditor {
     /// Registers every key binding of this editor under [`KEY_CONTEXT`]. The
     /// navigation and clipboard keys reuse the plain editor's actions.
     pub fn bind_keys(cx: &mut App) {
-        let c = Some(KEY_CONTEXT);
-        cx.bind_keys([
-            KeyBinding::new("backspace", editor::Backspace, c),
-            KeyBinding::new("delete", editor::Delete, c),
-            KeyBinding::new("enter", editor::Enter, c),
-            KeyBinding::new("escape", editor::Cancel, c),
-            KeyBinding::new("left", editor::Left, c),
-            KeyBinding::new("right", editor::Right, c),
-            KeyBinding::new("up", editor::Up, c),
-            KeyBinding::new("down", editor::Down, c),
-            KeyBinding::new("home", editor::Home, c),
-            KeyBinding::new("end", editor::End, c),
-            KeyBinding::new("shift-left", editor::SelectLeft, c),
-            KeyBinding::new("shift-right", editor::SelectRight, c),
-            KeyBinding::new("shift-up", editor::SelectUp, c),
-            KeyBinding::new("shift-down", editor::SelectDown, c),
-            KeyBinding::new("shift-home", editor::SelectHome, c),
-            KeyBinding::new("shift-end", editor::SelectEnd, c),
-            KeyBinding::new("alt-left", editor::WordLeft, c),
-            KeyBinding::new("alt-right", editor::WordRight, c),
-            KeyBinding::new("shift-alt-left", editor::SelectWordLeft, c),
-            KeyBinding::new("shift-alt-right", editor::SelectWordRight, c),
-            KeyBinding::new("cmd-a", editor::SelectAll, c),
-            KeyBinding::new("cmd-c", editor::Copy, c),
-            KeyBinding::new("cmd-x", editor::Cut, c),
-            KeyBinding::new("cmd-v", editor::Paste, c),
-            KeyBinding::new("cmd-z", editor::Undo, c),
-            KeyBinding::new("cmd-shift-z", editor::Redo, c),
-            KeyBinding::new("tab", Indent, c),
-            KeyBinding::new("shift-tab", Outdent, c),
-            KeyBinding::new("cmd-b", ToggleBold, c),
-            KeyBinding::new("cmd-i", ToggleItalic, c),
-            KeyBinding::new("cmd-shift-x", ToggleStrike, c),
-            KeyBinding::new("cmd-shift-m", ToggleCode, c),
-            KeyBinding::new("cmd-k", InsertLink, c),
-            KeyBinding::new("cmd-alt-0", SetParagraph, c),
-            KeyBinding::new("cmd-alt-1", Heading1, c),
-            KeyBinding::new("cmd-alt-2", Heading2, c),
-            KeyBinding::new("cmd-alt-3", Heading3, c),
-            KeyBinding::new("cmd-alt-4", Heading4, c),
-            KeyBinding::new("cmd-alt-5", Heading5, c),
-            KeyBinding::new("cmd-alt-6", Heading6, c),
-            KeyBinding::new("cmd-shift-8", BulletList, c),
-            KeyBinding::new("cmd-shift-7", OrderedList, c),
-            KeyBinding::new("cmd-shift-9", TaskList, c),
-            KeyBinding::new("cmd-shift-.", BlockQuote, c),
-        ]);
+        cx.bind_keys(crate::keymap::rich_bindings(crate::platform::Os::current()));
     }
 
     // ---- public surface (same shape as `Editor`) -------------------------
@@ -1775,7 +1729,7 @@ impl RichEditor {
         Frame {
             ts: window.text_system().clone(),
             body: window.text_style().font(),
-            mono: gpui::font(MONO_FONT),
+            mono: gpui::font(mono_font()),
             theme: Theme::for_name(&self.theme_name, window.appearance()),
             col_left: ((width - col_w) / 2.0).max(0.0),
             col_w,

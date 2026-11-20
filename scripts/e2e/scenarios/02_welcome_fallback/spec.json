@@ -2,7 +2,7 @@
   "description": "Welcome screen shown when first-run notes folder cannot be created",
   "pre_create_files": [
     {
-      "path": "{app_support}/Zyplus",
+      "path": "{app_data}/Zyplus",
       "content": "block directory creation"
     }
   ],

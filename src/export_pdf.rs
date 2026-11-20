@@ -7,7 +7,7 @@
 //! rustybuzz, so Thai and other non-Latin scripts render with their marks in
 //! place. Nothing here uses a webview or an external binary.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Write as _;
@@ -22,6 +22,7 @@ use pdf_writer::{Filter, Name, Pdf, Rect, Ref, Str, TextStr};
 use rustybuzz::ttf_parser::{self, GlyphId};
 use subsetter::GlyphRemapper;
 
+use crate::platform::Os;
 use crate::preview::{self, Align, Block, Callout, ListItem, Span};
 
 // ---------------------------------------------------------------------------
@@ -103,7 +104,18 @@ pub fn export(content: &str, base_file: &Path, out: &Path) -> Result<(), String>
 /// reading images and system fonts). Never panics: an internal failure comes
 /// back as `Err`.
 pub fn render(content: &str, base_file: &Path) -> Result<Vec<u8>, String> {
-    build_guarded(content, base_file).map(|(bytes, _)| bytes)
+    let plan = font_candidates(Os::current(), user_home().as_deref());
+    render_with_plan(content, base_file, &plan)
+}
+
+/// Renders `content` to PDF bytes using the given [`FontPlan`]. Never panics:
+/// an internal failure comes back as `Err`.
+pub fn render_with_plan(
+    content: &str,
+    base_file: &Path,
+    plan: &FontPlan,
+) -> Result<Vec<u8>, String> {
+    build_guarded_with_plan(content, base_file, plan).map(|(bytes, _)| bytes)
 }
 
 /// Whether a tab's file can be exported to PDF. Only markdown and plain text:
@@ -118,8 +130,18 @@ pub fn suggested_file_name(title: &str) -> String {
     crate::paths::with_extension(title, ".pdf")
 }
 
+#[cfg(test)]
 fn build_guarded(content: &str, base_file: &Path) -> Result<(Vec<u8>, usize), String> {
-    match std::panic::catch_unwind(AssertUnwindSafe(|| build(content, base_file))) {
+    let plan = font_candidates(Os::current(), user_home().as_deref());
+    build_guarded_with_plan(content, base_file, &plan)
+}
+
+fn build_guarded_with_plan(
+    content: &str,
+    base_file: &Path,
+    plan: &FontPlan,
+) -> Result<(Vec<u8>, usize), String> {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| build(content, base_file, plan))) {
         Ok(result) => result,
         Err(_) => Err("PDF export failed unexpectedly".into()),
     }
@@ -148,9 +170,9 @@ fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-fn build(content: &str, base_file: &Path) -> Result<(Vec<u8>, usize), String> {
+fn build(content: &str, base_file: &Path, plan: &FontPlan) -> Result<(Vec<u8>, usize), String> {
     let doc = preview::parse(content);
-    let fonts = load_fonts()?;
+    let fonts = load_fonts_from_plan(plan)?;
     let mut layout = Layout::new(&fonts, base_file)?;
     layout.blocks(
         &doc.blocks,
@@ -177,30 +199,475 @@ fn build(content: &str, base_file: &Path) -> Result<(Vec<u8>, usize), String> {
 // Fonts
 // ---------------------------------------------------------------------------
 
-const FONT_DIRS: [&str; 3] = [
+const MISSING_FONT_ERROR: &str =
+    "PDF export needs a TrueType font; install DejaVu Sans / Liberation Sans";
+const MAX_FONT_SCAN_DEPTH: usize = 6;
+
+const MAC_FONT_DIRS: [&str; 3] = [
     "/System/Library/Fonts/Supplemental",
     "/Library/Fonts",
     "/System/Library/Fonts",
 ];
-/// Sans family: regular, bold, italic, bold italic.
-const SANS: [&str; 4] = [
+/// macOS sans family: regular, bold, italic, bold italic.
+const MAC_SANS: [&str; 4] = [
     "Arial.ttf",
     "Arial Bold.ttf",
     "Arial Italic.ttf",
     "Arial Bold Italic.ttf",
 ];
-/// Monospace family: regular, bold, italic, bold italic.
-const MONO: [&str; 4] = [
+/// macOS monospace family: regular, bold, italic, bold italic.
+const MAC_MONO: [&str; 4] = [
     "Courier New.ttf",
     "Courier New Bold.ttf",
     "Courier New Italic.ttf",
     "Courier New Bold Italic.ttf",
 ];
-/// Broad-coverage fallbacks for glyphs the Latin faces lack (Thai, CJK, symbols).
-const UNICODE_FALLBACK: &str = "Arial Unicode.ttf";
-const THAI_FALLBACK: &str = "Thonburi.ttc";
+/// macOS broad-coverage fallbacks for glyphs the Latin faces lack (Thai, CJK, symbols).
+const MAC_UNICODE_FALLBACK: &str = "Arial Unicode.ttf";
+const MAC_THAI_FALLBACK: &str = "Thonburi.ttc";
+
+/// A candidate font filename pattern (supporting `*` wildcards) paired with
+/// its collection face index (0 for single-face `.ttf`/`.otf` or the first
+/// face of a `.ttc` collection).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontSpec {
+    pub pattern: String,
+    pub index: u32,
+}
+
+impl FontSpec {
+    fn new(pattern: impl Into<String>, index: u32) -> Self {
+        Self {
+            pattern: pattern.into(),
+            index,
+        }
+    }
+}
+
+/// Platform-specific search directories and candidate patterns for PDF fonts.
+///
+/// `sans` and `mono` are ordered `[regular, bold, italic, bold italic]`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontPlan {
+    pub dirs: Vec<PathBuf>,
+    pub recursive: bool,
+    pub sans: [Vec<FontSpec>; 4],
+    pub mono: [Vec<FontSpec>; 4],
+    pub unicode_fallback: Vec<FontSpec>,
+    pub thai_fallback: Vec<FontSpec>,
+}
+
+/// A resolved font file path on disk together with its face index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedFont {
+    pub path: PathBuf,
+    pub index: u32,
+}
+
+/// Candidate font files found on disk for each slot of a [`FontPlan`], in
+/// preference order, prior to parsing and subset validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedFontPlan {
+    pub sans: [Vec<ResolvedFont>; 4],
+    pub mono: [Vec<ResolvedFont>; 4],
+    pub unicode_fallback: Vec<ResolvedFont>,
+    pub thai_fallback: Vec<ResolvedFont>,
+}
+
+fn specs(names: &[&str]) -> Vec<FontSpec> {
+    names.iter().map(|&name| FontSpec::new(name, 0)).collect()
+}
+
+fn user_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Returns the platform-specific font search plan for `os` and optional `home`.
+///
+/// On Windows, `%WINDIR%` (or `%SystemRoot%`, defaulting to `C:\Windows`) and
+/// `%LOCALAPPDATA%` (falling back to `<home>\AppData\Local`) are consulted for
+/// the font directories.
+pub fn font_candidates(os: Os, home: Option<&Path>) -> FontPlan {
+    let (windir, local_app_data) = if os == Os::Windows {
+        let windir = std::env::var_os("WINDIR")
+            .or_else(|| std::env::var_os("SystemRoot"))
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let local_app_data = std::env::var_os("LOCALAPPDATA")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        (windir, local_app_data)
+    } else {
+        (None, None)
+    };
+    font_candidates_with_env(os, home, windir.as_deref(), local_app_data.as_deref())
+}
+
+fn font_candidates_with_env(
+    os: Os,
+    home: Option<&Path>,
+    windir: Option<&Path>,
+    local_app_data: Option<&Path>,
+) -> FontPlan {
+    match os {
+        Os::Mac => FontPlan {
+            dirs: MAC_FONT_DIRS.iter().map(PathBuf::from).collect(),
+            recursive: false,
+            sans: [
+                specs(&[MAC_SANS[0]]),
+                specs(&[MAC_SANS[1]]),
+                specs(&[MAC_SANS[2]]),
+                specs(&[MAC_SANS[3]]),
+            ],
+            mono: [
+                specs(&[MAC_MONO[0]]),
+                specs(&[MAC_MONO[1]]),
+                specs(&[MAC_MONO[2]]),
+                specs(&[MAC_MONO[3]]),
+            ],
+            unicode_fallback: specs(&[MAC_UNICODE_FALLBACK]),
+            thai_fallback: vec![FontSpec::new(MAC_THAI_FALLBACK, 0)],
+        },
+        Os::Windows => {
+            let mut dirs = Vec::new();
+            match windir {
+                Some(dir) => dirs.push(dir.join("Fonts")),
+                None => dirs.push(PathBuf::from(r"C:\Windows\Fonts")),
+            }
+            if let Some(local) = local_app_data {
+                dirs.push(local.join("Microsoft").join("Windows").join("Fonts"));
+            } else if let Some(home) = home {
+                dirs.push(
+                    home.join("AppData")
+                        .join("Local")
+                        .join("Microsoft")
+                        .join("Windows")
+                        .join("Fonts"),
+                );
+            }
+            FontPlan {
+                dirs,
+                recursive: false,
+                sans: [
+                    specs(&["arial.ttf", "segoeui.ttf", "calibri.ttf"]),
+                    specs(&["arialbd.ttf", "segoeuib.ttf", "calibrib.ttf"]),
+                    specs(&["ariali.ttf", "segoeuii.ttf", "calibrii.ttf"]),
+                    specs(&["arialbi.ttf", "segoeuiz.ttf", "calibriz.ttf"]),
+                ],
+                mono: [
+                    specs(&["cour.ttf", "consola.ttf"]),
+                    specs(&["courbd.ttf", "consolab.ttf"]),
+                    specs(&["couri.ttf", "consolai.ttf"]),
+                    specs(&["courbi.ttf", "consolaz.ttf"]),
+                ],
+                unicode_fallback: specs(&["seguisym.ttf", "arialuni.ttf", "segoeui.ttf"]),
+                thai_fallback: specs(&["LeelawUI.ttf", "leelawad.ttf", "tahoma.ttf"]),
+            }
+        }
+        Os::Linux => {
+            let mut dirs = vec![
+                PathBuf::from("/usr/share/fonts"),
+                PathBuf::from("/usr/local/share/fonts"),
+            ];
+            if let Some(home) = home {
+                dirs.push(home.join(".local").join("share").join("fonts"));
+                dirs.push(home.join(".fonts"));
+            }
+            FontPlan {
+                dirs,
+                recursive: true,
+                sans: [
+                    specs(&[
+                        "LiberationSans-Regular.ttf",
+                        "LiberationSans-Regular.otf",
+                        "DejaVuSans.ttf",
+                        "DejaVuSans-Regular.ttf",
+                        "NotoSans-Regular.ttf",
+                        "NotoSans-Regular.otf",
+                        "NotoSans[wdth,wght].ttf",
+                        "FreeSans.ttf",
+                        "Ubuntu-R.ttf",
+                        "Ubuntu-Regular.ttf",
+                    ]),
+                    specs(&[
+                        "LiberationSans-Bold.ttf",
+                        "LiberationSans-Bold.otf",
+                        "DejaVuSans-Bold.ttf",
+                        "NotoSans-Bold.ttf",
+                        "NotoSans-Bold.otf",
+                        "FreeSansBold.ttf",
+                        "Ubuntu-B.ttf",
+                        "Ubuntu-Bold.ttf",
+                    ]),
+                    specs(&[
+                        "LiberationSans-Italic.ttf",
+                        "LiberationSans-Italic.otf",
+                        "DejaVuSans-Oblique.ttf",
+                        "NotoSans-Italic.ttf",
+                        "NotoSans-Italic.otf",
+                        "FreeSansOblique.ttf",
+                        "Ubuntu-RI.ttf",
+                        "Ubuntu-Italic.ttf",
+                    ]),
+                    specs(&[
+                        "LiberationSans-BoldItalic.ttf",
+                        "LiberationSans-BoldItalic.otf",
+                        "DejaVuSans-BoldOblique.ttf",
+                        "NotoSans-BoldItalic.ttf",
+                        "NotoSans-BoldItalic.otf",
+                        "FreeSansBoldOblique.ttf",
+                        "Ubuntu-BI.ttf",
+                        "Ubuntu-BoldItalic.ttf",
+                    ]),
+                ],
+                mono: [
+                    specs(&[
+                        "LiberationMono-Regular.ttf",
+                        "LiberationMono-Regular.otf",
+                        "DejaVuSansMono.ttf",
+                        "DejaVuSansMono-Regular.ttf",
+                        "NotoSansMono-Regular.ttf",
+                        "NotoSansMono-Regular.otf",
+                        "NotoSansMono[wdth,wght].ttf",
+                        "FreeMono.ttf",
+                        "UbuntuMono-R.ttf",
+                        "UbuntuMono-Regular.ttf",
+                    ]),
+                    specs(&[
+                        "LiberationMono-Bold.ttf",
+                        "LiberationMono-Bold.otf",
+                        "DejaVuSansMono-Bold.ttf",
+                        "NotoSansMono-Bold.ttf",
+                        "NotoSansMono-Bold.otf",
+                        "FreeMonoBold.ttf",
+                        "UbuntuMono-B.ttf",
+                        "UbuntuMono-Bold.ttf",
+                    ]),
+                    specs(&[
+                        "LiberationMono-Italic.ttf",
+                        "LiberationMono-Italic.otf",
+                        "DejaVuSansMono-Oblique.ttf",
+                        "NotoSansMono-Italic.ttf",
+                        "NotoSansMono-Italic.otf",
+                        "FreeMonoOblique.ttf",
+                        "UbuntuMono-RI.ttf",
+                        "UbuntuMono-Italic.ttf",
+                    ]),
+                    specs(&[
+                        "LiberationMono-BoldItalic.ttf",
+                        "LiberationMono-BoldItalic.otf",
+                        "DejaVuSansMono-BoldOblique.ttf",
+                        "NotoSansMono-BoldItalic.ttf",
+                        "NotoSansMono-BoldItalic.otf",
+                        "FreeMonoBoldOblique.ttf",
+                        "UbuntuMono-BI.ttf",
+                        "UbuntuMono-BoldItalic.ttf",
+                    ]),
+                ],
+                unicode_fallback: vec![
+                    FontSpec::new("DejaVuSans.ttf", 0),
+                    FontSpec::new("NotoSansSymbols2-Regular.ttf", 0),
+                    FontSpec::new("NotoSansSymbols-Regular.ttf", 0),
+                    FontSpec::new("NotoSans-Regular.ttf", 0),
+                    FontSpec::new("FreeSans.ttf", 0),
+                    FontSpec::new("NotoSansCJK-Regular.ttc", 0),
+                ],
+                thai_fallback: specs(&[
+                    "NotoSansThai-Regular.ttf",
+                    "NotoSansThai-Regular.otf",
+                    "NotoSansThaiUI-Regular.ttf",
+                    "NotoSansThai*.ttf",
+                    "NotoSansThai*.otf",
+                    "Loma.ttf",
+                    "Loma.otf",
+                    "Garuda.ttf",
+                    "Garuda.otf",
+                    "Waree.ttf",
+                    "Waree.otf",
+                    "TlwgTypo.ttf",
+                    "TlwgTypo.otf",
+                    "TlwgTypist.ttf",
+                    "TlwgTypist.otf",
+                    "TlwgTypewriter.ttf",
+                    "TlwgTypewriter.otf",
+                    "TlwgMono.ttf",
+                    "TlwgMono.otf",
+                    "Tlwg*.ttf",
+                    "Tlwg*.otf",
+                ]),
+            }
+        }
+    }
+}
+
+fn is_supported_font_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("ttf")
+                || ext.eq_ignore_ascii_case("otf")
+                || ext.eq_ignore_ascii_case("ttc")
+        })
+}
+
+/// ASCII case-insensitive wildcard match supporting `*` globs.
+fn matches_pattern(pattern: &str, name: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let text = name.as_bytes();
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let mut star_pi: Option<usize> = None;
+    let mut star_ti = 0usize;
+    while ti < text.len() {
+        if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = Some(pi);
+            pi += 1;
+            star_ti = ti;
+        } else if pi < pat.len() && pat[pi].eq_ignore_ascii_case(&text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if let Some(sp) = star_pi {
+            pi = sp + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
+
+fn collect_font_files(dirs: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    for dir in dirs {
+        if dir.is_dir() {
+            walk_font_dir(dir, recursive, 0, &mut visited, &mut out);
+        }
+    }
+    out
+}
+
+fn walk_font_dir(
+    dir: &Path,
+    recursive: bool,
+    depth: usize,
+    visited: &mut HashSet<PathBuf>,
+    out: &mut Vec<PathBuf>,
+) {
+    let key = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !visited.insert(key) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect();
+    paths.sort();
+
+    let mut subdirs = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            if is_supported_font_extension(&path) {
+                out.push(path);
+            }
+        } else if recursive && depth < MAX_FONT_SCAN_DEPTH && path.is_dir() {
+            subdirs.push(path);
+        }
+    }
+    for subdir in subdirs {
+        walk_font_dir(&subdir, recursive, depth + 1, visited, out);
+    }
+}
+
+fn resolve_slot(
+    specs: &[FontSpec],
+    dirs: &[PathBuf],
+    recursive: bool,
+    scanned: &mut Option<Vec<PathBuf>>,
+) -> Vec<ResolvedFont> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<(PathBuf, u32)> = HashSet::new();
+
+    for spec in specs {
+        let has_glob = spec.pattern.contains('*');
+        if !recursive && !has_glob {
+            let mut matched_direct = false;
+            for dir in dirs {
+                let candidate = dir.join(&spec.pattern);
+                if is_supported_font_extension(&candidate) && candidate.is_file() {
+                    matched_direct = true;
+                    if seen.insert((candidate.clone(), spec.index)) {
+                        out.push(ResolvedFont {
+                            path: candidate,
+                            index: spec.index,
+                        });
+                    }
+                }
+            }
+            if matched_direct {
+                continue;
+            }
+        }
+
+        let files = scanned.get_or_insert_with(|| collect_font_files(dirs, recursive));
+        for path in files.iter() {
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if matches_pattern(&spec.pattern, file_name) && seen.insert((path.clone(), spec.index))
+            {
+                out.push(ResolvedFont {
+                    path: path.clone(),
+                    index: spec.index,
+                });
+            }
+        }
+    }
+
+    out
+}
+
+/// Resolves `plan` against the filesystem, returning matching font files (in
+/// priority order) for each slot without reading or parsing font data.
+pub fn resolve_font_candidates(plan: &FontPlan) -> ResolvedFontPlan {
+    let mut scanned = None;
+    let sans = std::array::from_fn(|style| {
+        resolve_slot(&plan.sans[style], &plan.dirs, plan.recursive, &mut scanned)
+    });
+    let mono = std::array::from_fn(|style| {
+        resolve_slot(&plan.mono[style], &plan.dirs, plan.recursive, &mut scanned)
+    });
+    let unicode_fallback = resolve_slot(
+        &plan.unicode_fallback,
+        &plan.dirs,
+        plan.recursive,
+        &mut scanned,
+    );
+    let thai_fallback = resolve_slot(
+        &plan.thai_fallback,
+        &plan.dirs,
+        plan.recursive,
+        &mut scanned,
+    );
+    ResolvedFontPlan {
+        sans,
+        mono,
+        unicode_fallback,
+        thai_fallback,
+    }
+}
 
 struct FontFile {
+    path: PathBuf,
     name: String,
     bytes: Vec<u8>,
     index: u32,
@@ -217,60 +684,97 @@ struct Fonts {
     fallback: Vec<usize>,
 }
 
-fn load_file(
+fn validate_font(bytes: &[u8], index: u32) -> bool {
+    std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if ttf_parser::Face::parse(bytes, index).is_err() {
+            return false;
+        }
+        if rustybuzz::Face::from_slice(bytes, index).is_none() {
+            return false;
+        }
+        let remap = GlyphRemapper::new();
+        subsetter::subset(bytes, index, &remap).is_ok()
+    }))
+    .unwrap_or(false)
+}
+
+fn load_resolved(
     files: &mut Vec<FontFile>,
-    name: &str,
-    index: u32,
+    candidates: &[ResolvedFont],
     bold: bool,
     italic: bool,
 ) -> Option<usize> {
-    if let Some(pos) = files.iter().position(|file| file.name == name) {
-        return Some(pos);
+    for candidate in candidates {
+        if let Some(pos) = files
+            .iter()
+            .position(|file| file.path == candidate.path && file.index == candidate.index)
+        {
+            return Some(pos);
+        }
+        let Ok(bytes) = std::fs::read(&candidate.path) else {
+            continue;
+        };
+        if !validate_font(&bytes, candidate.index) {
+            continue;
+        }
+        let name = candidate
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("font")
+            .to_string();
+        files.push(FontFile {
+            path: candidate.path.clone(),
+            name,
+            bytes,
+            index: candidate.index,
+            bold,
+            italic,
+        });
+        return Some(files.len() - 1);
     }
-    let path = FONT_DIRS
-        .iter()
-        .map(|dir| Path::new(dir).join(name))
-        .find(|path| path.is_file())?;
-    let bytes = std::fs::read(path).ok()?;
-    ttf_parser::Face::parse(&bytes, index).ok()?;
-    files.push(FontFile {
-        name: name.to_string(),
-        bytes,
-        index,
-        bold,
-        italic,
-    });
-    Some(files.len() - 1)
+    None
 }
 
+#[cfg(test)]
 fn load_fonts() -> Result<Fonts, String> {
+    let plan = font_candidates(Os::current(), user_home().as_deref());
+    load_fonts_from_plan(&plan)
+}
+
+fn load_fonts_from_plan(plan: &FontPlan) -> Result<Fonts, String> {
+    let resolved = resolve_font_candidates(plan);
     let mut files = Vec::new();
     let mut loaded: [[Option<usize>; 4]; 2] = [[None; 4]; 2];
-    for (fam, names) in [SANS, MONO].iter().enumerate() {
-        for (style, name) in names.iter().enumerate() {
-            loaded[fam][style] = load_file(&mut files, name, 0, style & 1 != 0, style & 2 != 0);
+    for (fam, slots) in [&resolved.sans, &resolved.mono].into_iter().enumerate() {
+        for (style, candidates) in slots.iter().enumerate() {
+            loaded[fam][style] =
+                load_resolved(&mut files, candidates, style & 1 != 0, style & 2 != 0);
         }
     }
-    let unicode = load_file(&mut files, UNICODE_FALLBACK, 0, false, false);
-    let thai = load_file(&mut files, THAI_FALLBACK, 0, false, false);
+    let unicode = load_resolved(&mut files, &resolved.unicode_fallback, false, false);
+    let thai = load_resolved(&mut files, &resolved.thai_fallback, false, false);
+
+    let sans_regular = loaded[0][0]
+        .or_else(|| loaded[0].into_iter().flatten().next())
+        .ok_or_else(|| MISSING_FONT_ERROR.to_string())?;
+    let mono_regular = loaded[1][0]
+        .or_else(|| loaded[1].into_iter().flatten().next())
+        .unwrap_or(sans_regular);
 
     let mut fallback = Vec::new();
-    for file in [unicode, thai, loaded[0][0]].into_iter().flatten() {
+    for file in [unicode, thai, Some(sans_regular)].into_iter().flatten() {
         if !fallback.contains(&file) {
             fallback.push(file);
         }
     }
-    let general = fallback
-        .first()
-        .copied()
-        .or(loaded[1][0])
-        .ok_or("no usable system font was found")?;
 
-    // A missing face falls back to its family's regular face, then to the
-    // general-coverage face, so every style resolves to something.
+    // A missing face falls back to its family's regular face (and missing mono
+    // falls back to sans regular), so every style resolves to a usable face.
     let mut family = [[0usize; 4]; 2];
+    let regulars = [sans_regular, mono_regular];
     for fam in 0..2 {
-        let regular = loaded[fam][0].unwrap_or(general);
+        let regular = regulars[fam];
         for style in 0..4 {
             family[fam][style] = loaded[fam][style].unwrap_or(regular);
         }
@@ -2218,6 +2722,460 @@ mod tests {
         assert!(supports("/notes/B.TXT"));
         assert!(!supports("/data/sheet.csv"));
         assert!(!supports("/data/config.json"));
+    }
+
+    #[test]
+    fn macos_font_plan_matches_original_constants() {
+        let plan = font_candidates(Os::Mac, Some(Path::new("/Users/tester")));
+        assert_eq!(
+            plan.dirs,
+            vec![
+                PathBuf::from("/System/Library/Fonts/Supplemental"),
+                PathBuf::from("/Library/Fonts"),
+                PathBuf::from("/System/Library/Fonts"),
+            ]
+        );
+        assert!(!plan.recursive);
+        assert_eq!(
+            plan.sans,
+            [
+                vec![FontSpec::new("Arial.ttf", 0)],
+                vec![FontSpec::new("Arial Bold.ttf", 0)],
+                vec![FontSpec::new("Arial Italic.ttf", 0)],
+                vec![FontSpec::new("Arial Bold Italic.ttf", 0)],
+            ]
+        );
+        assert_eq!(
+            plan.mono,
+            [
+                vec![FontSpec::new("Courier New.ttf", 0)],
+                vec![FontSpec::new("Courier New Bold.ttf", 0)],
+                vec![FontSpec::new("Courier New Italic.ttf", 0)],
+                vec![FontSpec::new("Courier New Bold Italic.ttf", 0)],
+            ]
+        );
+        assert_eq!(
+            plan.unicode_fallback,
+            vec![FontSpec::new("Arial Unicode.ttf", 0)]
+        );
+        assert_eq!(plan.thai_fallback, vec![FontSpec::new("Thonburi.ttc", 0)]);
+    }
+
+    #[test]
+    fn windows_font_plan_lists_expected_dirs_and_fonts() {
+        let plan = font_candidates_with_env(
+            Os::Windows,
+            Some(Path::new("/Users/alice")),
+            Some(Path::new(r"D:\Windows")),
+            Some(Path::new(r"C:\Users\alice\AppData\Local")),
+        );
+        assert_eq!(
+            plan.dirs,
+            vec![
+                Path::new(r"D:\Windows").join("Fonts"),
+                Path::new(r"C:\Users\alice\AppData\Local")
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Fonts"),
+            ]
+        );
+        assert!(!plan.recursive);
+        assert_eq!(plan.sans[0][0], FontSpec::new("arial.ttf", 0));
+        assert_eq!(plan.sans[1][0], FontSpec::new("arialbd.ttf", 0));
+        assert_eq!(plan.sans[2][0], FontSpec::new("ariali.ttf", 0));
+        assert_eq!(plan.sans[3][0], FontSpec::new("arialbi.ttf", 0));
+        assert_eq!(plan.mono[0][0], FontSpec::new("cour.ttf", 0));
+        assert_eq!(plan.mono[1][0], FontSpec::new("courbd.ttf", 0));
+        assert_eq!(plan.mono[2][0], FontSpec::new("couri.ttf", 0));
+        assert_eq!(plan.mono[3][0], FontSpec::new("courbi.ttf", 0));
+        assert!(plan
+            .unicode_fallback
+            .iter()
+            .any(|s| s.pattern == "seguisym.ttf"));
+        for thai in ["LeelawUI.ttf", "leelawad.ttf", "tahoma.ttf"] {
+            assert!(
+                plan.thai_fallback.iter().any(|s| s.pattern == thai),
+                "missing Windows Thai fallback {thai}"
+            );
+        }
+
+        // Default fallback when env vars are absent.
+        let default_plan =
+            font_candidates_with_env(Os::Windows, Some(Path::new("/Users/alice")), None, None);
+        assert_eq!(default_plan.dirs[0], PathBuf::from(r"C:\Windows\Fonts"));
+        assert_eq!(
+            default_plan.dirs[1],
+            Path::new("/Users/alice")
+                .join("AppData")
+                .join("Local")
+                .join("Microsoft")
+                .join("Windows")
+                .join("Fonts")
+        );
+    }
+
+    #[test]
+    fn linux_font_plan_lists_expected_dirs_and_fonts() {
+        let home = Path::new("/home/alice");
+        let plan = font_candidates(Os::Linux, Some(home));
+        assert_eq!(
+            plan.dirs,
+            vec![
+                PathBuf::from("/usr/share/fonts"),
+                PathBuf::from("/usr/local/share/fonts"),
+                PathBuf::from("/home/alice/.local/share/fonts"),
+                PathBuf::from("/home/alice/.fonts"),
+            ]
+        );
+        assert!(plan.recursive);
+        for (slot, expected) in [
+            (
+                0,
+                &[
+                    "LiberationSans-Regular.ttf",
+                    "DejaVuSans.ttf",
+                    "NotoSans-Regular.ttf",
+                ][..],
+            ),
+            (
+                1,
+                &[
+                    "LiberationSans-Bold.ttf",
+                    "DejaVuSans-Bold.ttf",
+                    "NotoSans-Bold.ttf",
+                ][..],
+            ),
+            (
+                2,
+                &[
+                    "LiberationSans-Italic.ttf",
+                    "DejaVuSans-Oblique.ttf",
+                    "NotoSans-Italic.ttf",
+                ][..],
+            ),
+            (
+                3,
+                &[
+                    "LiberationSans-BoldItalic.ttf",
+                    "DejaVuSans-BoldOblique.ttf",
+                    "NotoSans-BoldItalic.ttf",
+                ][..],
+            ),
+        ] {
+            for name in expected {
+                assert!(
+                    plan.sans[slot].iter().any(|s| s.pattern == *name),
+                    "missing Linux sans[{slot}] candidate {name}"
+                );
+            }
+        }
+        for name in [
+            "LiberationMono-Regular.ttf",
+            "DejaVuSansMono.ttf",
+            "NotoSansMono-Regular.ttf",
+        ] {
+            assert!(
+                plan.mono[0].iter().any(|s| s.pattern == name),
+                "missing Linux mono candidate {name}"
+            );
+        }
+        assert!(plan
+            .unicode_fallback
+            .iter()
+            .any(|s| s.pattern == "DejaVuSans.ttf"));
+        for thai in [
+            "NotoSansThai-Regular.ttf",
+            "Loma.ttf",
+            "Garuda.ttf",
+            "Tlwg*.ttf",
+        ] {
+            assert!(
+                plan.thai_fallback.iter().any(|s| s.pattern == thai),
+                "missing Linux Thai candidate {thai}"
+            );
+        }
+
+        let no_home = font_candidates(Os::Linux, None);
+        assert_eq!(
+            no_home.dirs,
+            vec![
+                PathBuf::from("/usr/share/fonts"),
+                PathBuf::from("/usr/local/share/fonts"),
+            ]
+        );
+    }
+
+    #[test]
+    fn glob_pattern_matcher_handles_wildcards_and_extensions() {
+        assert!(matches_pattern("Arial.ttf", "Arial.ttf"));
+        assert!(matches_pattern("arial.ttf", "ARIAL.TTF"));
+        assert!(matches_pattern("Tlwg*.ttf", "TlwgTypo.ttf"));
+        assert!(matches_pattern("Tlwg*.otf", "tlwgmono.OTF"));
+        assert!(!matches_pattern("Tlwg*.otf", "TlwgTypo.ttf"));
+        assert!(matches_pattern(
+            "NotoSansThai*.ttf",
+            "NotoSansThai-Regular.ttf"
+        ));
+        assert!(matches_pattern(
+            "NotoSansThai*.ttf",
+            "NotoSansThai[wdth,wght].ttf"
+        ));
+        assert!(!matches_pattern(
+            "LiberationSans-Regular.ttf",
+            "LiberationSansNarrow-Regular.ttf"
+        ));
+        assert!(is_supported_font_extension(Path::new("a.ttf")));
+        assert!(is_supported_font_extension(Path::new("a.OTF")));
+        assert!(is_supported_font_extension(Path::new("a.Ttc")));
+        assert!(!is_supported_font_extension(Path::new("a.woff2")));
+        assert!(!is_supported_font_extension(Path::new("README")));
+    }
+
+    fn touch_file(path: &Path, bytes: &[u8]) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent dirs");
+        }
+        std::fs::write(path, bytes).expect("write test file");
+    }
+
+    #[test]
+    fn resolve_finds_faces_in_fake_linux_font_tree_by_pattern() {
+        let root = tmp_dir("linux-tree");
+        let _ = std::fs::remove_dir_all(&root);
+        let lib_reg = root.join("truetype/liberation/LiberationSans-Regular.ttf");
+        let lib_bold = root.join("truetype/liberation/LiberationSans-Bold.ttf");
+        let lib_ital = root.join("truetype/liberation/LiberationSans-Italic.ttf");
+        let lib_bi = root.join("truetype/liberation/LiberationSans-BoldItalic.ttf");
+        let dv_sans = root.join("truetype/dejavu/DejaVuSans.ttf");
+        let dv_mono = root.join("truetype/dejavu/DejaVuSansMono.ttf");
+        let thai_otf = root.join("opentype/tlwg/TlwgCustomThai.otf");
+        let ignored_woff = root.join("truetype/liberation/LiberationSans-Regular.woff2");
+        let too_deep = root.join("a/b/c/d/e/f/g/Garuda.ttf");
+
+        for file in [
+            &lib_reg,
+            &lib_bold,
+            &lib_ital,
+            &lib_bi,
+            &dv_sans,
+            &dv_mono,
+            &thai_otf,
+            &ignored_woff,
+            &too_deep,
+        ] {
+            touch_file(file, b"stub");
+        }
+
+        let mut plan = font_candidates(Os::Linux, None);
+        plan.dirs = vec![root.clone()];
+
+        let resolved = resolve_font_candidates(&plan);
+        assert_eq!(
+            resolved.sans[0][0],
+            ResolvedFont {
+                path: lib_reg,
+                index: 0
+            }
+        );
+        assert_eq!(
+            resolved.sans[0][1],
+            ResolvedFont {
+                path: dv_sans.clone(),
+                index: 0
+            }
+        );
+        assert_eq!(
+            resolved.sans[1][0],
+            ResolvedFont {
+                path: lib_bold,
+                index: 0
+            }
+        );
+        assert_eq!(
+            resolved.sans[2][0],
+            ResolvedFont {
+                path: lib_ital,
+                index: 0
+            }
+        );
+        assert_eq!(
+            resolved.sans[3][0],
+            ResolvedFont {
+                path: lib_bi,
+                index: 0
+            }
+        );
+        assert_eq!(
+            resolved.mono[0][0],
+            ResolvedFont {
+                path: dv_mono,
+                index: 0
+            }
+        );
+        assert_eq!(
+            resolved.unicode_fallback[0],
+            ResolvedFont {
+                path: dv_sans,
+                index: 0,
+            }
+        );
+        assert_eq!(
+            resolved.thai_fallback,
+            vec![ResolvedFont {
+                path: thai_otf,
+                index: 0,
+            }],
+            "expected Tlwg*.otf match and depth-limited Garuda.ttf exclusion"
+        );
+        assert!(!resolved.sans[0].iter().any(|r| r.path == ignored_woff));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_matches_windows_fonts_case_insensitively() {
+        let root = tmp_dir("win-tree");
+        let _ = std::fs::remove_dir_all(&root);
+        let arial = root.join("ARIAL.TTF");
+        let arial_bd = root.join("ARIALBD.TTF");
+        let cour = root.join("COUR.TTF");
+        let sym = root.join("SEGUISYM.TTF");
+        let thai = root.join("leelawui.ttf");
+        for file in [&arial, &arial_bd, &cour, &sym, &thai] {
+            touch_file(file, b"stub");
+        }
+
+        let mut plan = font_candidates(Os::Windows, None);
+        plan.dirs = vec![root.clone()];
+
+        let resolved = resolve_font_candidates(&plan);
+        assert_eq!(resolved.sans[0].len(), 1);
+        assert_eq!(resolved.sans[1].len(), 1);
+        assert_eq!(resolved.mono[0].len(), 1);
+        assert_eq!(resolved.unicode_fallback.len(), 1);
+        assert_eq!(resolved.thai_fallback.len(), 1);
+        assert_eq!(
+            resolved.thai_fallback[0]
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_ascii_lowercase),
+            Some("leelawui.ttf".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn host_sans_ttf_bytes() -> Option<Vec<u8>> {
+        let plan = font_candidates(Os::current(), user_home().as_deref());
+        let resolved = resolve_font_candidates(&plan);
+        for candidate in &resolved.sans[0] {
+            if let Ok(bytes) = std::fs::read(&candidate.path) {
+                if candidate.index == 0 && validate_font(&bytes, 0) {
+                    return Some(bytes);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn loader_skips_corrupt_fonts_and_renders_with_next_usable_face() {
+        let Some(valid_ttf) = host_sans_ttf_bytes() else {
+            return;
+        };
+        let root = tmp_dir("skip-corrupt");
+        let _ = std::fs::remove_dir_all(&root);
+        touch_file(
+            &root.join("truetype/liberation/LiberationSans-Regular.ttf"),
+            b"definitely not a valid TrueType font",
+        );
+        touch_file(&root.join("truetype/dejavu/DejaVuSans.ttf"), &valid_ttf);
+
+        let mut plan = font_candidates(Os::Linux, None);
+        plan.dirs = vec![root.clone()];
+
+        let loaded = load_fonts_from_plan(&plan).expect("should fall back to valid DejaVuSans.ttf");
+        assert_eq!(loaded.files[loaded.family[0][0]].name, "DejaVuSans.ttf");
+
+        let pdf = render_with_plan("# Hello\n\nBody text.", Path::new("doc.md"), &plan)
+            .expect("render with Linux plan should succeed");
+        assert_pdf(&pdf);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_or_unusable_sans_font_returns_actionable_error() {
+        let empty = tmp_dir("no-fonts-empty");
+        let _ = std::fs::remove_dir_all(&empty);
+        std::fs::create_dir_all(&empty).expect("create empty dir");
+
+        let mut plan = font_candidates(Os::Linux, None);
+        plan.dirs = vec![empty.clone()];
+
+        let err = render_with_plan("# Hello", Path::new("doc.md"), &plan)
+            .expect_err("empty font dir must fail cleanly");
+        assert_eq!(err, MISSING_FONT_ERROR);
+
+        touch_file(
+            &empty.join("truetype/liberation/LiberationSans-Regular.ttf"),
+            b"corrupt font bytes",
+        );
+        let err = render_with_plan("# Hello", Path::new("doc.md"), &plan)
+            .expect_err("corrupt-only font dir must fail cleanly");
+        assert_eq!(err, MISSING_FONT_ERROR);
+
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn thai_text_degrades_gracefully_without_thai_font() {
+        let Some(valid_ttf) = host_sans_ttf_bytes() else {
+            return;
+        };
+        let root = tmp_dir("thai-degrade");
+        let _ = std::fs::remove_dir_all(&root);
+        touch_file(&root.join("LatinOnly.ttf"), &valid_ttf);
+
+        let plan = FontPlan {
+            dirs: vec![root.clone()],
+            recursive: false,
+            sans: [
+                specs(&["LatinOnly.ttf"]),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ],
+            mono: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            unicode_fallback: Vec::new(),
+            thai_fallback: Vec::new(),
+        };
+
+        let pdf = render_with_plan(
+            "# สวัสดีครับ\n\nภาษาไทย น้ำ กิ่ง ปู่ และ English text.",
+            Path::new("thai.md"),
+            &plan,
+        )
+        .expect("Thai text should degrade gracefully without a Thai font");
+        assert_pdf(&pdf);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn macos_plan_renders_real_pdf() {
+        if Os::current() != Os::Mac {
+            return;
+        }
+        let plan = font_candidates(Os::Mac, user_home().as_deref());
+        let pdf = render_with_plan(
+            "# Heading\n\nParagraph with **bold**, *italic*, `code`, and ภาษาไทย.",
+            Path::new("/tmp/macos-plan.md"),
+            &plan,
+        )
+        .expect("macOS plan should render a real PDF");
+        assert_pdf(&pdf);
     }
 
     /// Writes a sample covering every block type for visual inspection:

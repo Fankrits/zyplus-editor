@@ -23,7 +23,7 @@ Built natively in Rust with [GPUI](https://crates.io/crates/gpui).
 
 ---
 
-Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux (x86_64) and Windows (x86_64) builds are published as experimental downloads: they build, pass the unit tests apart from a few platform-specific cases, and launch in CI, but have no end-to-end tests and no auto-update.
+Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux (x86_64) and Windows (x86_64) builds are published as experimental downloads: CI builds them, runs the unit tests and checks they launch, and on Linux also runs the end-to-end suite; neither updates itself. Shortcuts use `Ctrl` instead of `⌘` there (the shortcuts sheet, `Ctrl+/`, shows the real keys).
 
 ## Features
 
@@ -44,8 +44,8 @@ Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux (x86_6
 
 - **No downloadable JS-bundle extensions:** There is no JavaScript engine or webview; all six extensions above are compiled natively into the binary.
 - **`.mdown` opens as plain text:** `.mdown` is declared in `Info.plist` for Finder associations, while inside the app `.md`, `.markdown`, `.mkd`, and `.txt` open as Markdown.
-- **PDF export uses macOS system fonts only:** `Arial`, `Courier New`, `Arial Unicode`, and `Thonburi`.
-- **Linux and Windows are experimental:** the release workflow attaches a Windows setup `.exe` and a Linux `.deb` / AppImage. CI builds them, runs the unit tests (a few fail there: Thai text in math, Windows path and rename cases) and checks the app launches, but there are no end-to-end tests, no auto-update, and macOS-only features (PDF export, default-app setting, update install) are missing.
+- **PDF export uses system fonts:** macOS `Arial`, `Courier New`, `Arial Unicode`, `Thonburi`; Windows Arial, Courier New, Leelawadee UI / Tahoma (Thai); Linux Liberation, DejaVu, Noto and the Thai TLWG families. If no usable sans-serif font is installed, export reports an error instead of failing silently.
+- **Linux and Windows are experimental:** the release workflow attaches a Windows setup `.exe` and a Linux `.deb` / AppImage. CI builds them, runs the unit tests and checks the app launches (Linux also runs the end-to-end suite under Xvfb), but Windows has no end-to-end tests, neither has auto-update, and the macOS-only features (default-app setting, in-place update install) are missing. On Windows the app draws its own minimise / maximise / close buttons; on GNOME/Wayland it draws its own title bar, resize edges and shadow; elsewhere on Linux the window manager provides the title bar. These chrome paths are unit-tested but have not been clicked through on real Windows or GNOME/Wayland machines.
 - **No block drag handle** in the rich editor.
 
 ## Install
@@ -120,7 +120,7 @@ An ad-hoc signed app runs on the machine that built it. LaunchServices only acce
 ### Command-line arguments & single instance
 
 - `zyplus-gpui <path> [<path> ...]` opens each existing file as a tab and each folder as a project in the sidebar. Relative paths resolve against the current working directory. Arguments starting with `-` (such as Finder's `-psn_…`) are ignored.
-- On Unix, a second launch forwards its paths to the running primary instance over a Unix socket and exits. The running window opens them (files as tabs, folders in the sidebar) and comes to the front; a launch with no paths raises the window.
+- A second launch forwards its paths to the running primary instance and exits: over a Unix socket on macOS/Linux, over an authenticated loopback TCP connection on Windows (port and token live in `<app data>\Zyplus\.gpui-single-instance.port`). The running window opens them (files as tabs, folders in the sidebar) and comes to the front; a launch with no paths raises the window.
 - The single-instance socket lives at `<app data>/Zyplus/.gpui-single-instance.sock` (a dotfile so the sidebar skips it). If that path reaches the Unix `sun_path` limit (100+ bytes), it falls back to `$TMPDIR/zyplus-gpui-<user>.sock`. Stale sockets left by a crash are replaced automatically.
 - On macOS, Finder double-click and **Open With** deliver `file://` URLs through `Application::on_open_urls`.
 

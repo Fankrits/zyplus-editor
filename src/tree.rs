@@ -301,7 +301,7 @@ pub fn ensure_folder(path: &str) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| io_err(e, path))
 }
 
-pub fn rename_path(old_path: &str, new_path: &str) -> Result<(), String> {
+fn validate_rename_target(old_path: &str, new_path: &str) -> Result<(), String> {
     // Only a name the user just typed gets validated. Moving a file that already
     // carries an awkward name into another folder must keep working.
     if basename_of(new_path) != basename_of(old_path) {
@@ -313,6 +313,11 @@ pub fn rename_path(old_path: &str, new_path: &str) -> Result<(), String> {
             basename_of(old_path)
         ));
     }
+    Ok(())
+}
+
+pub fn rename_path(old_path: &str, new_path: &str) -> Result<(), String> {
+    validate_rename_target(old_path, new_path)?;
     let finds_itself = new_path == old_path
         || (new_path.to_lowercase() == old_path.to_lowercase()
             && Path::new(old_path).exists()
@@ -533,6 +538,9 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// Filesystem check on Unix: Windows cannot create `awkward: name.md` on disk,
+    /// so the Windows-path equivalent is tested purely below.
+    #[cfg(unix)]
     #[test]
     fn renaming_validates_only_a_new_name() {
         let dir = scratch("rename");
@@ -543,6 +551,49 @@ mod tests {
         // Same name in a new folder is fine even though Windows would refuse it.
         let moved = display_join(&display_join(&dir, "dest"), "awkward: name.md");
         rename_path(&old, &moved).unwrap();
+        assert!(Path::new(&moved).exists());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rename_validation_allows_moving_an_existing_awkward_name_unchanged() {
+        // Unchanged awkward names (colon, reserved name, trailing space) are allowed
+        // when moving across folders on both Unix and Windows path shapes.
+        assert!(
+            validate_rename_target("/notes/awkward: name.md", "/notes/dest/awkward: name.md")
+                .is_ok()
+        );
+        assert!(validate_rename_target(
+            r"C:\notes\awkward: name.md",
+            r"C:\notes\dest\awkward: name.md"
+        )
+        .is_ok());
+        assert!(validate_rename_target(r"C:\notes\CON.md", r"C:\notes\dest\CON.md").is_ok());
+        assert!(validate_rename_target(r"C:\notes\trailing ", r"C:\notes\dest\trailing ").is_ok());
+
+        // Changing the basename to an invalid name is rejected.
+        assert!(validate_rename_target(r"C:\notes\ok.md", r"C:\notes\dest\bad:name.md").is_err());
+        assert!(validate_rename_target(r"C:\notes\ok.md", r"C:\notes\dest\CON.md").is_err());
+        assert!(validate_rename_target(r"C:\notes\ok.md", r"C:\notes\dest\trailing ").is_err());
+    }
+
+    #[test]
+    fn moving_a_file_between_folders_validates_only_new_names_on_disk() {
+        let dir = scratch("rename-move");
+        let old = display_join(&dir, "note.md");
+        fs::write(&old, "x").unwrap();
+        let dest = display_join(&dir, "dest");
+        fs::create_dir_all(&dest).unwrap();
+
+        let moved = display_join(&dest, "note.md");
+        rename_path(&old, &moved).unwrap();
+        assert!(Path::new(&moved).exists());
+        assert!(!Path::new(&old).exists());
+
+        // Renaming to a Windows-invalid name while moving is rejected before hitting disk.
+        assert!(rename_path(&moved, &display_join(&dir, "CON.md")).is_err());
+        assert!(rename_path(&moved, &display_join(&dir, "trailing ")).is_err());
         assert!(Path::new(&moved).exists());
 
         fs::remove_dir_all(&dir).ok();

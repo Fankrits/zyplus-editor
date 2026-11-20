@@ -304,15 +304,37 @@ mod tests {
             .count()
     }
 
+    /// Whether RaTeX's system fallback font covers Thai glyphs (outlining them as
+    /// `<path>` instead of falling back to `<text>`). True when a Thai-capable font
+    /// is found (e.g. Arial Unicode on macOS); false on minimal Linux/Windows hosts
+    /// whose RaTeX fallback font lacks Thai (at runtime GPUI's `SvgRenderer` loads
+    /// the full system fontdb and renders `<text>` fallback glyphs).
+    fn ratex_outlines_thai() -> bool {
+        render(r"\text{ก}", false)
+            .map(|svg| svg.contains("<path") && !svg.contains("<text"))
+            .unwrap_or(false)
+    }
+
     #[test]
     fn corpus_renders_and_draws() {
+        let thai_outlined = ratex_outlines_thai();
         for src in CORPUS {
             let svg = render(src, false).unwrap_or_else(|e| panic!("{src}: {e}"));
             assert!(svg.starts_with("<svg"), "{src}: not an svg root");
-            assert!(
-                !svg.contains("<text"),
-                "{src}: glyphs must be paths, not text"
-            );
+            let has_thai = src.chars().any(|c| ('\u{0E00}'..='\u{0E7F}').contains(&c));
+            if !has_thai || thai_outlined {
+                assert!(
+                    !svg.contains("<text"),
+                    "{src}: glyphs must be paths, not text"
+                );
+            } else {
+                // Without a Thai fallback font in RaTeX, only Thai glyphs may fall back
+                // to `<text>`. The math glyphs in the same formula must still be paths.
+                assert!(
+                    !svg.contains(">x</text>") && !svg.contains(">+</text>"),
+                    "{src}: math glyphs must still be paths"
+                );
+            }
             assert!(svg.contains("<path"), "{src}: no path glyphs emitted");
 
             let (w, h) = svg_size(&svg).unwrap_or_else(|| panic!("{src}: no size"));

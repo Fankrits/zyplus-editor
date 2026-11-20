@@ -4,7 +4,10 @@
 //! Windows' filename rules are enforced on every platform, because a note
 //! created on a Mac with `a:b.md` cannot be copied to a Windows machine at all.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+
+use crate::platform::Os;
 
 pub const MARKDOWN_EXTENSIONS: [&str; 3] = [".md", ".markdown", ".txt"];
 
@@ -95,9 +98,13 @@ pub fn invalid_name_reason(name: &str) -> Option<String> {
 
 /// `path` is `prefix` itself or something inside it.
 pub fn is_under(path: &str, prefix: &str) -> bool {
-    path == prefix
-        || path.starts_with(&format!("{prefix}/"))
-        || path.starts_with(&format!("{prefix}\\"))
+    if path == prefix {
+        return true;
+    }
+    if prefix.ends_with('/') || prefix.ends_with('\\') {
+        return path.starts_with(prefix);
+    }
+    path.starts_with(&format!("{prefix}/")) || path.starts_with(&format!("{prefix}\\"))
 }
 
 /// `title` with its extension swapped for `ext` (".md", ".pdf"). A leading dot
@@ -132,29 +139,69 @@ pub fn free_path(dir: &str, name: &str, label: &str) -> String {
 
 /// The notes folder: `<app data>/Zyplus`, with no OS-guarded parent on the way.
 pub fn default_folder_path() -> Option<PathBuf> {
-    let base = app_data_dir()?;
-    Some(base.join("Zyplus"))
+    default_folder_path_for(Os::current(), &|key| std::env::var_os(key))
 }
 
 /// This platform's per-user application data directory.
 pub fn app_data_dir() -> Option<PathBuf> {
-    if cfg!(target_os = "macos") {
-        home().map(|home| home.join("Library/Application Support"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(PathBuf::from)
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
+    app_data_dir_for(Os::current(), &|key| std::env::var_os(key))
+}
+
+/// This platform's per-user home directory.
+pub fn home_dir() -> Option<PathBuf> {
+    home_for(Os::current(), &|key| std::env::var_os(key))
+}
+
+fn non_empty_env(get: &impl Fn(&str) -> Option<OsString>, key: &str) -> Option<OsString> {
+    get(key).filter(|v| !v.is_empty())
+}
+
+/// XDG Base Directory Specification: relative paths in `XDG_*` variables are
+/// invalid and must be ignored. Checked by leading `/` so Linux rules can be
+/// unit-tested on any host OS.
+fn is_posix_absolute(path: &OsStr) -> bool {
+    path.as_encoded_bytes().starts_with(b"/")
+}
+
+fn home_for(os: Os, get: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    match os {
+        Os::Mac | Os::Linux => non_empty_env(get, "HOME").map(PathBuf::from),
+        Os::Windows => non_empty_env(get, "USERPROFILE")
             .map(PathBuf::from)
-            .or_else(|| home().map(|home| home.join(".local/share")))
+            .or_else(|| {
+                let mut drive = non_empty_env(get, "HOMEDRIVE")?;
+                let path = non_empty_env(get, "HOMEPATH")?;
+                drive.push(path);
+                Some(PathBuf::from(drive))
+            }),
     }
 }
 
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+fn app_data_dir_for(os: Os, get: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    match os {
+        Os::Mac => home_for(Os::Mac, get).map(|home| home.join("Library/Application Support")),
+        Os::Windows => non_empty_env(get, "APPDATA")
+            .map(PathBuf::from)
+            .or_else(|| {
+                home_for(Os::Windows, get).map(|home| home.join("AppData").join("Roaming"))
+            }),
+        Os::Linux => non_empty_env(get, "XDG_DATA_HOME")
+            .filter(|v| is_posix_absolute(v))
+            .map(PathBuf::from)
+            .or_else(|| home_for(Os::Linux, get).map(|home| home.join(".local/share"))),
+    }
+}
+
+fn default_folder_path_for(os: Os, get: &impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    app_data_dir_for(os, get).map(|base| base.join("Zyplus"))
 }
 
 /// Turns a raw OS error into something the user can act on.
 pub fn explain_fs_error(err: &str, path: &str) -> String {
+    explain_fs_error_for(err, path, Os::current())
+}
+
+fn explain_fs_error_for(err: &str, path: &str, os: Os) -> String {
     let denied = [
         "os error 5",
         "EACCES",
@@ -167,25 +214,25 @@ pub fn explain_fs_error(err: &str, path: &str) -> String {
     if !denied {
         return err.to_string();
     }
-    if cfg!(windows) {
-        return format!(
+    match os {
+        Os::Windows => format!(
             "Windows blocked the change to \"{path}\".\n\n\
              This is usually Controlled folder access, which stops apps it does not \
              recognize from writing to Documents and Desktop.\n\n\
              Either choose a different location, or allow Zyplus: Windows Security → \
              Virus & threat protection → Ransomware protection → Allow an app through \
              Controlled folder access."
-        );
-    }
-    if cfg!(target_os = "macos") {
-        return format!(
+        ),
+        Os::Mac => format!(
             "macOS blocked the change to \"{path}\".\n\n\
              Zyplus does not have permission for this folder. Either choose a different \
              location, or grant access in System Settings → Privacy & Security → Files \
              and Folders."
-        );
+        ),
+        Os::Linux => format!(
+            "\"{path}\" is not writable.\n\nCheck the folder's permissions, or choose a different location."
+        ),
     }
-    format!("\"{path}\" is not writable.\n\nCheck the folder's permissions, or choose a different location.")
 }
 
 #[cfg(test)]
@@ -230,6 +277,10 @@ mod tests {
         assert!(is_under("/notes/a.md", "/notes"));
         assert!(is_under("/notes", "/notes"));
         assert!(!is_under("/notes2/a.md", "/notes"));
+        assert!(is_under("/a.md", "/"));
+        assert!(is_under(r"C:\notes\a.md", r"C:\notes"));
+        assert!(!is_under(r"C:\notes2\a.md", r"C:\notes"));
+        assert!(is_under(r"C:\a.md", r"C:\"));
     }
 
     #[test]
@@ -245,5 +296,138 @@ mod tests {
         assert!(is_markdown_file("notes.txt"));
         assert!(is_markdown_file("x.markdown"));
         assert!(!is_markdown_file("data.json"));
+    }
+
+    fn env_map(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let owned: Vec<(String, OsString)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), OsString::from(v)))
+            .collect();
+        move |key| owned.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn home_resolves_per_platform() {
+        assert_eq!(
+            home_for(Os::Mac, &env_map(&[("HOME", "/Users/me")])),
+            Some(PathBuf::from("/Users/me"))
+        );
+        assert_eq!(home_for(Os::Mac, &env_map(&[("HOME", "")])), None);
+
+        assert_eq!(
+            home_for(Os::Linux, &env_map(&[("HOME", "/home/me")])),
+            Some(PathBuf::from("/home/me"))
+        );
+
+        assert_eq!(
+            home_for(
+                Os::Windows,
+                &env_map(&[
+                    ("USERPROFILE", r"C:\Users\me"),
+                    ("HOMEDRIVE", "D:"),
+                    ("HOMEPATH", r"\fallback"),
+                ])
+            ),
+            Some(PathBuf::from(r"C:\Users\me"))
+        );
+        assert_eq!(
+            home_for(
+                Os::Windows,
+                &env_map(&[
+                    ("USERPROFILE", ""),
+                    ("HOMEDRIVE", "C:"),
+                    ("HOMEPATH", r"\Users\me"),
+                ])
+            ),
+            Some(PathBuf::from(r"C:\Users\me"))
+        );
+        assert_eq!(
+            home_for(Os::Windows, &env_map(&[("HOMEDRIVE", "C:")])),
+            None
+        );
+        assert_eq!(
+            home_for(Os::Windows, &env_map(&[("HOME", "/ignored")])),
+            None
+        );
+    }
+
+    #[test]
+    fn app_data_and_default_folder_resolve_per_platform() {
+        let mac_env = env_map(&[("HOME", "/Users/me")]);
+        assert_eq!(
+            app_data_dir_for(Os::Mac, &mac_env),
+            Some(PathBuf::from("/Users/me/Library/Application Support"))
+        );
+        assert_eq!(
+            default_folder_path_for(Os::Mac, &mac_env),
+            Some(PathBuf::from(
+                "/Users/me/Library/Application Support/Zyplus"
+            ))
+        );
+
+        let win_appdata = env_map(&[
+            ("APPDATA", r"C:\Users\me\AppData\Roaming"),
+            ("USERPROFILE", r"C:\Users\other"),
+        ]);
+        assert_eq!(
+            app_data_dir_for(Os::Windows, &win_appdata),
+            Some(PathBuf::from(r"C:\Users\me\AppData\Roaming"))
+        );
+        assert_eq!(
+            default_folder_path_for(Os::Windows, &win_appdata),
+            Some(PathBuf::from(r"C:\Users\me\AppData\Roaming").join("Zyplus"))
+        );
+
+        // Windows falls back to <USERPROFILE>/AppData/Roaming when APPDATA is unset.
+        let win_profile = env_map(&[("APPDATA", ""), ("USERPROFILE", r"C:\Users\me")]);
+        assert_eq!(
+            app_data_dir_for(Os::Windows, &win_profile),
+            Some(
+                PathBuf::from(r"C:\Users\me")
+                    .join("AppData")
+                    .join("Roaming")
+            )
+        );
+
+        // Linux honours XDG_DATA_HOME only when absolute (XDG spec).
+        let linux_xdg = env_map(&[("XDG_DATA_HOME", "/srv/data"), ("HOME", "/home/me")]);
+        assert_eq!(
+            app_data_dir_for(Os::Linux, &linux_xdg),
+            Some(PathBuf::from("/srv/data"))
+        );
+        assert_eq!(
+            default_folder_path_for(Os::Linux, &linux_xdg),
+            Some(PathBuf::from("/srv/data/Zyplus"))
+        );
+
+        for bad_xdg in ["", "relative/data", "./data", "../data"] {
+            let env = env_map(&[("XDG_DATA_HOME", bad_xdg), ("HOME", "/home/me")]);
+            assert_eq!(
+                app_data_dir_for(Os::Linux, &env),
+                Some(PathBuf::from("/home/me/.local/share")),
+                "relative or empty XDG_DATA_HOME={bad_xdg:?} must fall back to ~/.local/share"
+            );
+        }
+        assert_eq!(
+            app_data_dir_for(Os::Linux, &env_map(&[("XDG_DATA_HOME", "relative")])),
+            None
+        );
+    }
+
+    #[test]
+    fn explain_fs_error_tailors_permission_messages_per_os() {
+        assert!(
+            explain_fs_error_for("Permission denied (os error 13)", "/a", Os::Mac)
+                .contains("System Settings")
+        );
+        assert!(
+            explain_fs_error_for("Access is denied. (os error 5)", r"C:\a", Os::Windows)
+                .contains("Controlled folder access")
+        );
+        assert!(explain_fs_error_for("EACCES", "/a", Os::Linux).contains("not writable"));
+        assert_eq!(
+            explain_fs_error_for("No such file or directory", "/a", Os::Linux),
+            "No such file or directory"
+        );
     }
 }

@@ -54,10 +54,11 @@
 //! Each command is logged to stderr as `[script] line N: <command>`, so the log
 //! shows how far a run got.
 //!
-//! `shot` captures one window with `screencapture -l <id>`. The id comes from a
-//! helper named by `ZYPLUS_TEST_WINID`; the helper gets the process id as its
-//! only argument and prints the window number (`tools/winid.swift` in the
-//! project is one). Without the helper, `shot` captures the whole screen.
+//! `shot` captures one window with `screencapture -l <id>` (macOS only; ignored
+//! on other platforms). The id comes from a helper named by `ZYPLUS_TEST_WINID`;
+//! the helper gets the process id as its only argument and prints the window
+//! number (`tools/winid.swift` in the project is one). Without the helper, `shot`
+//! captures the whole screen.
 
 use std::process::Command;
 use std::time::Duration;
@@ -68,6 +69,7 @@ use gpui::{
     ScrollWheelEvent, TouchPhase, WindowHandle,
 };
 
+use crate::platform::Os;
 use crate::rich_editor::RichEditor;
 use crate::{Modal, SettingsSection, Zyplus};
 
@@ -288,7 +290,8 @@ async fn execute(cmd: &Cmd, handle: WindowHandle<Zyplus>, cx: &mut AsyncApp) {
         } => {
             let modifiers = Modifiers {
                 shift: *shift,
-                platform: *cmd,
+                platform: *cmd && Os::current() == Os::Mac,
+                control: *cmd && Os::current() != Os::Mac,
                 ..Modifiers::default()
             };
             let position = point(px(*x), px(*y));
@@ -466,10 +469,56 @@ async fn execute(cmd: &Cmd, handle: WindowHandle<Zyplus>, cx: &mut AsyncApp) {
     }
 }
 
+/// Translates macOS-style script key specs (such as `cmd-s`, `cmd-alt-right`,
+/// `cmd-down`) to the real binding for `os`. Identity on macOS.
+pub(crate) fn translate_key_spec(os: Os, spec: &str) -> String {
+    if os == Os::Mac {
+        return spec.to_string();
+    }
+    let Ok(mut stroke) = Keystroke::parse(spec) else {
+        return spec.to_string();
+    };
+    if !stroke.modifiers.platform {
+        return spec.to_string();
+    }
+    stroke.modifiers.platform = false;
+    match (stroke.modifiers.alt, stroke.key.as_str()) {
+        (true, "right") => {
+            stroke.modifiers.alt = false;
+            stroke.modifiers.control = true;
+            stroke.key = "pagedown".to_string();
+        }
+        (true, "left") => {
+            stroke.modifiers.alt = false;
+            stroke.modifiers.control = true;
+            stroke.key = "pageup".to_string();
+        }
+        (false, "up") => {
+            stroke.modifiers.control = true;
+            stroke.key = "home".to_string();
+        }
+        (false, "down") => {
+            stroke.modifiers.control = true;
+            stroke.key = "end".to_string();
+        }
+        (false, "left") => {
+            stroke.key = "home".to_string();
+        }
+        (false, "right") => {
+            stroke.key = "end".to_string();
+        }
+        _ => {
+            stroke.modifiers.control = true;
+        }
+    }
+    stroke.unparse()
+}
+
 fn key(handle: WindowHandle<Zyplus>, cx: &mut AsyncApp, spec: &str) {
-    match Keystroke::parse(spec) {
+    let translated = translate_key_spec(Os::current(), spec);
+    match Keystroke::parse(&translated) {
         Ok(stroke) => dispatch_key(handle, cx, stroke),
-        Err(err) => eprintln!("[script] bad keystroke {spec:?}: {err}"),
+        Err(err) => eprintln!("[script] bad keystroke {spec:?} ({translated:?}): {err}"),
     }
 }
 
@@ -553,6 +602,10 @@ fn mouse_up(
 }
 
 fn shot(path: &str) {
+    if Os::current() != Os::Mac {
+        eprintln!("[script] shot is only supported on macOS; skipping {path}");
+        return;
+    }
     let pid = std::process::id().to_string();
     let window_id = std::env::var("ZYPLUS_TEST_WINID")
         .ok()
@@ -929,5 +982,91 @@ impl Zyplus {
             self.update_status.pill_label().unwrap_or_default()
         ));
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn translate_key_spec_is_identity_on_mac_and_maps_bindings_elsewhere() {
+        let cases = [
+            ("cmd-s", "ctrl-s"),
+            ("cmd-shift-s", "ctrl-shift-s"),
+            ("cmd-alt-f", "ctrl-alt-f"),
+            ("cmd-,", "ctrl-,"),
+            ("cmd-/", "ctrl-/"),
+            ("cmd-up", "ctrl-home"),
+            ("cmd-down", "ctrl-end"),
+            ("shift-cmd-up", "ctrl-shift-home"),
+            ("shift-cmd-down", "ctrl-shift-end"),
+            ("cmd-left", "home"),
+            ("cmd-right", "end"),
+            ("shift-cmd-left", "shift-home"),
+            ("shift-cmd-right", "shift-end"),
+            ("cmd-alt-right", "ctrl-pagedown"),
+            ("cmd-alt-left", "ctrl-pageup"),
+            ("enter", "enter"),
+            ("escape", "escape"),
+            ("shift-left", "shift-left"),
+            ("f2", "f2"),
+            ("delete", "delete"),
+        ];
+
+        for (mac_spec, non_mac_spec) in cases {
+            assert_eq!(translate_key_spec(Os::Mac, mac_spec), mac_spec);
+            for os in [Os::Windows, Os::Linux] {
+                let got = translate_key_spec(os, mac_spec);
+                assert_eq!(
+                    Keystroke::parse(&got).unwrap(),
+                    Keystroke::parse(non_mac_spec).unwrap(),
+                    "{os:?}: {mac_spec:?} -> {got:?} (expected {non_mac_spec:?})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_e2e_scenario_key_spec_translates_to_a_bound_key_on_all_platforms() {
+        let scenarios_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/e2e/scenarios");
+        let mut specs = HashSet::new();
+        for entry in std::fs::read_dir(&scenarios_dir).expect("read scripts/e2e/scenarios") {
+            let script = entry.expect("dir entry").path().join("script.txt");
+            if !script.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&script).expect("read scenario script");
+            for (_, cmd) in parse(&text).expect("parse scenario script") {
+                if let Cmd::Key(spec) = cmd {
+                    specs.insert(spec);
+                }
+            }
+        }
+        assert!(
+            specs.len() >= 15,
+            "expected at least 15 unique key specs across e2e scenarios, got {}",
+            specs.len()
+        );
+
+        for os in [Os::Mac, Os::Windows, Os::Linux] {
+            let bound: HashSet<Keystroke> = crate::keymap::all_bindings(os)
+                .iter()
+                .map(|b| b.keystrokes()[0].inner().clone())
+                .collect();
+            for spec in &specs {
+                let translated = translate_key_spec(os, spec);
+                let stroke = Keystroke::parse(&translated).unwrap_or_else(|err| {
+                    panic!("{os:?}: translated {spec:?} -> {translated:?} failed to parse: {err}")
+                });
+                assert!(
+                    bound.contains(&stroke),
+                    "{os:?}: e2e key spec {spec:?} translated to {translated:?} ({stroke:?}) is not bound"
+                );
+            }
+        }
     }
 }

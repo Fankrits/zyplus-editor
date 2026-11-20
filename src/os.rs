@@ -25,16 +25,25 @@
 //! # Single instance
 //!
 //! `acquire_single_instance()` decides at startup whether this process is the
-//! primary. Later launches forward their file arguments over a Unix socket and
-//! exit. The primary's `Receiver` yields one `Vec<String>` per later launch; an
-//! empty `Vec` means "that launch had no files, just bring the window forward".
-//! Poll it from a background timer, for example every 100 ms with `try_recv`.
-//!
-//! Non-Unix platforms are always primary, so the receiver never yields.
+//! primary. Later launches forward their file arguments to the primary and
+//! exit: over a Unix domain socket on macOS/Linux, and over an authenticated
+//! loopback TCP listener on Windows. The primary's `Receiver` yields one
+//! `Vec<String>` per later launch; an empty `Vec` means "that launch had no
+//! files, just bring the window forward". Poll it from a background timer, for
+//! example every 100 ms with `try_recv`.
 
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+
+use crate::platform::Os;
 
 /// Bundle identifier of the app; LaunchServices keys default-app claims on it.
 #[allow(dead_code)] // Read by the default-app functions below, which the Settings UI calls.
@@ -129,11 +138,18 @@ pub fn urls_to_paths(urls: &[String]) -> Vec<String> {
 
 /// Decodes one `file://` URL to a path, or `None` if it is not a local file URL.
 ///
-/// Accepts `file:///path`, `file://localhost/path` and `file:/path`. A remote
-/// host is rejected. Percent-escapes are decoded; an invalid escape such as
+/// Accepts `file:///path`, `file://localhost/path` and `file:/path`. Remote
+/// hosts — including Windows UNC URLs such as `file://server/share/a.md` — are
+/// rejected on all platforms so external URLs cannot trigger unintended remote
+/// or SMB lookups (Windows UNC paths are still supported when passed directly
+/// on the command line). Percent-escapes are decoded; an invalid escape such as
 /// `%ZZ` stays literal, and a percent-encoded byte sequence that is not valid
 /// UTF-8 is rejected.
 pub fn file_url_to_path(url: &str) -> Option<String> {
+    file_url_to_path_for(url, Os::current())
+}
+
+fn file_url_to_path_for(url: &str, os: Os) -> Option<String> {
     let scheme_len = "file:".len();
     if url.len() < scheme_len || !url[..scheme_len].eq_ignore_ascii_case("file:") {
         return None;
@@ -158,12 +174,19 @@ pub fn file_url_to_path(url: &str) -> Option<String> {
     }
 
     let decoded = percent_decode(path)?;
-    // Windows: `file:///C:/notes/a.md` leaves `/C:/notes/a.md`; the leading slash goes.
-    if cfg!(windows) {
+    if os == Os::Windows {
         let b = decoded.as_bytes();
-        if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
-            return Some(decoded[1..].to_string());
+        // Windows: `file:///C:/notes/a.md` (or `file:///C%3A/notes/a.md`) leaves
+        // `/C:/notes/a.md`; strip the leading slash and normalize `/` to `\`.
+        if b.len() >= 3
+            && b[0] == b'/'
+            && b[1].is_ascii_alphabetic()
+            && b[2] == b':'
+            && (b.len() == 3 || b[3] == b'/')
+        {
+            return Some(decoded[1..].replace('/', "\\"));
         }
+        return Some(decoded.replace('/', "\\"));
     }
     Some(decoded)
 }
@@ -206,6 +229,17 @@ fn hex_val(b: u8) -> u8 {
 /// single-instance protocol.
 const SOCKET_NAME: &str = ".gpui-single-instance.sock";
 
+/// Port/token file name inside `<app data>/Zyplus/` for the loopback TCP
+/// single-instance transport (used on Windows). Leading dot keeps it out of the
+/// sidebar.
+#[cfg_attr(unix, allow(dead_code))]
+const PORT_FILE_NAME: &str = ".gpui-single-instance.port";
+
+/// Short acknowledgement written by the TCP listener once a request passes
+/// token verification and has been queued to the primary.
+#[cfg_attr(unix, allow(dead_code))]
+const TCP_ACK: &[u8] = b"ok\n";
+
 /// `sun_path` is 104 bytes on macOS and 108 on Linux, NUL included. Anything
 /// longer cannot be bound, so the socket falls back to the temp directory.
 const MAX_SOCKET_PATH: usize = 100;
@@ -219,7 +253,7 @@ const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 /// Result of `acquire_single_instance`.
 pub enum SingleInstance {
     /// This process owns the app. Keep the `Primary` alive for as long as the
-    /// app runs: dropping it removes the socket file.
+    /// app runs: dropping it removes the socket or port file.
     Primary(Primary),
     /// Another instance is running and has taken this launch's files. The
     /// caller should exit right away.
@@ -238,14 +272,28 @@ pub struct Primary {
 /// Without the kept-alive sender, `try_recv` would return `Disconnected`
 /// instead of `Empty`.
 struct Guard {
-    socket: Option<PathBuf>,
+    cleanup_path: Option<PathBuf>,
+    /// When set, `cleanup_path` is a TCP port file and is only removed if it
+    /// still carries this primary's token.
+    cleanup_token: Option<String>,
     _keepalive: Option<Sender<Vec<String>>>,
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        if let Some(path) = self.socket.take() {
-            let _ = std::fs::remove_file(path);
+        if let Some(path) = self.cleanup_path.take() {
+            match self.cleanup_token.take() {
+                Some(token) => {
+                    if read_port_file(&path)
+                        .is_some_and(|ep| constant_time_eq(ep.token.as_bytes(), token.as_bytes()))
+                    {
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+                None => {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
         }
     }
 }
@@ -253,12 +301,22 @@ impl Drop for Guard {
 /// Decides whether this process is the primary instance.
 ///
 /// Forwarded launches send `cli_file_args()` to the primary and return
-/// `Forwarded`. The primary starts listening and returns `Primary`. A socket
-/// file left behind by a crash is detected (nothing accepts on it) and
-/// replaced. If the socket cannot be bound at all, the app still starts as
-/// primary without forwarding, and the reason goes to stderr.
+/// `Forwarded`. The primary starts listening and returns `Primary`. A stale
+/// socket or port file left behind by a crash is detected and replaced. If the
+/// listener cannot be started at all, the app still starts as primary without
+/// forwarding, and the reason goes to stderr.
 pub fn acquire_single_instance() -> SingleInstance {
-    acquire_at(&socket_path(), cli_file_args())
+    acquire_single_instance_with(cli_file_args())
+}
+
+#[cfg(unix)]
+fn acquire_single_instance_with(files: Vec<String>) -> SingleInstance {
+    acquire_at(&socket_path(), files)
+}
+
+#[cfg(not(unix))]
+fn acquire_single_instance_with(files: Vec<String>) -> SingleInstance {
+    acquire_tcp(&port_file_path(), files)
 }
 
 /// Where the single-instance socket lives: `<app data>/Zyplus/.gpui-single-instance.sock`.
@@ -268,17 +326,51 @@ pub fn socket_path() -> PathBuf {
     pick_socket_path(preferred, std::env::temp_dir())
 }
 
+fn sanitize_user(raw: Option<&str>) -> String {
+    let clean: String = raw
+        .unwrap_or("user")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if clean.is_empty() {
+        "user".into()
+    } else {
+        clean
+    }
+}
+
 fn pick_socket_path(preferred: Option<PathBuf>, temp_dir: PathBuf) -> PathBuf {
     match preferred {
         Some(p) if p.as_os_str().len() < MAX_SOCKET_PATH => p,
         _ => {
-            let user: String = std::env::var("USER")
-                .unwrap_or_else(|_| "user".into())
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric())
-                .collect();
+            let user_env = std::env::var("USER").ok();
+            let user = sanitize_user(user_env.as_deref());
             temp_dir.join(format!("zyplus-gpui-{user}.sock"))
         }
+    }
+}
+
+/// Where the Windows single-instance port/token file lives:
+/// `<app data>/Zyplus/.gpui-single-instance.port`, falling back to temp dir
+/// when the app data directory is unavailable.
+#[cfg_attr(unix, allow(dead_code))]
+fn port_file_path() -> PathBuf {
+    let preferred = crate::paths::app_data_dir().map(|d| d.join("Zyplus").join(PORT_FILE_NAME));
+    let user = std::env::var("USERNAME")
+        .ok()
+        .or_else(|| std::env::var("USER").ok());
+    pick_port_file_path(preferred, std::env::temp_dir(), user.as_deref())
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn pick_port_file_path(
+    preferred: Option<PathBuf>,
+    temp_dir: PathBuf,
+    user: Option<&str>,
+) -> PathBuf {
+    match preferred {
+        Some(p) => p,
+        None => temp_dir.join(format!("zyplus-gpui-{}.port", sanitize_user(user))),
     }
 }
 
@@ -320,7 +412,8 @@ fn acquire_at(socket: &Path, files: Vec<String>) -> SingleInstance {
             SingleInstance::Primary(Primary {
                 requests: rx,
                 _guard: Guard {
-                    socket: Some(socket.to_path_buf()),
+                    cleanup_path: Some(socket.to_path_buf()),
+                    cleanup_token: None,
                     _keepalive: None,
                 },
             })
@@ -335,7 +428,8 @@ fn acquire_at(socket: &Path, files: Vec<String>) -> SingleInstance {
             SingleInstance::Primary(Primary {
                 requests: rx,
                 _guard: Guard {
-                    socket: None,
+                    cleanup_path: None,
+                    cleanup_token: None,
                     _keepalive: Some(tx),
                 },
             })
@@ -343,17 +437,273 @@ fn acquire_at(socket: &Path, files: Vec<String>) -> SingleInstance {
     }
 }
 
-#[cfg(not(unix))]
-fn acquire_at(_socket: &Path, _files: Vec<String>) -> SingleInstance {
-    // No forwarding on this platform: every launch is its own primary.
+// ---------------------------------------------------------------------------
+// Loopback TCP single-instance transport (used on Windows; compiled and tested everywhere)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TcpEndpoint {
+    port: u16,
+    token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct TcpRequest {
+    token: String,
+    files: Vec<String>,
+}
+
+static TOKEN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Generates an unpredictable 256-bit hex token using OS-seeded `RandomState`
+/// plus process/time/sequence entropy (std only).
+#[cfg_attr(unix, allow(dead_code))]
+fn generate_token() -> String {
+    let pid = std::process::id();
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let instant = Instant::now();
+    let mut parts = [0u64; 4];
+    for (idx, slot) in parts.iter_mut().enumerate() {
+        let seq = TOKEN_SEQ.fetch_add(1, Ordering::Relaxed);
+        let mut h = RandomState::new().build_hasher();
+        h.write_u64(seq);
+        h.write_usize(idx);
+        h.write_u32(pid);
+        h.write_u128(now_nanos);
+        h.write_u128(instant.elapsed().as_nanos());
+        *slot = h.finish();
+    }
+    format!(
+        "{:016x}{:016x}{:016x}{:016x}",
+        parts[0], parts[1], parts[2], parts[3]
+    )
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+fn read_port_file(path: &Path) -> Option<TcpEndpoint> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let ep: TcpEndpoint = serde_json::from_str(text.trim()).ok()?;
+    if ep.port == 0 || ep.token.is_empty() {
+        return None;
+    }
+    Some(ep)
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn write_port_file(path: &Path, endpoint: &TcpEndpoint) -> io::Result<()> {
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    std::fs::create_dir_all(dir)?;
+
+    let body = serde_json::to_string(endpoint)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let seq = TOKEN_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(
+        ".gpui-single-instance.{}.{seq}.tmp",
+        std::process::id()
+    ));
+
+    let write_res = (|| -> io::Result<()> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(&tmp)?;
+        file.write_all(body.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    })();
+
+    if write_res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    write_res
+}
+
+/// Loopback TCP single-instance acquisition. Compiled on all platforms so unit
+/// tests exercise every edge case here; used by `acquire_single_instance()` on
+/// Windows.
+#[cfg_attr(unix, allow(dead_code))]
+fn acquire_tcp(port_file: &Path, files: Vec<String>) -> SingleInstance {
+    if let Some(dir) = port_file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+
+    // Try forwarding to an existing primary. Only treat it as live when the
+    // peer accepts our token and replies with TCP_ACK; connection refused,
+    // corrupt file, or an unrelated service reusing the port falls through and
+    // lets this process take over.
+    if let Some(endpoint) = read_port_file(port_file) {
+        if tcp_send_request(&endpoint, &files).is_ok() {
+            return SingleInstance::Forwarded;
+        }
+    }
+
     let (tx, rx) = mpsc::channel();
+    let listener = match TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))) {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!(
+                "single-instance: could not bind loopback listener: {e}; not forwarding launches"
+            );
+            return SingleInstance::Primary(Primary {
+                requests: rx,
+                _guard: Guard {
+                    cleanup_path: None,
+                    cleanup_token: None,
+                    _keepalive: Some(tx),
+                },
+            });
+        }
+    };
+
+    let port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(e) => {
+            eprintln!(
+                "single-instance: could not read listener address: {e}; not forwarding launches"
+            );
+            return SingleInstance::Primary(Primary {
+                requests: rx,
+                _guard: Guard {
+                    cleanup_path: None,
+                    cleanup_token: None,
+                    _keepalive: Some(tx),
+                },
+            });
+        }
+    };
+
+    let token = generate_token();
+    let endpoint = TcpEndpoint {
+        port,
+        token: token.clone(),
+    };
+    if let Err(e) = write_port_file(port_file, &endpoint) {
+        eprintln!(
+            "single-instance: could not write {}: {e}; not forwarding launches",
+            port_file.display()
+        );
+        return SingleInstance::Primary(Primary {
+            requests: rx,
+            _guard: Guard {
+                cleanup_path: None,
+                cleanup_token: None,
+                _keepalive: Some(tx),
+            },
+        });
+    }
+
+    let listener_token = token.clone();
+    std::thread::Builder::new()
+        .name("single-instance".into())
+        .spawn(move || tcp_accept_loop(listener, listener_token, tx))
+        .expect("could not start the single-instance listener thread");
+
     SingleInstance::Primary(Primary {
         requests: rx,
         _guard: Guard {
-            socket: None,
-            _keepalive: Some(tx),
+            cleanup_path: Some(port_file.to_path_buf()),
+            cleanup_token: Some(token),
+            _keepalive: None,
         },
     })
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn tcp_send_request(endpoint: &TcpEndpoint, files: &[String]) -> io::Result<()> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], endpoint.port));
+    let mut stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT)?;
+    let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+    let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+
+    let req = TcpRequest {
+        token: endpoint.token.clone(),
+        files: files.to_vec(),
+    };
+    let mut line =
+        serde_json::to_string(&req).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    line.push('\n');
+    stream.write_all(line.as_bytes())?;
+    stream.flush()?;
+
+    let mut ack = [0u8; 3];
+    stream.read_exact(&mut ack)?;
+    if ack != TCP_ACK {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "single-instance peer rejected the request",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn tcp_accept_loop(listener: TcpListener, expected_token: String, tx: Sender<Vec<String>>) {
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        if !tcp_handle_connection(stream, &expected_token, &tx) {
+            break;
+        }
+    }
+}
+
+/// Handles one incoming TCP connection. Rejects wrong tokens, malformed JSON,
+/// and oversized payloads without tearing down the listener. Returns `false`
+/// only when the primary receiver has been dropped.
+#[cfg_attr(unix, allow(dead_code))]
+fn tcp_handle_connection(
+    mut stream: TcpStream,
+    expected_token: &str,
+    tx: &Sender<Vec<String>>,
+) -> bool {
+    let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
+
+    let Some(req) = read_tcp_request(&mut stream) else {
+        return true;
+    };
+    if !constant_time_eq(req.token.as_bytes(), expected_token.as_bytes()) {
+        return true;
+    }
+    if tx.send(req.files).is_err() {
+        // The app has dropped its receiver; nothing left to serve.
+        return false;
+    }
+    let _ = stream.write_all(TCP_ACK);
+    let _ = stream.flush();
+    true
+}
+
+#[cfg_attr(unix, allow(dead_code))]
+fn read_tcp_request(stream: &mut TcpStream) -> Option<TcpRequest> {
+    let mut buf = Vec::new();
+    let mut limited = BufReader::new(Read::by_ref(stream).take(MAX_REQUEST_BYTES + 1));
+    let n = limited.read_until(b'\n', &mut buf).ok()?;
+    if n == 0 || (n as u64) > MAX_REQUEST_BYTES || !buf.ends_with(b"\n") {
+        return None;
+    }
+    let line = std::str::from_utf8(&buf).ok()?;
+    serde_json::from_str::<TcpRequest>(line.trim_end()).ok()
 }
 
 /// Wire format: one JSON array of path strings, newline-terminated.
@@ -524,7 +874,10 @@ mod launch_services {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{file_url_to_path, resolve_arg, strip_verbatim_prefix, urls_to_paths};
+    use super::{
+        file_url_to_path, file_url_to_path_for, resolve_arg, strip_verbatim_prefix, urls_to_paths,
+    };
+    use crate::platform::Os;
     use std::path::{Path, PathBuf};
 
     /// A fresh directory per test, under the temp dir. Keep the names short:
@@ -534,6 +887,35 @@ mod path_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Encodes a local path as a valid RFC 8089 `file:///` URL for `os`.
+    fn path_to_file_url_for(path: &str, os: Os) -> String {
+        let clean = if os == Os::Windows {
+            strip_verbatim_prefix(path).replace('\\', "/")
+        } else {
+            path.to_string()
+        };
+        let mut encoded = String::with_capacity(clean.len() + 16);
+        for &b in clean.as_bytes() {
+            let keep =
+                b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.' | b'~' | b':');
+            if keep {
+                encoded.push(b as char);
+            } else {
+                use std::fmt::Write;
+                let _ = write!(encoded, "%{b:02X}");
+            }
+        }
+        if encoded.starts_with('/') {
+            format!("file://{encoded}")
+        } else {
+            format!("file:///{encoded}")
+        }
+    }
+
+    fn path_to_file_url(path: &Path) -> String {
+        path_to_file_url_for(&path.to_string_lossy(), Os::current())
     }
 
     #[test]
@@ -621,23 +1003,355 @@ mod path_tests {
     }
 
     #[test]
+    fn decodes_windows_file_urls_and_rejects_unc_hosts() {
+        assert_eq!(
+            file_url_to_path_for("file:///C:/Users/me/My%20Notes/a.md", Os::Windows).as_deref(),
+            Some(r"C:\Users\me\My Notes\a.md")
+        );
+        assert_eq!(
+            file_url_to_path_for("file://localhost/C:/notes/x.md", Os::Windows).as_deref(),
+            Some(r"C:\notes\x.md")
+        );
+        assert_eq!(
+            file_url_to_path_for("file:/C:/notes/x.md", Os::Windows).as_deref(),
+            Some(r"C:\notes\x.md")
+        );
+        // Percent-encoded drive colon and non-ASCII UTF-8 (accented + Thai).
+        assert_eq!(
+            file_url_to_path_for(
+                "file:///C%3A/notes/a%C3%A9/%E0%B8%AA%E0%B8%A7%E0%B8%B1%E0%B8%AA%E0%B8%94%E0%B8%B5.md",
+                Os::Windows
+            )
+            .as_deref(),
+            Some(r"C:\notes\aé\สวัสดี.md")
+        );
+        // Remote/UNC hosts are rejected on Windows too (local-only policy).
+        assert_eq!(
+            file_url_to_path_for("file://server/share/a.md", Os::Windows),
+            None
+        );
+        // Helper builds valid URLs for both Unix and Windows paths.
+        assert_eq!(
+            path_to_file_url_for(r"C:\Users\me\My Note.md", Os::Windows),
+            "file:///C:/Users/me/My%20Note.md"
+        );
+        assert_eq!(
+            path_to_file_url_for("/tmp/My Note.md", Os::Mac),
+            "file:///tmp/My%20Note.md"
+        );
+    }
+
+    #[test]
     fn urls_to_paths_keeps_only_file_urls_and_canonicalizes_existing_ones() {
         let dir = scratch_dir("urls");
         let file = dir.join("My Note.md");
         std::fs::write(&file, "# hi").unwrap();
-        let url = format!("file://{}", file.to_string_lossy().replace(' ', "%20"));
+        let url = path_to_file_url(&file);
 
-        let urls = vec![
-            url,
-            "https://example.com/".to_string(),
-            "file:///definitely/not/here%20.md".to_string(),
-        ];
+        let (missing_url, expected_missing) = if cfg!(windows) {
+            (
+                "file:///C:/definitely/not/here%20.md".to_string(),
+                r"C:\definitely\not\here .md",
+            )
+        } else {
+            (
+                "file:///definitely/not/here%20.md".to_string(),
+                "/definitely/not/here .md",
+            )
+        };
+
+        let urls = vec![url, "https://example.com/".to_string(), missing_url];
         let paths = urls_to_paths(&urls);
         assert_eq!(paths.len(), 2, "got {paths:?}");
         assert!(paths[0].ends_with("My Note.md"), "got {}", paths[0]);
-        assert_eq!(paths[1], "/definitely/not/here .md");
+        assert!(
+            !paths[0].starts_with(r"\\?\"),
+            "verbatim prefix leaked: {}",
+            paths[0]
+        );
+        assert_eq!(paths[1], expected_missing);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod tcp_single_instance_tests {
+    use super::{
+        acquire_tcp, pick_port_file_path, read_port_file, tcp_send_request, write_port_file,
+        Primary, SingleInstance, TcpEndpoint, MAX_REQUEST_BYTES,
+    };
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    fn port_file_in(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zy-tcp-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(".gpui-single-instance.port")
+    }
+
+    fn expect_primary(s: SingleInstance) -> Primary {
+        match s {
+            SingleInstance::Primary(p) => p,
+            SingleInstance::Forwarded => panic!("expected to be primary"),
+        }
+    }
+
+    fn expect_forwarded(s: SingleInstance) {
+        if let SingleInstance::Primary(_) = s {
+            panic!("expected to forward, but became primary");
+        }
+    }
+
+    #[test]
+    fn tcp_later_launch_forwards_files_and_empty_raise_to_primary() {
+        let port_file = port_file_in("fwd");
+        let primary = expect_primary(acquire_tcp(&port_file, vec![]));
+        assert!(port_file.exists());
+
+        expect_forwarded(acquire_tcp(
+            &port_file,
+            vec![r"C:\notes\a.md".into(), r"C:\notes\b.csv".into()],
+        ));
+        let got = primary
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .expect("primary should receive forwarded files");
+        assert_eq!(
+            got,
+            vec![r"C:\notes\a.md".to_string(), r"C:\notes\b.csv".to_string()]
+        );
+
+        // Empty launch still reaches the primary so it can raise its window.
+        expect_forwarded(acquire_tcp(&port_file, vec![]));
+        let got = primary
+            .requests
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(got.is_empty());
+
+        assert!(matches!(
+            primary.requests.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        drop(primary);
+        assert!(
+            !port_file.exists(),
+            "dropping the primary removes its port file"
+        );
+        let _ = std::fs::remove_dir_all(port_file.parent().unwrap());
+    }
+
+    #[test]
+    fn tcp_rejects_wrong_token_and_stays_alive() {
+        let port_file = port_file_in("wrong-token");
+        let primary = expect_primary(acquire_tcp(&port_file, vec![]));
+        let ep = read_port_file(&port_file).expect("valid port file");
+
+        let bad = TcpEndpoint {
+            port: ep.port,
+            token: "0000000000000000000000000000000000000000000000000000000000000000".into(),
+        };
+        assert!(
+            tcp_send_request(&bad, &[r"C:\evil.md".into()]).is_err(),
+            "wrong token must be rejected"
+        );
+        assert!(matches!(
+            primary.requests.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        // Listener is still healthy for a legitimate launch.
+        expect_forwarded(acquire_tcp(&port_file, vec![r"C:\good.md".into()]));
+        assert_eq!(
+            primary
+                .requests
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            vec![r"C:\good.md".to_string()]
+        );
+
+        drop(primary);
+        let _ = std::fs::remove_dir_all(port_file.parent().unwrap());
+    }
+
+    #[test]
+    fn tcp_rejects_oversized_and_malformed_requests_without_crashing() {
+        let port_file = port_file_in("bounds");
+        let primary = expect_primary(acquire_tcp(&port_file, vec![]));
+        let ep = read_port_file(&port_file).expect("valid port file");
+        let addr = SocketAddr::from(([127, 0, 0, 1], ep.port));
+
+        // Oversized payload (> MAX_REQUEST_BYTES).
+        {
+            let mut s = TcpStream::connect(addr).unwrap();
+            let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+            let huge = format!(
+                "{{\"token\":\"{}\",\"files\":[\"{}\"]}}\n",
+                ep.token,
+                "a".repeat(MAX_REQUEST_BYTES as usize + 64)
+            );
+            let _ = s.write_all(huge.as_bytes());
+            let mut ack = Vec::new();
+            let _ = s.read_to_end(&mut ack);
+            assert!(ack.is_empty(), "oversized request must not be acked");
+        }
+
+        // Malformed JSON.
+        {
+            let mut s = TcpStream::connect(addr).unwrap();
+            let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+            s.write_all(b"{not valid json\n").unwrap();
+            let mut ack = Vec::new();
+            let _ = s.read_to_end(&mut ack);
+            assert!(ack.is_empty(), "malformed request must not be acked");
+        }
+
+        assert!(matches!(
+            primary.requests.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        // Legitimate launch still succeeds afterwards.
+        expect_forwarded(acquire_tcp(&port_file, vec!["/after.md".into()]));
+        assert_eq!(
+            primary
+                .requests
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            vec!["/after.md".to_string()]
+        );
+
+        drop(primary);
+        let _ = std::fs::remove_dir_all(port_file.parent().unwrap());
+    }
+
+    #[test]
+    fn tcp_takes_over_stale_and_corrupt_port_files() {
+        // Bind and immediately drop to obtain an unused ephemeral port.
+        let dead_port = {
+            let l = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+            l.local_addr().unwrap().port()
+        };
+
+        let port_file = port_file_in("stale");
+        write_port_file(
+            &port_file,
+            &TcpEndpoint {
+                port: dead_port,
+                token: "stale-token".into(),
+            },
+        )
+        .unwrap();
+
+        let primary = expect_primary(acquire_tcp(&port_file, vec![]));
+        let ep = read_port_file(&port_file).unwrap();
+        assert_ne!(ep.token, "stale-token");
+        expect_forwarded(acquire_tcp(&port_file, vec!["/recovered.md".into()]));
+        assert_eq!(
+            primary
+                .requests
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            vec!["/recovered.md".to_string()]
+        );
+        drop(primary);
+
+        // Corrupt file content is also taken over cleanly.
+        std::fs::write(&port_file, b"not json at all").unwrap();
+        let primary2 = expect_primary(acquire_tcp(&port_file, vec![]));
+        expect_forwarded(acquire_tcp(&port_file, vec!["/corrupt-ok.md".into()]));
+        assert_eq!(
+            primary2
+                .requests
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            vec!["/corrupt-ok.md".to_string()]
+        );
+        drop(primary2);
+        let _ = std::fs::remove_dir_all(port_file.parent().unwrap());
+    }
+
+    #[test]
+    fn tcp_takes_over_when_stale_port_is_reused_by_unrelated_service() {
+        let port_file = port_file_in("reused");
+        let decoy = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+        let decoy_port = decoy.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            // Accepts one connection and closes immediately without sending TCP_ACK.
+            let _ = decoy.accept();
+        });
+
+        write_port_file(
+            &port_file,
+            &TcpEndpoint {
+                port: decoy_port,
+                token: "old-token".into(),
+            },
+        )
+        .unwrap();
+
+        let primary = expect_primary(acquire_tcp(&port_file, vec![]));
+        handle.join().unwrap();
+
+        let ep = read_port_file(&port_file).unwrap();
+        assert_ne!(ep.port, decoy_port);
+        expect_forwarded(acquire_tcp(&port_file, vec!["/mine.md".into()]));
+        assert_eq!(
+            primary
+                .requests
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            vec!["/mine.md".to_string()]
+        );
+        drop(primary);
+        let _ = std::fs::remove_dir_all(port_file.parent().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tcp_port_file_is_created_user_only_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let port_file = port_file_in("perms");
+        let primary = expect_primary(acquire_tcp(&port_file, vec![]));
+        let mode = std::fs::metadata(&port_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "token file must be user-only");
+        drop(primary);
+        let _ = std::fs::remove_dir_all(port_file.parent().unwrap());
+    }
+
+    #[test]
+    fn tcp_missing_parent_dirs_and_path_selection() {
+        let base = port_file_in("nested");
+        let nested = base
+            .parent()
+            .unwrap()
+            .join("a")
+            .join("b")
+            .join(".gpui-single-instance.port");
+        let primary = expect_primary(acquire_tcp(&nested, vec![]));
+        assert!(nested.exists());
+        drop(primary);
+        let _ = std::fs::remove_dir_all(base.parent().unwrap());
+
+        let preferred =
+            PathBuf::from(r"C:\Users\me\AppData\Roaming\Zyplus\.gpui-single-instance.port");
+        assert_eq!(
+            pick_port_file_path(
+                Some(preferred.clone()),
+                PathBuf::from(r"C:\Temp"),
+                Some("me")
+            ),
+            preferred
+        );
+        let fallback = pick_port_file_path(None, PathBuf::from("/tmp"), Some("Alice Smith!"));
+        assert_eq!(fallback, Path::new("/tmp/zyplus-gpui-AliceSmith.port"));
+        let empty_user = pick_port_file_path(None, PathBuf::from("/tmp"), Some("!!!"));
+        assert_eq!(empty_user, Path::new("/tmp/zyplus-gpui-user.port"));
     }
 }
 

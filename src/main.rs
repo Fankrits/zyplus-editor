@@ -6,10 +6,16 @@
 //!
 //! Includes session restore, ten theme palettes, find/replace, rich (WYSIWYG)
 //! and plain markdown views, CSV, JSON and chart views, Mermaid diagrams
-//! (`mermaid.rs`), LaTeX math (`math.rs`), PDF export (`export_pdf`, using macOS
-//! system fonts), update check and install (`updater`), context menus,
+//! (`mermaid.rs`), LaTeX math (`math.rs`), PDF export (`export_pdf`, using system
+//! fonts), update check and install (`updater`), context menus,
 //! settings, autosave and keyboard shortcuts.
 
+// A release build on Windows is a GUI app: without this the .exe opens a console
+// window behind the editor.
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 // UI code passes many layout inputs and builds nested element/callback types;
 // splitting them into aliases or parameter structs would not make it clearer.
 // Index loops in the table and chart maths read the same column across several
@@ -29,11 +35,13 @@ mod export_pdf;
 mod fullscreen_view;
 mod highlight;
 mod json_view;
+mod keymap;
 mod math;
 mod mermaid;
 mod nav;
 mod os;
 mod paths;
+mod platform;
 mod preview;
 mod rich_blocks;
 mod rich_editor;
@@ -47,6 +55,7 @@ mod theme;
 mod tree;
 mod updater;
 mod view_kind;
+mod window_chrome;
 mod wrap_layout;
 
 use std::collections::BTreeSet;
@@ -57,9 +66,8 @@ use std::time::{Duration, Instant};
 use gpui::prelude::*;
 use gpui::{
     actions, div, px, rgb, rgba, size, AnyElement, App, Application, Bounds, ClipboardItem,
-    Context, Div, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, MouseButton,
-    PathPromptOptions, Rgba, ScrollHandle, SharedString, Stateful, TitlebarOptions, Window,
-    WindowBounds, WindowControlArea, WindowOptions,
+    Context, Div, Entity, FocusHandle, Focusable, FontWeight, MouseButton, PathPromptOptions, Rgba,
+    ScrollHandle, SharedString, Stateful, Window, WindowControlArea, WindowOptions,
 };
 
 use csv_view::CsvView;
@@ -116,22 +124,26 @@ actions!(
 
 /// Written into the notes folder on first run.
 const WELCOME_NOTE_NAME: &str = "Welcome.md";
-const VERSION: &str = "0.2.3";
-/// Space the macOS traffic lights take at the top-left of the window.
-const TRAFFIC_LIGHT_INSET: f32 = 84.0;
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const WELCOME_NOTE: &str = r#"# Welcome to Zyplus
+fn welcome_note(os: platform::Os) -> String {
+    let (tip, mod_prefix, shift_prefix) = match os {
+        platform::Os::Mac => ("Press `⌘E` (`Ctrl+E` on Windows and Linux)", "⌘", "⌘⇧"),
+        platform::Os::Windows | platform::Os::Linux => ("Press `Ctrl+E`", "Ctrl+", "Ctrl+Shift+"),
+    };
+    format!(
+        r#"# Welcome to Zyplus
 
 **A markdown editor that gets out of the way.** This note lives in your Zyplus folder — edit it, rename it, or delete it. It won't come back.
 
 > [!TIP]
-> Press `⌘E` (`Ctrl+E` on Windows and Linux) to flip this tab between rich text and raw markdown.
+> {tip} to flip this tab between rich text and raw markdown.
 
 ## The basics
 
 - **Your notes are plain files.** Everything is a `.md` file in a real folder on disk — no database, no lock-in.
-- **New files land here.** This folder is your default; change it in Settings (`⌘,`).
-- **Open anything.** Add more project folders with `⌘O`, or open a single file with `⌘⇧O`.
+- **New files land here.** This folder is your default; change it in Settings (`{mod_prefix},`).
+- **Open anything.** Add more project folders with `{mod_prefix}O`, or open a single file with `{shift_prefix}O`.
 - **Pick up where you left off.** Open folders and tabs come back exactly as you left them.
 
 ## Beyond plain text
@@ -144,23 +156,25 @@ flowchart LR
 ```
 
 ```latex
-e^{i\pi} + 1 = 0
+e^{{i\pi}} + 1 = 0
 ```
 
 ## Handy shortcuts
 
 | Action | Shortcut |
 |---|---|
-| New file | `⌘N` |
-| Save | `⌘S` |
-| Toggle rich / plain | `⌘E` |
-| Find | `⌘F` |
-| Toggle sidebar | `⌘B` |
-| Export as PDF | `⌘P` |
-| All shortcuts | `⌘/` |
+| New file | `{mod_prefix}N` |
+| Save | `{mod_prefix}S` |
+| Toggle rich / plain | `{mod_prefix}E` |
+| Find | `{mod_prefix}F` |
+| Toggle sidebar | `{mod_prefix}B` |
+| Export as PDF | `{mod_prefix}P` |
+| All shortcuts | `{mod_prefix}/` |
 
 Happy writing!
-"#;
+"#
+    )
+}
 
 struct Tab {
     id: u64,
@@ -618,49 +632,6 @@ const EXTENSIONS: [(&str, &str, &str, &str, &str); 6] = [
     ),
 ];
 
-/// Keyboard shortcuts for the sheet: groups in order, each row with its keys.
-const SHORTCUT_GROUPS: [(&str, &[(&str, &[&str])]); 4] = [
-    (
-        "File",
-        &[
-            ("Save", &["⌘", "S"]),
-            ("Export as .md", &["⌘", "⇧", "S"]),
-            ("Export as PDF", &["⌘", "P"]),
-            ("New file", &["⌘", "N"]),
-            ("New folder", &["⌘", "⇧", "N"]),
-            ("Open folder", &["⌘", "O"]),
-            ("Open file", &["⌘", "⇧", "O"]),
-        ],
-    ),
-    (
-        "Tabs",
-        &[
-            ("Close tab", &["⌘", "W"]),
-            ("Next tab", &["⌘", "⌥", "→"]),
-            ("Previous tab", &["⌘", "⌥", "←"]),
-            ("Go to tab 1–9", &["⌘", "1–9"]),
-        ],
-    ),
-    (
-        "View",
-        &[
-            ("Toggle sidebar", &["⌘", "B"]),
-            ("Toggle rich / plain text", &["⌘", "E"]),
-            ("Settings", &["⌘", ","]),
-            ("Keyboard shortcuts", &["⌘", "/"]),
-        ],
-    ),
-    (
-        "Editing",
-        &[
-            ("Find in document", &["⌘", "F"]),
-            ("Find and replace", &["⌘", "⌥", "F"]),
-            ("Copy document markdown", &["⌘", "⇧", "C"]),
-            ("Copy file path", &["⌘", "⌥", "C"]),
-        ],
-    ),
-];
-
 fn is_untitled(title: &str) -> bool {
     if title == "Untitled.md" {
         return true;
@@ -732,12 +703,14 @@ fn live_name_error(typed: &str) -> Option<String> {
 
 /// The label for "reveal this path in the OS file browser".
 fn reveal_label() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Reveal in Finder"
-    } else if cfg!(target_os = "windows") {
-        "Show in File Explorer"
-    } else {
-        "Show in File Manager"
+    reveal_label_for(platform::Os::current())
+}
+
+fn reveal_label_for(os: platform::Os) -> &'static str {
+    match os {
+        platform::Os::Mac => "Reveal in Finder",
+        platform::Os::Windows => "Show in File Explorer",
+        platform::Os::Linux => "Show in File Manager",
     }
 }
 
@@ -975,7 +948,7 @@ impl Zyplus {
         }
         let note = paths::display_join(&dir, WELCOME_NOTE_NAME);
         if !paths::path_exists(&note) {
-            let _ = tree::write_text_file(&note, WELCOME_NOTE);
+            let _ = tree::write_text_file(&note, &welcome_note(platform::Os::current()));
         }
         match tree::read_project_node(&dir, &BTreeSet::new()) {
             Ok(node) => {
@@ -3111,7 +3084,12 @@ impl Zyplus {
             )
     }
 
-    fn render_sidebar(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
+    fn render_sidebar(
+        &mut self,
+        theme: &Theme,
+        chrome: &window_chrome::Chrome,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let rows = tree::visible_rows(&self.tree, &self.open_folders);
         let active = self.active.clone();
         let selected_rows: BTreeSet<String> = self.selected.iter().cloned().collect();
@@ -3140,33 +3118,40 @@ impl Zyplus {
             .flex_row()
             .items_center()
             .justify_between()
-            .pl(px(TRAFFIC_LIGHT_INSET))
             .pr_3()
-            .h(px(44.0))
+            .h(px(window_chrome::TOP_BAR_HEIGHT))
             .flex_shrink_0()
-            .window_control_area(WindowControlArea::Drag)
+            .when(chrome.os == platform::Os::Mac, |el| {
+                el.window_control_area(WindowControlArea::Drag)
+            })
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .min_w(px(0.0))
-                    .child(
-                        gpui::svg()
-                            .path(app_icon::LOGO_PATH)
-                            .w(px(16.0))
-                            .h(px(14.0))
-                            .flex_shrink_0()
-                            .text_color(theme.fg),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.muted)
-                            .child("ZYPLUS"),
-                    ),
+                window_chrome::drag_area(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .min_w(px(0.0))
+                        .pl(px(chrome.sidebar_left_pad())),
+                    chrome,
+                )
+                .child(
+                    gpui::svg()
+                        .path(app_icon::LOGO_PATH)
+                        .w(px(16.0))
+                        .h(px(14.0))
+                        .flex_shrink_0()
+                        .text_color(theme.fg),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.muted)
+                        .child("ZYPLUS"),
+                ),
             )
             .child(
                 div()
@@ -3174,6 +3159,7 @@ impl Zyplus {
                     .flex_row()
                     .items_center()
                     .gap_1()
+                    .flex_shrink_0()
                     .child(
                         icon_button(
                             theme,
@@ -3552,7 +3538,12 @@ impl Zyplus {
             .child(footer)
     }
 
-    fn render_tab_bar(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
+    fn render_tab_bar(
+        &mut self,
+        theme: &Theme,
+        chrome: &window_chrome::Chrome,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let active_switch = self
             .active_tab()
             .filter(|tab| view_kind::modes(tab.kind).len() > 1)
@@ -3681,126 +3672,172 @@ impl Zyplus {
             self.tab_scrolled_to = self.active.clone();
         }
 
+        let close_entity = cx.entity().downgrade();
+        let win_controls =
+            window_chrome::window_controls(chrome, theme, "tabbar", move |window, cx| {
+                let should_close = close_entity
+                    .update(cx, |this, cx| {
+                        let ok = this.confirm_quit(window, cx);
+                        if !ok {
+                            this.quitting = true;
+                        }
+                        ok
+                    })
+                    .unwrap_or(true);
+                if should_close {
+                    window.remove_window();
+                }
+            });
+        let bar_left_pad = if self.sidebar_collapsed {
+            chrome.collapsed_tab_bar_left_pad()
+        } else {
+            window_chrome::TAB_BAR_DEFAULT_LEFT_PAD
+        };
+
         div()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
-            .h(px(44.0))
+            .h(px(window_chrome::TOP_BAR_HEIGHT))
             .flex_shrink_0()
-            .pr_2()
-            .when(self.sidebar_collapsed, |el| el.pl(px(TRAFFIC_LIGHT_INSET)))
-            .when(!self.sidebar_collapsed, |el| el.pl_2())
-            .window_control_area(WindowControlArea::Drag)
+            .when(chrome.os == platform::Os::Mac, |el| {
+                el.window_control_area(WindowControlArea::Drag)
+            })
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
             .child(
-                icon_button(
-                    theme,
-                    "toggle-sidebar",
-                    app_icon::icon("sidebar-left", 16.0).text_color(if self.sidebar_collapsed {
-                        theme.muted
-                    } else {
-                        theme.accent
-                    }),
-                    28.0,
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.sidebar_collapsed = !this.sidebar_collapsed;
-                    this.persist();
-                    cx.notify();
-                })),
-            )
-            .child(
                 div()
-                    .id("tab-strip")
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_1()
                     .flex_1()
                     .min_w(px(0.0))
-                    .overflow_x_scroll()
-                    .track_scroll(&self.tab_scroll)
-                    .children(tabs)
+                    .h_full()
+                    .pl(px(bar_left_pad))
+                    .pr_2()
                     .child(
-                        // Empty strip after the last tab: dropping here moves the
-                        // tab to the end. A sibling, not a parent, so a drop on a
-                        // tab is not also seen by it.
-                        div()
-                            .id("tab-strip-end")
-                            .flex_1()
-                            .min_w(px(12.0))
-                            .h(px(28.0))
-                            .on_drop(cx.listener(|this, dragged: &DragTab, _, cx| {
-                                this.reorder_tab(&dragged.path, None, cx);
-                            })),
-                    ),
-            )
-            // Pinned outside the scrolling strip, so it stays reachable with many tabs.
-            .child(
-                icon_button(
-                    theme,
-                    "tab-new-file",
-                    app_icon::icon("plus-sign", 16.0).text_color(theme.muted),
-                    26.0,
-                )
-                .flex_shrink_0()
-                .on_click(cx.listener(|this, _, window, cx| this.new_file(window, cx))),
-            )
-            .children(active_switch.map(|(kind, mode)| {
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .flex_shrink_0()
-                    .children(view_kind::modes(kind).iter().map(|&option| {
-                        mode_button(
+                        icon_button(
                             theme,
-                            mode_button_id(option),
-                            mode_icon(option),
-                            view_kind::mode_label(option),
-                            mode == option,
+                            "toggle-sidebar",
+                            app_icon::icon("sidebar-left", 16.0).text_color(
+                                if self.sidebar_collapsed {
+                                    theme.muted
+                                } else {
+                                    theme.accent
+                                },
+                            ),
+                            28.0,
                         )
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.set_mode(option, window, cx)
-                            }),
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_collapsed = !this.sidebar_collapsed;
+                            this.persist();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        div()
+                            .id("tab-strip")
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .h_full()
+                            .overflow_x_scroll()
+                            .track_scroll(&self.tab_scroll)
+                            .children(tabs)
+                            .child(
+                                // Empty strip after the last tab: dropping here moves the
+                                // tab to the end, and dragging here moves the window on
+                                // Windows / Linux CSD without interfering with tab clicks.
+                                window_chrome::drag_area(
+                                    div().flex_1().min_w(px(12.0)).h_full(),
+                                    chrome,
+                                )
+                                .id("tab-strip-end")
+                                .on_drop(cx.listener(
+                                    |this, dragged: &DragTab, _, cx| {
+                                        this.reorder_tab(&dragged.path, None, cx);
+                                    },
+                                )),
+                            ),
+                    )
+                    // Pinned outside the scrolling strip, so it stays reachable with many tabs.
+                    .child(
+                        icon_button(
+                            theme,
+                            "tab-new-file",
+                            app_icon::icon("plus-sign", 16.0).text_color(theme.muted),
+                            26.0,
                         )
-                    }))
-            }))
-            .when(self.active.is_some(), |el| {
-                el.child(
-                    div()
-                        .id("tab-actions")
-                        .w(px(28.0))
-                        .h(px(28.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_full()
                         .flex_shrink_0()
-                        .cursor_pointer()
-                        .text_size(px(14.0))
-                        .text_color(theme.muted)
-                        .hover(move |style| style.bg(theme.hover))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                                let items = this.actions_menu();
-                                this.open_menu(
-                                    f32::from(event.position.x),
-                                    f32::from(event.position.y),
-                                    items,
-                                    cx,
-                                );
-                            }),
+                        .on_click(cx.listener(|this, _, window, cx| this.new_file(window, cx))),
+                    )
+                    .children(active_switch.map(|(kind, mode)| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .children(view_kind::modes(kind).iter().map(|&option| {
+                                mode_button(
+                                    theme,
+                                    mode_button_id(option),
+                                    mode_icon(option),
+                                    view_kind::mode_label(option),
+                                    mode == option,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| this.set_mode(option, window, cx),
+                                ))
+                            }))
+                    }))
+                    .when(self.active.is_some(), |el| {
+                        el.child(
+                            div()
+                                .id("tab-actions")
+                                .w(px(28.0))
+                                .h(px(28.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .flex_shrink_0()
+                                .cursor_pointer()
+                                .text_size(px(14.0))
+                                .text_color(theme.muted)
+                                .hover(move |style| style.bg(theme.hover))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                                        let items = this.actions_menu();
+                                        this.open_menu(
+                                            f32::from(event.position.x),
+                                            f32::from(event.position.y),
+                                            items,
+                                            cx,
+                                        );
+                                    }),
+                                )
+                                .child(
+                                    app_icon::icon("more-horizontal", 16.0).text_color(theme.muted),
+                                ),
                         )
-                        .child(app_icon::icon("more-horizontal", 16.0).text_color(theme.muted)),
-                )
+                    }),
+            )
+            .when(chrome.shows_window_controls(), |el| {
+                // Keeps a guaranteed drag handle next to the caption buttons even
+                // when the sidebar is collapsed and the tab strip overflows.
+                el.child(window_chrome::drag_area(
+                    div().w(px(12.0)).h_full().flex_shrink_0(),
+                    chrome,
+                ))
             })
+            .children(win_controls)
     }
 
     fn render_find_bar(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<Div> {
@@ -4819,33 +4856,36 @@ impl Zyplus {
                 body
             }
             SettingsSection::Shortcuts => {
-                let groups = SHORTCUT_GROUPS.iter().map(|(group, rows)| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_size(px(10.0))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.muted)
-                                .child(group.to_uppercase()),
-                        )
-                        .children(rows.iter().map(|(label, keys)| {
+                let groups =
+                    keymap::shortcut_groups(platform::Os::current())
+                        .iter()
+                        .map(|(group, rows)| {
                             div()
                                 .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .gap_3()
-                                .h(px(26.0))
-                                .border_b_1()
-                                .border_color(theme.border)
-                                .text_size(px(12.0))
-                                .child(div().text_color(theme.fg).child(*label))
-                                .child(keycaps(theme, keys))
-                        }))
-                });
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(theme.muted)
+                                        .child(group.to_uppercase()),
+                                )
+                                .children(rows.iter().map(|(label, keys)| {
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .h(px(26.0))
+                                        .border_b_1()
+                                        .border_color(theme.border)
+                                        .text_size(px(12.0))
+                                        .child(div().text_color(theme.fg).child(*label))
+                                        .child(keycaps(theme, keys))
+                                }))
+                        });
                 div()
                     .flex()
                     .flex_col()
@@ -5239,7 +5279,7 @@ fn extension_row(
         .child(toggle)
 }
 
-/// Shortcut keys drawn as small keycaps: `⌘`, `⇧`, `S`.
+/// Shortcut keys drawn as small keycaps: `⌘`, `⇧`, `S` on macOS or `Ctrl`, `Shift`, `S` elsewhere.
 fn keycaps(theme: &Theme, keys: &[&'static str]) -> Div {
     div()
         .flex()
@@ -5699,6 +5739,8 @@ impl Zyplus {
             }
         }
         let theme = self.theme(window);
+        let chrome = window_chrome::chrome_for_window(window);
+        window_chrome::apply_client_inset(window, &chrome);
         let welcome_up = self.welcome;
 
         // Drawn over the empty shell instead of replacing it, so the global
@@ -5739,14 +5781,43 @@ impl Zyplus {
         let sidebar = if self.sidebar_collapsed {
             None
         } else {
-            Some(self.render_sidebar(&theme, cx).into_any_element())
+            Some(self.render_sidebar(&theme, &chrome, cx).into_any_element())
         };
-        let tab_bar = self.render_tab_bar(&theme, cx);
+        let tab_bar = self.render_tab_bar(&theme, &chrome, cx);
         let body = self.render_body(&theme, cx);
         let error_banner = self.render_error(&theme, cx);
         let menu = self.render_menu(&theme, window.viewport_size(), cx);
         let modal = self.render_modal(&theme, cx);
-        let fullscreen = self.render_fullscreen(&theme, window.viewport_size(), cx);
+        let fullscreen = self.render_fullscreen(&theme, window.viewport_size(), &chrome, cx);
+        let welcome_chrome = if welcome_up && chrome.shows_window_controls() {
+            let close_entity = cx.entity().downgrade();
+            Some(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(window_chrome::TOP_BAR_HEIGHT))
+                    .flex()
+                    .flex_row()
+                    .child(window_chrome::drag_area(div().flex_1().h_full(), &chrome))
+                    .children(window_chrome::window_controls(
+                        &chrome,
+                        &theme,
+                        "welcome",
+                        move |window, cx| {
+                            let should_close = close_entity
+                                .update(cx, |this, cx| this.confirm_quit(window, cx))
+                                .unwrap_or(true);
+                            if should_close {
+                                window.remove_window();
+                            }
+                        },
+                    )),
+            )
+        } else {
+            None
+        };
 
         let root = div()
             .key_context("Zyplus")
@@ -5795,30 +5866,33 @@ impl Zyplus {
                 .on_action(cx.listener(Self::go_to_tab_8))
                 .on_action(cx.listener(Self::go_to_tab_9))
         };
-        root.child(
-            div()
-                .flex()
-                .flex_row()
-                .flex_1()
-                .min_h(px(0.0))
-                .children(sidebar)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .min_h(px(0.0))
-                        .child(tab_bar)
-                        .child(body),
-                ),
-        )
-        .children(error_banner)
-        .children(menu)
-        .children(modal)
-        .children(fullscreen)
-        .children(welcome)
-        .into_any_element()
+        let shell = root
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .children(sidebar)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .min_h(px(0.0))
+                            .child(tab_bar)
+                            .child(body),
+                    ),
+            )
+            .children(error_banner)
+            .children(menu)
+            .children(modal)
+            .children(fullscreen)
+            .children(welcome)
+            .children(welcome_chrome)
+            .into_any_element();
+        window_chrome::decorate_window(shell, &chrome, &theme)
     }
 }
 
@@ -5888,19 +5962,15 @@ fn zyplus_window(cx: &App) -> Option<gpui::WindowHandle<Zyplus>> {
 }
 
 fn main_window_options(cx: &App) -> WindowOptions {
-    let bounds = Bounds::centered(None, size(px(1180.0), px(800.0)), cx);
-    WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        // No system titlebar: the app draws its own chrome and the
-        // traffic lights float over the sidebar / tab bar.
-        titlebar: Some(TitlebarOptions {
-            title: Some("Zyplus".into()),
-            appears_transparent: true,
-            traffic_light_position: Some(gpui::point(px(16.0), px(15.0))),
-        }),
-        window_min_size: Some(size(px(560.0), px(360.0))),
-        ..Default::default()
-    }
+    let bounds = Bounds::centered(
+        None,
+        size(
+            px(window_chrome::DEFAULT_WINDOW_WIDTH),
+            px(window_chrome::DEFAULT_WINDOW_HEIGHT),
+        ),
+        cx,
+    );
+    window_chrome::main_window_options(platform::Os::current(), bounds)
 }
 
 /// Opens the main window. `paths` open as tabs, which also skips the welcome
@@ -5908,6 +5978,10 @@ fn main_window_options(cx: &App) -> WindowOptions {
 fn open_main_window(paths: Vec<String>, cx: &mut App) -> Option<gpui::WindowHandle<Zyplus>> {
     cx.open_window(main_window_options(cx), |window, cx| {
         let view = cx.new(Zyplus::new);
+        // Re-render when the OS theme or Wayland decoration mode changes.
+        window
+            .observe_window_appearance(|window, _| window.refresh())
+            .detach();
         if !paths.is_empty() {
             view.update(cx, |this, cx| this.open_paths(paths, window, cx));
         }
@@ -6127,96 +6201,33 @@ fn main() {
 
     app.run(move |cx: &mut App| {
         app_icon::set_dock_icon();
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-h", HideApp, None),
-            KeyBinding::new("cmd-alt-h", HideOthers, None),
-            KeyBinding::new("cmd-m", Minimize, None),
-            KeyBinding::new("cmd-s", Save, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-s", ExportMd, Some("Zyplus")),
-            KeyBinding::new("cmd-p", ExportPdf, Some("Zyplus")),
-            KeyBinding::new("cmd-n", NewFile, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-n", NewFolder, Some("Zyplus")),
-            KeyBinding::new("cmd-w", CloseTab, Some("Zyplus")),
-            KeyBinding::new("cmd-b", ToggleSidebar, Some("Zyplus")),
-            KeyBinding::new("cmd-e", ToggleMode, Some("Zyplus")),
-            KeyBinding::new("cmd-o", OpenFolder, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-o", OpenFile, Some("Zyplus")),
-            KeyBinding::new("cmd-f", Find, Some("Zyplus")),
-            KeyBinding::new("cmd-alt-f", Replace, Some("Zyplus")),
-            KeyBinding::new("cmd-,", Settings, Some("Zyplus")),
-            KeyBinding::new("cmd-/", Shortcuts, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-c", CopyMarkdown, Some("Zyplus")),
-            KeyBinding::new("cmd-alt-c", CopyPath, Some("Zyplus")),
-            KeyBinding::new("cmd-alt-right", NextTab, Some("Zyplus")),
-            KeyBinding::new("cmd-alt-left", PrevTab, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-]", NextTab, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-[", PrevTab, Some("Zyplus")),
-            KeyBinding::new("cmd-1", GoToTab1, Some("Zyplus")),
-            KeyBinding::new("cmd-2", GoToTab2, Some("Zyplus")),
-            KeyBinding::new("cmd-3", GoToTab3, Some("Zyplus")),
-            KeyBinding::new("cmd-4", GoToTab4, Some("Zyplus")),
-            KeyBinding::new("cmd-5", GoToTab5, Some("Zyplus")),
-            KeyBinding::new("cmd-6", GoToTab6, Some("Zyplus")),
-            KeyBinding::new("cmd-7", GoToTab7, Some("Zyplus")),
-            KeyBinding::new("cmd-8", GoToTab8, Some("Zyplus")),
-            KeyBinding::new("cmd-9", GoToTab9, Some("Zyplus")),
-            KeyBinding::new("delete", DeleteSelection, Some("ZyplusTree")),
-            KeyBinding::new("backspace", DeleteSelection, Some("ZyplusTree")),
-            KeyBinding::new("up", TreeUp, Some("ZyplusTree")),
-            KeyBinding::new("down", TreeDown, Some("ZyplusTree")),
-            KeyBinding::new("left", TreeLeft, Some("ZyplusTree")),
-            KeyBinding::new("right", TreeRight, Some("ZyplusTree")),
-            KeyBinding::new("enter", TreeActivate, Some("ZyplusTree")),
-            KeyBinding::new("f2", TreeRename, Some("ZyplusTree")),
-            KeyBinding::new("cmd-g", FindNext, Some("Zyplus")),
-            KeyBinding::new("cmd-shift-g", FindPrev, Some("Zyplus")),
-            KeyBinding::new("shift-enter", FindPrev, Some("Zyplus")),
-            KeyBinding::new("escape", CloseOverlay, Some("Zyplus")),
-            // The editor draws its own text, so it needs its own key map; GPUI
-            // only turns keystrokes into actions. Without these, typing worked
-            // but deleting, moving the caret, undo and the clipboard did not.
-            KeyBinding::new("backspace", editor::Backspace, Some("Editor")),
-            KeyBinding::new("delete", editor::Delete, Some("Editor")),
-            KeyBinding::new("enter", editor::Enter, Some("Editor")),
-            KeyBinding::new("left", editor::Left, Some("Editor")),
-            KeyBinding::new("right", editor::Right, Some("Editor")),
-            KeyBinding::new("up", editor::Up, Some("Editor")),
-            KeyBinding::new("down", editor::Down, Some("Editor")),
-            KeyBinding::new("home", editor::Home, Some("Editor")),
-            KeyBinding::new("end", editor::End, Some("Editor")),
-            KeyBinding::new("shift-left", editor::SelectLeft, Some("Editor")),
-            KeyBinding::new("shift-right", editor::SelectRight, Some("Editor")),
-            KeyBinding::new("shift-up", editor::SelectUp, Some("Editor")),
-            KeyBinding::new("shift-down", editor::SelectDown, Some("Editor")),
-            KeyBinding::new("shift-home", editor::SelectHome, Some("Editor")),
-            KeyBinding::new("shift-end", editor::SelectEnd, Some("Editor")),
-            KeyBinding::new("alt-left", editor::WordLeft, Some("Editor")),
-            KeyBinding::new("alt-right", editor::WordRight, Some("Editor")),
-            KeyBinding::new("shift-alt-left", editor::SelectWordLeft, Some("Editor")),
-            KeyBinding::new("shift-alt-right", editor::SelectWordRight, Some("Editor")),
-            KeyBinding::new("cmd-a", editor::SelectAll, Some("Editor")),
-            KeyBinding::new("cmd-c", editor::Copy, Some("Editor")),
-            KeyBinding::new("cmd-x", editor::Cut, Some("Editor")),
-            KeyBinding::new("cmd-v", editor::Paste, Some("Editor")),
-            KeyBinding::new("cmd-z", editor::Undo, Some("Editor")),
-            KeyBinding::new("cmd-shift-z", editor::Redo, Some("Editor")),
-            KeyBinding::new("escape", editor::Cancel, Some("Editor")),
-        ]);
+        editor::init_mono_font(&cx.text_system().all_font_names());
+        let os = platform::Os::current();
+        cx.bind_keys(keymap::app_bindings(os));
+        cx.bind_keys(keymap::editor_bindings(os));
         RichEditor::bind_keys(cx);
         editor::bind_nav_keys(cx);
 
         cx.set_menus(app_menus());
         cx.on_action(|_: &Quit, cx| request_quit(cx));
-        cx.on_action(|_: &HideApp, cx| cx.hide());
-        cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
-        cx.on_action(|_: &Minimize, cx| with_active_window(cx, |window| window.minimize_window()));
-        cx.on_action(|_: &Zoom, cx| with_active_window(cx, |window| window.zoom_window()));
+        if window_chrome::supports_app_hide(os) {
+            cx.on_action(|_: &HideApp, cx| cx.hide());
+            cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+        }
+        if os == platform::Os::Mac {
+            cx.on_action(|_: &Minimize, cx| {
+                with_active_window(cx, |window| window.minimize_window())
+            });
+            cx.on_action(|_: &Zoom, cx| with_active_window(cx, |window| window.zoom_window()));
+        }
 
         // Other platforms quit with their last window. macOS keeps the app
         // running, as its apps do.
         cx.on_window_closed(|cx| {
-            if cfg!(not(target_os = "macos")) && cx.windows().is_empty() {
+            if window_chrome::should_quit_when_all_windows_closed(platform::Os::current())
+                && cx.windows().is_empty()
+            {
+                updater::relaunch_on_exit();
                 cx.quit();
             }
         })
@@ -6410,18 +6421,37 @@ mod lifecycle_tests {
 
     #[test]
     fn welcome_note_matches_the_web_text() {
-        assert!(WELCOME_NOTE.starts_with("# Welcome to Zyplus\n"));
-        assert!(WELCOME_NOTE.contains("Press `⌘E` (`Ctrl+E` on Windows and Linux)"));
-        assert!(WELCOME_NOTE.contains("Diagrams and math render once you turn on **Mermaid** and **KaTeX** in Settings → Extensions:"));
-        assert!(WELCOME_NOTE.contains("```mermaid\nflowchart LR\n"));
-        assert!(WELCOME_NOTE.contains("```latex\ne^{i\\pi} + 1 = 0\n"));
-        assert!(WELCOME_NOTE.ends_with("Happy writing!\n"));
+        let mac = welcome_note(platform::Os::Mac);
+        assert!(mac.starts_with("# Welcome to Zyplus\n"));
+        assert!(mac.contains("Press `⌘E` (`Ctrl+E` on Windows and Linux)"));
+        assert!(mac.contains("Diagrams and math render once you turn on **Mermaid** and **KaTeX** in Settings → Extensions:"));
+        assert!(mac.contains("```mermaid\nflowchart LR\n"));
+        assert!(mac.contains("```latex\ne^{i\\pi} + 1 = 0\n"));
+        assert!(mac.ends_with("Happy writing!\n"));
         // Header and separator rows are not shortcuts; the table has seven.
-        let rows = WELCOME_NOTE
+        let rows = mac
             .lines()
             .filter(|line| line.starts_with("| ") && !line.starts_with("| Action"))
             .count();
         assert_eq!(rows, 7);
+
+        for os in [platform::Os::Windows, platform::Os::Linux] {
+            let note = welcome_note(os);
+            assert!(note.starts_with("# Welcome to Zyplus\n"));
+            assert!(note.contains("Press `Ctrl+E` to flip this tab"));
+            assert!(note.contains("Settings (`Ctrl+,`)"));
+            assert!(note.contains("`Ctrl+O`, or open a single file with `Ctrl+Shift+O`"));
+            assert!(note.contains("| All shortcuts | `Ctrl+/` |"));
+            assert!(
+                !note.contains('⌘') && !note.contains('⇧') && !note.contains('⌥'),
+                "{os:?}: welcome note must not contain macOS modifier glyphs"
+            );
+            let rows = note
+                .lines()
+                .filter(|line| line.starts_with("| ") && !line.starts_with("| Action"))
+                .count();
+            assert_eq!(rows, 7);
+        }
     }
 }
 
@@ -6593,11 +6623,25 @@ mod menu_parity_tests {
 
     #[test]
     fn reveal_label_follows_the_platform() {
-        #[cfg(target_os = "macos")]
-        assert_eq!(reveal_label(), "Reveal in Finder");
-        #[cfg(target_os = "windows")]
-        assert_eq!(reveal_label(), "Show in File Explorer");
-        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-        assert_eq!(reveal_label(), "Show in File Manager");
+        use crate::platform::Os;
+        assert_eq!(super::reveal_label_for(Os::Mac), "Reveal in Finder");
+        assert_eq!(
+            super::reveal_label_for(Os::Windows),
+            "Show in File Explorer"
+        );
+        assert_eq!(super::reveal_label_for(Os::Linux), "Show in File Manager");
+        assert_eq!(reveal_label(), super::reveal_label_for(Os::current()));
+    }
+}
+
+#[cfg(test)]
+mod window_chrome_integration_tests {
+    use super::*;
+
+    #[test]
+    fn app_menus_defines_expected_top_level_menus_on_all_platforms() {
+        let menus = app_menus();
+        let names: Vec<&str> = menus.iter().map(|m| m.name.as_ref()).collect();
+        assert_eq!(names, ["Zyplus", "File", "Edit", "View", "Window"]);
     }
 }

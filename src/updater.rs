@@ -10,14 +10,17 @@
 //! relaunched.
 
 use std::cmp::Ordering;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
+
+use crate::platform::Os;
 
 const REPO_URL: &str = "https://github.com/Fankrits/zyplus-editor";
 const MANIFEST_URL: &str =
@@ -201,8 +204,12 @@ pub fn parse_manifest(
     }
 
     let version = version.trim_start_matches(['v', 'V']).to_string();
-    let no_build =
-        || format!("No Zyplus {version} build for this platform. See {REPO_URL}/releases");
+    let release_page = format!("{REPO_URL}/releases/tag/v{version}");
+    let no_build = || {
+        format!(
+            "Zyplus {version} is available, but automatic updates are not available for this platform. See {release_page}"
+        )
+    };
     let key = platform.ok_or_else(no_build)?;
 
     let platforms = manifest.get("platforms");
@@ -218,7 +225,11 @@ pub fn parse_manifest(
                 .and_then(|u| u.as_str())
                 .is_some_and(|u| !u.is_empty())
         })
-        .ok_or_else(|| format!("No Zyplus {version} build for {key}. See {REPO_URL}/releases"))?;
+        .ok_or_else(|| {
+            format!(
+                "Zyplus {version} is available, but automatic updates are not available for {key}. Download it from {release_page}"
+            )
+        })?;
     let url = entry
         .get("url")
         .and_then(|u| u.as_str())
@@ -606,6 +617,7 @@ fn unpack_and_replace(
 
 /// Starts a detached helper that waits for `pid` to exit, then opens `app` as a
 /// new instance. The app quits right after, so the old process is gone by then.
+#[cfg(target_os = "macos")]
 pub fn spawn_relaunch(app: &Path, pid: u32) -> io::Result<()> {
     Command::new("/bin/sh")
         .arg("-c")
@@ -620,6 +632,14 @@ pub fn spawn_relaunch(app: &Path, pid: u32) -> io::Result<()> {
         .map(drop)
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn spawn_relaunch(_app: &Path, _pid: u32) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "automatic relaunch is only supported on macOS",
+    ))
+}
+
 /// The app to relaunch once the process quits. Set by the Restart button and
 /// cleared if the quit is cancelled.
 static PENDING_RELAUNCH: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -632,15 +652,18 @@ pub fn cancel_relaunch() {
     *PENDING_RELAUNCH.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-/// Called right before the process exits. Starts the helper when a relaunch was requested.
+/// Called right before the process exits. Starts the helper when a relaunch was
+/// requested (macOS only; on other platforms the pending state is cleared).
 pub fn relaunch_on_exit() {
     let app = PENDING_RELAUNCH
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .take();
-    if let Some(app) = app {
-        if let Err(e) = spawn_relaunch(&app, std::process::id()) {
-            eprintln!("zyplus: could not restart the app: {e}");
+    if cfg!(target_os = "macos") {
+        if let Some(app) = app {
+            if let Err(e) = spawn_relaunch(&app, std::process::id()) {
+                eprintln!("zyplus: could not restart the app: {e}");
+            }
         }
     }
 }
@@ -658,7 +681,7 @@ fn agent_builder() -> Result<ureq::AgentBuilder, String> {
     {
         let connector = ureq::native_tls::TlsConnector::new()
             .map_err(|e| format!("Could not start the system TLS stack: {e}"))?;
-        Ok(ureq::AgentBuilder::new().tls_connector(Arc::new(connector)))
+        Ok(ureq::AgentBuilder::new().tls_connector(std::sync::Arc::new(connector)))
     }
     #[cfg(target_os = "linux")]
     {
@@ -684,13 +707,15 @@ pub fn check(current: &str) -> Result<Option<UpdateInfo>, String> {
     parse_manifest(&body, current, platform_key())
 }
 
-/// Where downloads go: `~/Downloads` when it exists, otherwise the temp dir.
+/// Where downloads go: `<home>/Downloads` when it exists, otherwise the temp dir.
 pub fn downloads_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|home| PathBuf::from(home).join("Downloads"))
+    downloads_dir_in(crate::paths::home_dir(), std::env::temp_dir())
+}
+
+fn downloads_dir_in(home: Option<PathBuf>, temp_dir: PathBuf) -> PathBuf {
+    home.map(|h| h.join("Downloads"))
         .filter(|dir| dir.is_dir())
-        .unwrap_or_else(std::env::temp_dir)
+        .unwrap_or(temp_dir)
 }
 
 /// Last path segment of the URL, reduced to `[A-Za-z0-9._-]` with no leading dots.
@@ -809,6 +834,84 @@ pub fn reveal_or_open(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("Could not open {}: {e}", path.display()))
 }
 
+/// Builds the raw `/select,"..."` argument for `explorer.exe`: strips any
+/// Windows verbatim prefix (`\\?\`) and normalizes `/` to `\` because Explorer
+/// ignores `/select` otherwise.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_explorer_select_arg(path: &Path) -> Result<String, String> {
+    let raw = path.to_string_lossy();
+    let stripped = crate::os::strip_verbatim_prefix(&raw);
+    if stripped.contains('"') {
+        return Err(format!("Cannot reveal path containing quotes: {stripped}"));
+    }
+    let normalized = stripped.replace('/', "\\");
+    Ok(format!("/select,\"{normalized}\""))
+}
+
+/// Directory to open in a Linux file manager when revealing `path`.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+fn linux_reveal_dir(path: &Path) -> &Path {
+    if path.is_dir() {
+        return path;
+    }
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Ordered Linux file-manager openers to try when revealing a folder.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+fn linux_open_commands(dir: &Path) -> Vec<(&'static str, Vec<OsString>)> {
+    vec![
+        ("xdg-open", vec![dir.as_os_str().to_os_string()]),
+        (
+            "gio",
+            vec![OsString::from("open"), dir.as_os_str().to_os_string()],
+        ),
+    ]
+}
+
+/// Spawns the first available command from `commands`. When none are installed
+/// (`NotFound`), returns an actionable message naming `dir` instead of a
+/// confusing "No such file or directory" error.
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
+fn spawn_first_available_opener(
+    dir: &Path,
+    commands: &[(&str, Vec<OsString>)],
+) -> Result<(), String> {
+    let mut missing = true;
+    let mut last_err = None;
+    for (program, args) in commands {
+        match Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                missing = false;
+                last_err = Some((program, e));
+            }
+        }
+    }
+    if let Some((program, e)) = last_err {
+        return Err(format!(
+            "Could not open {} using {program}: {e}",
+            dir.display()
+        ));
+    }
+    if missing {
+        return Err(format!(
+            "Could not open {} automatically (xdg-open is not installed). Open the folder manually.",
+            dir.display()
+        ));
+    }
+    Err(format!("Could not open {}", dir.display()))
+}
+
 /// Windows: selects the file in Explorer. The installer is not run from here.
 #[cfg(target_os = "windows")]
 pub fn reveal_or_open(path: &Path) -> Result<(), String> {
@@ -816,25 +919,22 @@ pub fn reveal_or_open(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("{} is missing", path.display()));
     }
+    let arg = windows_explorer_select_arg(path)?;
     Command::new("explorer")
-        .raw_arg(format!("/select,\"{}\"", path.display()))
+        .raw_arg(arg)
         .spawn()
         .map(drop)
         .map_err(|e| format!("Could not open {}: {e}", path.display()))
 }
 
-/// Linux: opens the containing folder.
+/// Linux: opens the containing folder using `xdg-open` (falling back to `gio open`).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn reveal_or_open(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("{} is missing", path.display()));
     }
-    let dir = path.parent().unwrap_or(path);
-    Command::new("xdg-open")
-        .arg(dir)
-        .spawn()
-        .map(drop)
-        .map_err(|e| format!("Could not open {}: {e}", dir.display()))
+    let dir = linux_reveal_dir(path);
+    spawn_first_available_opener(dir, &linux_open_commands(dir))
 }
 
 // ---------------------------------------------------------------------------
@@ -942,13 +1042,11 @@ pub fn fraction(done: u64, total: Option<u64>) -> Option<f32> {
     }
 }
 
-fn reveal_label() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Reveal in Finder"
-    } else if cfg!(target_os = "windows") {
-        "Show in Explorer"
-    } else {
-        "Show in folder"
+fn reveal_label_for(os: Os) -> &'static str {
+    match os {
+        Os::Mac => "Reveal in Finder",
+        Os::Windows => "Show in File Explorer",
+        Os::Linux => "Show in File Manager",
     }
 }
 
@@ -1075,6 +1173,10 @@ impl Status {
 
     /// What the About panel shows right now. Exactly one button in every state.
     pub fn panel_view(&self) -> PanelView {
+        self.panel_view_for(Os::current())
+    }
+
+    fn panel_view_for(&self, os: Os) -> PanelView {
         let plain = |text: String, button: &str, action: Option<Action>| PanelView {
             text,
             danger: false,
@@ -1082,13 +1184,19 @@ impl Status {
             button: button.to_string(),
             action,
         };
+        let reveal = reveal_label_for(os);
+        let download_button = match os {
+            Os::Mac => "Download & install",
+            // Off macOS Zyplus downloads and verifies the installer, then reveals it.
+            Os::Windows | Os::Linux => "Download update",
+        };
         match self {
             Status::Idle => plain(String::new(), "Check for updates", Some(Action::Check)),
             Status::Checking => plain("Checking for updates…".into(), "Checking…", None),
             Status::UpToDate => plain("You are up to date.".into(), "Check for updates", Some(Action::Check)),
             Status::Available(info) => plain(
                 format!("Version {} is available.", info.version),
-                "Download & install",
+                download_button,
                 Some(Action::Download),
             ),
             Status::Downloading { info, done, total } => PanelView {
@@ -1110,7 +1218,7 @@ impl Status {
                     info.version,
                     path.display()
                 ),
-                reveal_label(),
+                reveal,
                 Some(Action::Reveal),
             ),
             Status::ReadyToRestart { info, .. } => plain(
@@ -1120,7 +1228,7 @@ impl Status {
             ),
             Status::Failed { message, info, file } => {
                 let (button, action) = if file.is_some() {
-                    (reveal_label(), Action::Reveal)
+                    (reveal, Action::Reveal)
                 } else if info.is_some() {
                     ("Retry", Action::Download)
                 } else {
@@ -1960,6 +2068,132 @@ mod state_tests {
         assert!(PENDING_RELAUNCH.lock().unwrap().is_some());
         cancel_relaunch();
         assert!(PENDING_RELAUNCH.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn missing_platform_message_does_not_claim_no_build_exists() {
+        let body = r#"{ "version": "0.5.0", "platforms": { "darwin-aarch64": { "url": "https://x/a.tar.gz", "signature": "sig" } } }"#;
+        let win_err = parse_manifest(body, "0.4.1", Some("windows-x86_64")).unwrap_err();
+        assert!(
+            win_err.contains("0.5.0")
+                && win_err.contains("windows-x86_64")
+                && win_err.contains("automatic updates are not available")
+                && win_err.contains("/releases/tag/v0.5.0"),
+            "{win_err}"
+        );
+        assert!(
+            !win_err.contains("No Zyplus"),
+            "must not claim no build exists: {win_err}"
+        );
+
+        let unknown_err = parse_manifest(body, "0.4.1", None).unwrap_err();
+        assert!(
+            unknown_err.contains("0.5.0")
+                && unknown_err.contains("automatic updates are not available")
+                && !unknown_err.contains("No Zyplus"),
+            "{unknown_err}"
+        );
+    }
+
+    #[test]
+    fn panel_view_tailors_labels_per_os() {
+        let avail = Status::Available(info("0.3.0"));
+        assert_eq!(avail.panel_view_for(Os::Mac).button, "Download & install");
+        assert_eq!(avail.panel_view_for(Os::Windows).button, "Download update");
+        assert_eq!(avail.panel_view_for(Os::Linux).button, "Download update");
+
+        let dl = Status::Downloaded {
+            info: info("0.3.0"),
+            path: PathBuf::from("/tmp/x"),
+        };
+        assert_eq!(dl.panel_view_for(Os::Mac).button, "Reveal in Finder");
+        assert_eq!(
+            dl.panel_view_for(Os::Windows).button,
+            "Show in File Explorer"
+        );
+        assert_eq!(dl.panel_view_for(Os::Linux).button, "Show in File Manager");
+    }
+
+    #[test]
+    fn downloads_dir_uses_existing_home_downloads_or_falls_back_to_temp() {
+        let root = std::env::temp_dir().join(format!("zy-upd-dl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let temp = root.join("temp");
+        fs::create_dir_all(&temp).unwrap();
+
+        // Missing Downloads falls back to temp.
+        let home_no_dl = root.join("home1");
+        fs::create_dir_all(&home_no_dl).unwrap();
+        assert_eq!(downloads_dir_in(Some(home_no_dl), temp.clone()), temp);
+        assert_eq!(downloads_dir_in(None, temp.clone()), temp);
+
+        // Existing Downloads is used.
+        let home_with_dl = root.join("home2");
+        let dl = home_with_dl.join("Downloads");
+        fs::create_dir_all(&dl).unwrap();
+        assert_eq!(downloads_dir_in(Some(home_with_dl), temp), dl);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn windows_explorer_select_arg_normalizes_verbatim_and_slashes() {
+        assert_eq!(
+            windows_explorer_select_arg(Path::new(r"\\?\C:\Users\me\Downloads\Zyplus.exe"))
+                .unwrap(),
+            r#"/select,"C:\Users\me\Downloads\Zyplus.exe""#
+        );
+        assert_eq!(
+            windows_explorer_select_arg(Path::new("C:/Users/me/My Downloads/Zyplus.exe")).unwrap(),
+            r#"/select,"C:\Users\me\My Downloads\Zyplus.exe""#
+        );
+        assert!(windows_explorer_select_arg(Path::new(r#"C:\bad"name.exe"#)).is_err());
+    }
+
+    #[test]
+    fn linux_reveal_helpers_handle_missing_openers_and_relative_paths() {
+        assert_eq!(linux_reveal_dir(Path::new("file.deb")), Path::new("."));
+        assert_eq!(
+            linux_reveal_dir(Path::new("/tmp/Zyplus.AppImage")),
+            Path::new("/tmp")
+        );
+
+        let cmds = linux_open_commands(Path::new("/tmp/dl"));
+        assert_eq!(cmds[0].0, "xdg-open");
+        assert_eq!(cmds[1].0, "gio");
+
+        // All openers missing -> clear actionable error naming the directory.
+        let err = spawn_first_available_opener(
+            Path::new("/tmp/dl"),
+            &[
+                (
+                    "zyplus-nonexistent-opener-1",
+                    vec![OsString::from("/tmp/dl")],
+                ),
+                (
+                    "zyplus-nonexistent-opener-2",
+                    vec![OsString::from("/tmp/dl")],
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("/tmp/dl") && err.contains("xdg-open is not installed"),
+            "{err}"
+        );
+
+        // Falls through a missing first opener to an available second one.
+        #[cfg(unix)]
+        {
+            assert!(spawn_first_available_opener(
+                Path::new("/tmp/dl"),
+                &[
+                    ("zyplus-nonexistent-opener-1", vec![]),
+                    ("/usr/bin/true", vec![]),
+                ],
+            )
+            .is_ok());
+        }
     }
 }
 
