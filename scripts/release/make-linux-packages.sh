@@ -27,7 +27,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 # --- .deb -------------------------------------------------------------------
 # Debian versions sort a pre-release before its release with `~`.
-DEB_VERSION="${VERSION/-/~}"
+TILDE='~'  # kept in a variable: a literal ~ in the substitution would expand to $HOME
+DEB_VERSION="${VERSION/-/$TILDE}"
 PKG="$WORK/deb"
 install -Dm755 "$BIN" "$PKG/usr/bin/zyplus-gpui"
 install -Dm644 "$DESKTOP" "$PKG/usr/share/applications/zyplus.desktop"
