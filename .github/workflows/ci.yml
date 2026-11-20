@@ -141,7 +141,9 @@ jobs:
             libxcb1-dev \
             libfontconfig1-dev \
             libfreetype6-dev \
-            libvulkan-dev
+            libvulkan-dev \
+            mesa-vulkan-drivers \
+            xvfb
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -161,6 +163,36 @@ jobs:
       - name: Unit tests
         continue-on-error: true
         run: cargo test
+
+      # Does the release binary open a window and stay up for 8 seconds?
+      # Linux uses Xvfb with Mesa's software Vulkan; Windows relies on the
+      # runner's software D3D. Informational, like the rest of this job.
+      - name: Smoke launch (Linux)
+        if: startsWith(matrix.platform, 'ubuntu-')
+        continue-on-error: true
+        run: |
+          export HOME="$RUNNER_TEMP/smoke-home" TMPDIR="$RUNNER_TEMP/smoke-tmp"
+          mkdir -p "$HOME" "$TMPDIR"
+          cat > "$RUNNER_TEMP/smoke.sh" <<'SH'
+          ./target/release/zyplus-gpui > "$TMPDIR/app.log" 2>&1 &
+          pid=$!
+          sleep 8
+          if kill -0 "$pid" 2>/dev/null; then echo "smoke: alive after 8s"; kill "$pid"; exit 0; fi
+          echo "smoke: exited early"; cat "$TMPDIR/app.log"; exit 1
+          SH
+          xvfb-run -a -s "-screen 0 1280x800x24" bash "$RUNNER_TEMP/smoke.sh"
+
+      - name: Smoke launch (Windows)
+        if: startsWith(matrix.platform, 'windows-')
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $env:USERPROFILE = Join-Path $env:RUNNER_TEMP 'smoke-home'
+          New-Item -ItemType Directory -Force $env:USERPROFILE | Out-Null
+          $p = Start-Process -FilePath .\target\release\zyplus-gpui.exe -PassThru -RedirectStandardError "$env:RUNNER_TEMP\app.err" -RedirectStandardOutput "$env:RUNNER_TEMP\app.out"
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { Write-Host "smoke: exited early, code $($p.ExitCode)"; Get-Content "$env:RUNNER_TEMP\app.err", "$env:RUNNER_TEMP\app.out"; exit 1 }
+          Write-Host "smoke: alive after 8s"; Stop-Process -Id $p.Id
 
   # Single required status check for branch protection.
   ci-ok:
