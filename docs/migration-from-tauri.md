@@ -6,7 +6,7 @@ Zyplus moved from a Tauri 2 + React/TypeScript shell (`src/` + `src-tauri/`) to 
 
 - **Single native Rust codebase:** The TypeScript/React frontend, Vite/Bun build tooling, and `src-tauri` wrapper were removed. Everything now lives in `Cargo.toml` and `src/*.rs`.
 - **Git history preserved:** The last commit containing the Tauri + React application is `c3587de3` (`gpui/` subfolder alongside the web app). You can inspect the previous sources via `git show c3587de3:src-tauri/...` or `git show c3587de3:src/...`.
-- **Platform focus:** macOS is the primary target and receives release builds and E2E verification. Linux and Windows remain unverified release targets.
+- **Platform focus:** macOS is the primary target and receives release builds and E2E verification. Linux and Windows x86_64 builds are attached to releases as experimental downloads (build, unit-test and launch checks in CI only, no auto-update). Intel Macs are no longer supported.
 
 ## Continuity with previous releases
 

@@ -22,7 +22,7 @@ tools/winid.swift           Helper printing largest on-screen CGWindowNumber for
 docs/                       Logo and migration notes
 Casks/zyplus.rb             Homebrew cask definition
 install.sh / install.ps1    Install scripts
-.github/workflows/          ci.yml (macOS + informational Linux/Windows check), release.yml
+.github/workflows/          ci.yml (macOS gate + informational Linux/Windows build, test and launch), release.yml (macOS release + experimental Linux/Windows)
 ```
 
 ## Common Commands

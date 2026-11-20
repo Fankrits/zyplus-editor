@@ -23,7 +23,7 @@ Built natively in Rust with [GPUI](https://crates.io/crates/gpui).
 
 ---
 
-Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux and Windows are not release targets; cross-platform compilation is checked only as an informational CI job.
+Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux (x86_64) and Windows (x86_64) builds are published as experimental downloads: they build, pass the unit tests apart from a few platform-specific cases, and launch in CI, but have no end-to-end tests and no auto-update.
 
 ## Features
 
@@ -45,7 +45,7 @@ Zyplus is a macOS-first native desktop application (`zyplus-gpui`). Linux and Wi
 - **No downloadable JS-bundle extensions:** There is no JavaScript engine or webview; all six extensions above are compiled natively into the binary.
 - **`.mdown` opens as plain text:** `.mdown` is declared in `Info.plist` for Finder associations, while inside the app `.md`, `.markdown`, `.mkd`, and `.txt` open as Markdown.
 - **PDF export uses macOS system fonts only:** `Arial`, `Courier New`, `Arial Unicode`, and `Thonburi`.
-- **macOS-only release target:** Linux and Windows builds are not packaged, released, or verified with E2E tests.
+- **Linux and Windows are experimental:** the release workflow attaches an x86_64 `.tar.gz` / `.zip`. CI builds them, runs the unit tests (a few fail there: Thai text in math, Windows path and rename cases) and checks the app launches, but there are no end-to-end tests, no auto-update, and macOS-only features (PDF export, default-app setting, update install) are missing.
 - **No block drag handle** in the rich editor.
 
 ## Install
@@ -69,6 +69,10 @@ curl -fsSL https://raw.githubusercontent.com/Fankrits/zyplus-editor/main/install
 ```
 
 Downloads the latest `.dmg`, installs `/Applications/Zyplus.app`, and clears the `com.apple.quarantine` attribute. Pin a specific release with `ZYPLUS_VERSION=0.2.3 sh install.sh`.
+
+### Linux and Windows (experimental)
+
+Releases also carry `Zyplus_<version>_linux-x86_64.tar.gz` (extract, run `zyplus-gpui`; needs Vulkan plus X11 or Wayland, and fontconfig; a `.desktop` file and icon are included) and `Zyplus_<version>_windows-x86_64.zip` (extract, run `zyplus-gpui.exe`). They are only build- and launch-checked in CI and do not update themselves. Intel Macs are not supported.
 
 ### Manual
 
