@@ -962,32 +962,23 @@ mod path_tests {
 
     #[test]
     fn decodes_file_urls_with_percent_escapes() {
+        // Windows turns `/` into `\` for local paths; this test is about the
+        // percent-decoding, so compare with `/` on every platform.
+        let decode = |url: &str| file_url_to_path(url).map(|p| p.replace('\\', "/"));
         assert_eq!(
-            file_url_to_path("file:///Users/me/My%20Notes/a%C3%A9.md").as_deref(),
+            decode("file:///Users/me/My%20Notes/a%C3%A9.md").as_deref(),
             Some("/Users/me/My Notes/aé.md")
         );
         assert_eq!(
-            file_url_to_path("file://localhost/tmp/x.md").as_deref(),
+            decode("file://localhost/tmp/x.md").as_deref(),
             Some("/tmp/x.md")
         );
-        assert_eq!(
-            file_url_to_path("file:/tmp/x.md").as_deref(),
-            Some("/tmp/x.md")
-        );
-        assert_eq!(
-            file_url_to_path("FILE:///tmp/x.md").as_deref(),
-            Some("/tmp/x.md")
-        );
+        assert_eq!(decode("file:/tmp/x.md").as_deref(), Some("/tmp/x.md"));
+        assert_eq!(decode("FILE:///tmp/x.md").as_deref(), Some("/tmp/x.md"));
         // A percent-encoded slash decodes to a real one.
-        assert_eq!(
-            file_url_to_path("file:///a%2Fb.md").as_deref(),
-            Some("/a/b.md")
-        );
+        assert_eq!(decode("file:///a%2Fb.md").as_deref(), Some("/a/b.md"));
         // An escape that is not hex stays literal.
-        assert_eq!(
-            file_url_to_path("file:///bad%ZZ").as_deref(),
-            Some("/bad%ZZ")
-        );
+        assert_eq!(decode("file:///bad%ZZ").as_deref(), Some("/bad%ZZ"));
         // Bytes that are not UTF-8 cannot be a path string here.
         assert_eq!(file_url_to_path("file:///bad%E9.md"), None);
     }
