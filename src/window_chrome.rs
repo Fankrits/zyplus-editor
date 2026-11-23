@@ -423,6 +423,17 @@ pub fn drag_area(el: Div, chrome: &Chrome) -> Div {
     } else {
         el
     };
+    // Windows turns a press on a Drag area into WM_NCLBUTTONDOWN, and gpui first
+    // dispatches that press as an ordinary MouseDown to everything under the
+    // pointer. If any of it calls `stop_propagation` or `prevent_default` the press
+    // counts as handled and the move never starts. The root view tracks focus, and
+    // gpui's focus handler calls `prevent_default`, so without this the window
+    // could not be dragged at all. Occluding hides everything beneath the area.
+    let el = if drag_area_occludes(chrome) {
+        el.occlude()
+    } else {
+        el
+    };
     if !chrome.client_drag {
         return el;
     }
@@ -441,6 +452,13 @@ pub fn drag_area(el: Div, chrome: &Chrome) -> Div {
     } else {
         el
     }
+}
+
+/// Whether a drag area must hide the elements beneath it from mouse events
+/// (see [`drag_area`]). Only Windows routes the press through the native caption
+/// hit test; macOS and Linux client-side moves do not need it.
+pub fn drag_area_occludes(chrome: &Chrome) -> bool {
+    chrome.native_hit_test_controls
 }
 
 /// Renders the top-right window caption buttons (minimise / maximise-restore /
@@ -710,6 +728,16 @@ mod tests {
             assert!(!chrome.draw_resize_edges);
             assert_eq!(chrome.client_inset, 0.0);
         }
+    }
+
+    #[test]
+    fn only_windows_drag_areas_hide_the_elements_beneath_them() {
+        // Windows dispatches the caption press as a MouseDown first; the root's
+        // focus handler would `prevent_default` it and cancel the window move.
+        let state = WindowDecorationState::default();
+        assert!(drag_area_occludes(&chrome_for(Os::Windows, state)));
+        assert!(!drag_area_occludes(&chrome_for(Os::Mac, state)));
+        assert!(!drag_area_occludes(&chrome_for(Os::Linux, state)));
     }
 
     #[test]
