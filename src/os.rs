@@ -751,38 +751,200 @@ fn read_request(stream: std::os::unix::net::UnixStream) -> Option<Vec<String>> {
 // macOS: default app claiming
 // ---------------------------------------------------------------------------
 
-// The default-app functions are called from the Settings modal, which lands in a
-// separate change. Until it is merged they have no caller, so they are allowed
-// to be unused here instead of being silenced for the whole module.
+// The default-app functions are called from the Settings modal.
 
-/// Makes Zyplus the default app for a UTI (for example `uti::MARKDOWN`), by
-/// claiming both the Editor and All roles through LaunchServices.
+/// What the Settings "Make default" button does on a platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DefaultAppMode {
+    /// The app can claim the file type itself (macOS LaunchServices, Linux `xdg-mime`).
+    Claim,
+    /// The OS only lets the user choose: the button opens the system's Default apps page.
+    OpenSystemSettings,
+}
+
+pub const fn default_app_mode(os: Os) -> DefaultAppMode {
+    match os {
+        Os::Mac | Os::Linux => DefaultAppMode::Claim,
+        Os::Windows => DefaultAppMode::OpenSystemSettings,
+    }
+}
+
+/// The freedesktop MIME type for a UTI used by the Settings rows.
+pub fn mime_for_uti(uti: &str) -> Option<&'static str> {
+    match uti {
+        uti::MARKDOWN => Some("text/markdown"),
+        uti::CSV => Some("text/csv"),
+        uti::JSON => Some("application/json"),
+        _ => None,
+    }
+}
+
+/// The file extension Windows tracks the user's choice under, for a UTI.
+pub fn extension_for_uti(uti: &str) -> Option<&'static str> {
+    match uti {
+        uti::MARKDOWN => Some(".md"),
+        uti::CSV => Some(".csv"),
+        uti::JSON => Some(".json"),
+        _ => None,
+    }
+}
+
+/// Desktop entry the Linux packages install (`packaging/linux/zyplus.desktop`).
+pub const LINUX_DESKTOP_ID: &str = "zyplus.desktop";
+/// ProgID the Windows installer registers (`packaging/windows/zyplus.iss`).
+pub const WINDOWS_PROG_ID: &str = "Zyplus.File";
+
+/// Directories searched for an installed `.desktop` file, per the XDG spec.
+pub fn desktop_file_dirs(
+    xdg_data_home: Option<&str>,
+    xdg_data_dirs: Option<&str>,
+    home: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    match xdg_data_home.filter(|v| Path::new(v).is_absolute()) {
+        Some(dir) => dirs.push(PathBuf::from(dir).join("applications")),
+        None => {
+            if let Some(home) = home.filter(|v| !v.is_empty()) {
+                dirs.push(PathBuf::from(home).join(".local/share/applications"));
+            }
+        }
+    }
+    let system = xdg_data_dirs
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or("/usr/local/share:/usr/share");
+    for dir in system.split(':').filter(|d| Path::new(d).is_absolute()) {
+        dirs.push(PathBuf::from(dir).join("applications"));
+    }
+    dirs
+}
+
+/// Whether `xdg-mime query default` output names Zyplus.
+pub fn xdg_default_is_zyplus(output: &str) -> bool {
+    output.trim() == LINUX_DESKTOP_ID
+}
+
+/// Pulls the `ProgId` value out of `reg query ...\UserChoice /v ProgId` output.
+pub fn parse_reg_prog_id(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        (parts.next()? == "ProgId" && parts.next()? == "REG_SZ")
+            .then(|| parts.collect::<Vec<_>>().join(" "))
+            .filter(|id| !id.is_empty())
+    })
+}
+
+/// Runs a helper program without flashing a console window from the GUI app.
+fn run_quiet(program: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd.output()
+}
+
+fn linux_desktop_file_installed() -> bool {
+    let env = |name: &str| std::env::var(name).ok();
+    desktop_file_dirs(
+        env("XDG_DATA_HOME").as_deref(),
+        env("XDG_DATA_DIRS").as_deref(),
+        env("HOME").as_deref(),
+    )
+    .iter()
+    .any(|dir| dir.join(LINUX_DESKTOP_ID).is_file())
+}
+
+fn linux_set_default(mime: &str) -> Result<(), String> {
+    if !linux_desktop_file_installed() {
+        return Err(
+            "Zyplus is not installed as a desktop app (the AppImage has no menu entry). \
+             Install the .deb, or set the default in your file manager."
+                .into(),
+        );
+    }
+    match run_quiet("xdg-mime", &["default", LINUX_DESKTOP_ID, mime]) {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => Err(format!(
+            "xdg-mime failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+        Err(e) => Err(format!(
+            "Could not run xdg-mime ({e}). Set the default in your file manager."
+        )),
+    }
+}
+
+fn linux_is_default(mime: &str) -> bool {
+    run_quiet("xdg-mime", &["query", "default", mime])
+        .map(|out| xdg_default_is_zyplus(&String::from_utf8_lossy(&out.stdout)))
+        .unwrap_or(false)
+}
+
+fn windows_is_default(extension: &str) -> bool {
+    let key = format!(
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{extension}\UserChoice"
+    );
+    run_quiet("reg", &["query", &key, "/v", "ProgId"])
+        .ok()
+        .and_then(|out| parse_reg_prog_id(&String::from_utf8_lossy(&out.stdout)))
+        .is_some_and(|id| id == WINDOWS_PROG_ID)
+}
+
+/// Windows lets only the user pick a default app; this opens that page.
+fn windows_open_default_apps() -> Result<(), String> {
+    std::process::Command::new("explorer")
+        .arg("ms-settings:defaultapps")
+        .spawn()
+        .map(drop)
+        .map_err(|e| format!("Could not open Windows Settings: {e}"))
+}
+
+/// Makes Zyplus the default app for a UTI (for example `uti::MARKDOWN`).
 ///
-/// On macOS, LaunchServices only accepts a handler it knows about, so this fails
-/// unless Zyplus is installed (for example in /Applications). Other platforms
-/// return `Err`: users pick the default in their system settings.
-#[allow(dead_code)]
-#[cfg(target_os = "macos")]
+/// macOS claims both the Editor and All roles through LaunchServices, which
+/// only accepts a handler it knows about (Zyplus in /Applications). Linux runs
+/// `xdg-mime default`. Windows cannot be claimed programmatically (it guards
+/// the choice with a hash), so this opens Settings → Default apps and returns
+/// `Ok` without having changed anything: check `is_default_app_for` afterwards.
 pub fn set_default_app_for(uti: &str) -> Result<(), String> {
+    match Os::current() {
+        Os::Mac => claim_on_macos(uti),
+        Os::Linux => match mime_for_uti(uti) {
+            Some(mime) => linux_set_default(mime),
+            None => Err(format!("No file type is known for {uti}")),
+        },
+        Os::Windows => windows_open_default_apps(),
+    }
+}
+
+/// Whether Zyplus already opens this UTI by default.
+pub fn is_default_app_for(uti: &str) -> bool {
+    match Os::current() {
+        Os::Mac => is_default_on_macos(uti),
+        Os::Linux => mime_for_uti(uti).is_some_and(linux_is_default),
+        Os::Windows => extension_for_uti(uti).is_some_and(windows_is_default),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn claim_on_macos(uti: &str) -> Result<(), String> {
     launch_services::claim(BUNDLE_ID, uti)
 }
 
-#[allow(dead_code)]
 #[cfg(not(target_os = "macos"))]
-pub fn set_default_app_for(_uti: &str) -> Result<(), String> {
-    Err("Set Zyplus as the default app for this file type in your system settings.".into())
+fn claim_on_macos(_uti: &str) -> Result<(), String> {
+    Err("Default-app claiming through LaunchServices needs macOS.".into())
 }
 
-/// Whether Zyplus already opens this UTI by default. Always `false` off macOS.
-#[allow(dead_code)]
 #[cfg(target_os = "macos")]
-pub fn is_default_app_for(uti: &str) -> bool {
+fn is_default_on_macos(uti: &str) -> bool {
     launch_services::is_default(BUNDLE_ID, uti)
 }
 
-#[allow(dead_code)]
 #[cfg(not(target_os = "macos"))]
-pub fn is_default_app_for(_uti: &str) -> bool {
+fn is_default_on_macos(_uti: &str) -> bool {
     false
 }
 
@@ -1501,5 +1663,111 @@ mod default_app_tests {
             is_default_app_for(uti),
             "is_default returned false after a successful claim"
         );
+    }
+}
+
+#[cfg(test)]
+mod default_app_platform_tests {
+    use super::*;
+
+    #[test]
+    fn only_windows_sends_the_user_to_system_settings() {
+        assert_eq!(default_app_mode(Os::Mac), DefaultAppMode::Claim);
+        assert_eq!(default_app_mode(Os::Linux), DefaultAppMode::Claim);
+        assert_eq!(
+            default_app_mode(Os::Windows),
+            DefaultAppMode::OpenSystemSettings
+        );
+    }
+
+    #[test]
+    fn every_settings_uti_maps_to_a_mime_type_and_a_windows_extension() {
+        for u in [uti::MARKDOWN, uti::CSV, uti::JSON] {
+            assert!(mime_for_uti(u).is_some(), "{u}");
+            assert!(
+                extension_for_uti(u).is_some_and(|e| e.starts_with('.')),
+                "{u}"
+            );
+        }
+        assert_eq!(mime_for_uti(uti::MARKDOWN), Some("text/markdown"));
+        assert_eq!(mime_for_uti("nope"), None);
+    }
+
+    #[test]
+    fn the_mime_types_are_declared_by_the_linux_desktop_entry() {
+        let desktop = include_str!("../packaging/linux/zyplus.desktop");
+        let line = desktop
+            .lines()
+            .find(|l| l.starts_with("MimeType="))
+            .expect("MimeType line");
+        for u in [uti::MARKDOWN, uti::CSV, uti::JSON] {
+            let mime = mime_for_uti(u).unwrap();
+            assert!(line.contains(mime), "{mime} missing from {line}");
+        }
+        assert!(desktop.contains(&format!("StartupWMClass={}", "zyplus-gpui")));
+    }
+
+    #[test]
+    fn the_windows_installer_registers_the_prog_id_and_every_extension() {
+        let iss = include_str!("../packaging/windows/zyplus.iss");
+        assert!(
+            iss.contains(WINDOWS_PROG_ID),
+            "ProgID missing from installer"
+        );
+        assert!(iss.contains("ChangesAssociations=yes"));
+        for u in [uti::MARKDOWN, uti::CSV, uti::JSON] {
+            let ext = extension_for_uti(u).unwrap();
+            assert!(
+                iss.contains(&format!("Classes\\{ext}\\OpenWithProgids")),
+                "{ext} not registered by the installer"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_file_dirs_follow_the_xdg_spec() {
+        assert_eq!(
+            desktop_file_dirs(None, None, Some("/home/me")),
+            vec![
+                PathBuf::from("/home/me/.local/share/applications"),
+                PathBuf::from("/usr/local/share/applications"),
+                PathBuf::from("/usr/share/applications"),
+            ]
+        );
+        // A relative XDG_DATA_HOME is ignored; custom data dirs replace the defaults.
+        let dirs = desktop_file_dirs(Some("rel"), Some("/opt/a:rel:/opt/b"), Some("/home/me"));
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/home/me/.local/share/applications"),
+                PathBuf::from("/opt/a/applications"),
+                PathBuf::from("/opt/b/applications"),
+            ]
+        );
+        assert_eq!(
+            desktop_file_dirs(Some("/x"), Some(""), None)[0],
+            PathBuf::from("/x/applications")
+        );
+    }
+
+    #[test]
+    fn xdg_mime_output_is_matched_exactly() {
+        assert!(xdg_default_is_zyplus("zyplus.desktop\n"));
+        assert!(!xdg_default_is_zyplus("org.gnome.TextEditor.desktop\n"));
+        assert!(!xdg_default_is_zyplus(""));
+        assert!(!xdg_default_is_zyplus("zyplus.desktop.bak"));
+    }
+
+    #[test]
+    fn reg_query_output_yields_the_prog_id() {
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\...\\.md\\UserChoice\r\n    ProgId    REG_SZ    Zyplus.File\r\n\r\n";
+        assert_eq!(parse_reg_prog_id(out).as_deref(), Some("Zyplus.File"));
+        let other = "    ProgId    REG_SZ    AppX4hxtad77fbk3jkkeerkrm0ze94wjf3s9\n";
+        assert_ne!(parse_reg_prog_id(other).as_deref(), Some(WINDOWS_PROG_ID));
+        assert_eq!(
+            parse_reg_prog_id("ERROR: The system was unable to find the specified registry key"),
+            None
+        );
+        assert_eq!(parse_reg_prog_id(""), None);
     }
 }

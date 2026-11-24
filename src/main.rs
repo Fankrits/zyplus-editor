@@ -563,27 +563,38 @@ struct DefaultApps {
     error: [Option<SharedString>; 3],
 }
 
-/// The "Default … app" rows: label, UTI, and the hint on macOS and elsewhere.
-const DEFAULT_APPS: [(&str, &str, &str, &str); 3] = [
-    (
-        "Default Markdown app",
-        os::uti::MARKDOWN,
-        "Open .md files with Zyplus when you double-click them.",
-        "Set Zyplus as the handler for .md in your system's default apps settings.",
-    ),
-    (
-        "Default CSV app",
-        os::uti::CSV,
-        "Open .csv files with Zyplus when you double-click them.",
-        "Set Zyplus as the handler for .csv in your system's default apps settings.",
-    ),
-    (
-        "Default JSON app",
-        os::uti::JSON,
-        "Open .json files with Zyplus when you double-click them.",
-        "Set Zyplus as the handler for .json in your system's default apps settings.",
-    ),
+/// The "Default … app" rows: label, UTI, and the file extension named in the hint.
+const DEFAULT_APPS: [(&str, &str, &str); 3] = [
+    ("Default Markdown app", os::uti::MARKDOWN, ".md"),
+    ("Default CSV app", os::uti::CSV, ".csv"),
+    ("Default JSON app", os::uti::JSON, ".json"),
 ];
+
+/// The hint under a default-app row, and the button's label, per OS.
+fn default_app_hint(os: platform::Os, extension: &str) -> String {
+    match os {
+        platform::Os::Mac => {
+            format!("Open {extension} files with Zyplus when you double-click them.")
+        }
+        platform::Os::Linux => format!(
+            "Open {extension} files with Zyplus from your file manager. Needs the installed \
+             .deb (the AppImage has no menu entry)."
+        ),
+        platform::Os::Windows => format!(
+            "Windows lets you choose: opens Settings → Default apps. Pick Zyplus for {extension}."
+        ),
+    }
+}
+
+fn default_app_button_label(os: platform::Os, claimed: bool) -> &'static str {
+    if claimed {
+        "Zyplus is the default"
+    } else if os::default_app_mode(os) == os::DefaultAppMode::OpenSystemSettings {
+        "Open Default apps"
+    } else {
+        "Make default"
+    }
+}
 
 /// Built-in extensions for Settings → Extensions:
 /// (id, toggle element id, name, description, applies to).
@@ -2366,7 +2377,7 @@ impl Zyplus {
     fn default_app_claims(&mut self) -> DefaultApps {
         self.default_apps
             .get_or_insert_with(|| DefaultApps {
-                claimed: DEFAULT_APPS.map(|(_, uti, _, _)| os::is_default_app_for(uti)),
+                claimed: DEFAULT_APPS.map(|(_, uti, _)| os::is_default_app_for(uti)),
                 error: [None, None, None],
             })
             .clone()
@@ -2377,7 +2388,10 @@ impl Zyplus {
         let mut claims = self.default_app_claims();
         match result {
             Ok(()) => {
-                claims.claimed[index] = true;
+                // Windows only opened Settings: whether the user chose Zyplus is
+                // read back from the registry. Elsewhere the claim has happened.
+                claims.claimed[index] = os::is_default_app_for(DEFAULT_APPS[index].1)
+                    || os::default_app_mode(platform::Os::current()) == os::DefaultAppMode::Claim;
                 claims.error[index] = None;
             }
             Err(err) => claims.error[index] = Some(err.into()),
@@ -4710,7 +4724,7 @@ impl Zyplus {
                     .child(settings_row(
                         theme,
                         "Autosave",
-                        Some("Saves open files a moment after you stop typing."),
+                        Some("Saves open files a moment after you stop typing.".into()),
                         Some(
                             div()
                                 .flex()
@@ -5024,25 +5038,20 @@ impl Zyplus {
     /// `default_app_claims`, read once per visit rather than every frame.
     fn default_app_rows(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let claims = self.default_app_claims();
-        let mac = cfg!(target_os = "macos");
+        let current = platform::Os::current();
         let ids = ["default-app-md", "default-app-csv", "default-app-json"];
         DEFAULT_APPS
             .iter()
             .enumerate()
             .map(|(index, row)| {
-                let (label, _, mac_hint, other_hint) = *row;
+                let (label, _, extension) = *row;
                 let claimed = claims.claimed[index];
                 let button = secondary_button(
                     theme,
                     ids[index],
-                    if claimed {
-                        "Zyplus is the default"
-                    } else {
-                        "Make default"
-                    },
+                    default_app_button_label(current, claimed),
                 );
-                // Only macOS can claim a file type; elsewhere the hint says where to go.
-                let button = if !mac || claimed {
+                let button = if claimed {
                     button.opacity(0.4)
                 } else {
                     button.on_click(
@@ -5071,7 +5080,7 @@ impl Zyplus {
                 settings_row(
                     theme,
                     label,
-                    Some(if mac { mac_hint } else { other_hint }),
+                    Some(default_app_hint(current, extension).into()),
                     Some(control.into_any_element()),
                 )
                 .into_any_element()
@@ -5455,7 +5464,7 @@ fn settings_heading(theme: &Theme, label: &'static str) -> Div {
 fn settings_row(
     theme: &Theme,
     label: &'static str,
-    hint: Option<&'static str>,
+    hint: Option<SharedString>,
     control: Option<AnyElement>,
 ) -> Div {
     div()

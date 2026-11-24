@@ -49,6 +49,18 @@ Description: A markdown editor that gets out of the way
  Zyplus is a local-first markdown editor: a project tree, tabs, a rendered
  preview, and your files stay on your machine.
 EOF
+# Refresh the desktop database so "Open With" and default-app choices see Zyplus.
+for script in postinst postrm; do
+  cat > "$PKG/DEBIAN/$script" <<'SH'
+#!/bin/sh
+set -e
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q /usr/share/applications || true
+fi
+exit 0
+SH
+  chmod 755 "$PKG/DEBIAN/$script"
+done
 DEB="$OUT/Zyplus_${VERSION}_linux-amd64.deb"
 dpkg-deb --root-owner-group --build "$PKG" "$DEB" >/dev/null
 echo "built $DEB"

@@ -7,5 +7,5 @@ Exec=zyplus-gpui %F
 Icon=zyplus
 Terminal=false
 Categories=Utility;TextEditor;
-MimeType=text/markdown;text/plain;text/csv;text/tab-separated-values;application/json;
+MimeType=text/markdown;text/x-markdown;text/plain;text/csv;text/tab-separated-values;application/json;
 StartupWMClass=zyplus-gpui
