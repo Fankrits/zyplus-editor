@@ -1,0 +1,123 @@
+wait 3000
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+type the quick brown fox jumps over the lazy dog \n
+wait 200
+wait 30000
+quit

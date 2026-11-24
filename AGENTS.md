@@ -14,6 +14,7 @@ bundle/                     macos-document-types.plist (mirrors scripts/bundle-m
 scripts/
   test.sh                   Unified test runner (fmt|lint|unit|build|bundle|e2e|quick|all)
   e2e/                      Python stdlib E2E runner and fixtures (macOS)
+  perf/                     Headless memory/CPU harness for the Linux container (run.sh, measure.sh, fixtures)
   bundle-macos.sh           Builds and signs Zyplus.app without cargo-bundle
   make-signing-cert.sh      One-off helper to create self-signed macOS signing secrets
   release/                  Version stamping, DMG creation, manifest generation, signer
@@ -50,6 +51,8 @@ swiftc -O tools/winid.swift -o winid # Build window-id helper for E2E screenshot
 - `csv_view.rs`, `json_view.rs`: Native CSV/TSV table+text and JSON tree+table+text views.
 - `export_pdf.rs`: Pure-Rust paginated A4 PDF export (`pdf-writer` + `rustybuzz` + `subsetter`) using macOS system fonts.
 - `updater.rs`: Blocks on background threads to fetch `latest.json`, verify minisign signatures, and replace/relaunch `Zyplus.app` on macOS.
+- `history.rs`: Byte-bounded undo/redo history shared by `editor.rs` and `rich_editor.rs` (250 steps / 32 MB).
+- `text_stats.rs`: Per-tab save fingerprint and word count (kept off the render path).
 - `test_script.rs`: Debug-only (`#[cfg(debug_assertions)]`) scripted-input runner.
 
 ## Debug Scripted-Input Runner (`ZYPLUS_TEST_SCRIPT`)
@@ -60,6 +63,12 @@ Key limitations of the runner:
 - `click` dispatches directly to the editor view handlers (`on_mouse_down`, etc.) and skips hit-testing; it cannot reach overlay widgets, dialogs, or context menus. Use `rich-action <name>`, `menu ...`, `menu-run <label>`, `settings <section>`, `dialog ...`, `click-row <path>`, `focus <target>`, and `key ...` instead.
 - Script lines are right-trimmed (`type /foo ` drops trailing whitespace).
 - `state <file>` reports `selection` offsets in **UTF-8 bytes**, not Unicode scalar counts.
+
+## Measuring Memory and CPU
+
+Use `scripts/perf/measure.sh` (Linux container, Xvfb, nothing on your screen). It needs a release build made with `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true` in a `zyplus-target-perf` volume (see the script header). Compare `anon_kb` and deltas, not `rss` (the container uses a software GPU and counts the binary). `ZYPLUS_RICH_TIMING=1` prints per-stage rich-editor timings.
+
+For macOS, launch a bundle hidden and isolated, then read it with `footprint`: `open -n -g -j --env HOME=<tmp>/home --env TMPDIR=<tmp>/tmp Zyplus.app --args file.md`. The ~170 MB spike on first window render is gpui's graphics memory, released within a second.
 
 ## Operational Pitfalls (Running & Testing Locally)
 

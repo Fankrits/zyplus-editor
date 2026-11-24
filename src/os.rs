@@ -39,6 +39,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Mutex;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -258,6 +259,21 @@ pub enum SingleInstance {
     /// Another instance is running and has taken this launch's files. The
     /// caller should exit right away.
     Forwarded,
+}
+
+/// Wakes the task that drains `Primary::requests` and the open-URL queue, so it can sleep
+/// instead of polling. Unset (and a no-op) until the app registers it.
+static WAKE: Mutex<Option<futures::channel::mpsc::UnboundedSender<()>>> = Mutex::new(None);
+
+pub fn set_wake(tx: futures::channel::mpsc::UnboundedSender<()>) {
+    *WAKE.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+}
+
+/// Called from any thread after something was queued for the app.
+pub fn wake() {
+    if let Some(tx) = WAKE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        let _ = tx.unbounded_send(());
+    }
 }
 
 /// The primary instance's handle.
@@ -689,6 +705,7 @@ fn tcp_handle_connection(
         // The app has dropped its receiver; nothing left to serve.
         return false;
     }
+    wake();
     let _ = stream.write_all(TCP_ACK);
     let _ = stream.flush();
     true
@@ -727,6 +744,7 @@ fn accept_loop(listener: std::os::unix::net::UnixListener, tx: Sender<Vec<String
                 // The app has dropped its receiver; nothing left to serve.
                 break;
             }
+            wake();
         }
     }
 }
@@ -1776,5 +1794,22 @@ mod default_app_platform_tests {
             None
         );
         assert_eq!(parse_reg_prog_id(""), None);
+    }
+}
+
+#[cfg(test)]
+mod wake_tests {
+    use super::*;
+
+    #[test]
+    fn wake_reaches_the_registered_receiver_and_is_harmless_before_that() {
+        wake(); // nothing registered yet (or a previous test's): must not panic
+        let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
+        set_wake(tx);
+        wake();
+        wake();
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err(), "no third wake was queued");
     }
 }

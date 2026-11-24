@@ -29,6 +29,7 @@ use gpui::{
 };
 
 use crate::highlight::{self, LineCache, TokenKind};
+use crate::history::History;
 use crate::rich_ops;
 use crate::theme::Theme;
 use crate::wrap_layout::{ShapeCache, WrappedText};
@@ -136,7 +137,6 @@ pub fn bind_nav_keys(cx: &mut App) {
     ));
 }
 
-type Snapshot = (String, Range<usize>);
 type Tokens = Vec<Vec<(Range<usize>, TokenKind)>>;
 
 pub struct Editor {
@@ -164,8 +164,7 @@ pub struct Editor {
     desired_x: Option<f32>,
     /// The caret sits at the end of the row above a soft wrap, not the start of the next.
     at_row_end: bool,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    history: History,
     last_edit: Option<(Instant, EditKind)>,
     last_bounds: Option<Bounds<Pixels>>,
     /// The lines the last paint laid out, top to bottom, for hit-testing and IME.
@@ -315,8 +314,7 @@ impl Editor {
             paint_style: None,
             desired_x: None,
             at_row_end: false,
-            undo: Vec::new(),
-            redo: Vec::new(),
+            history: History::default(),
             last_edit: None,
             last_bounds: None,
             last_lines: Vec::new(),
@@ -500,8 +498,7 @@ impl Editor {
         self.marked = None;
         self.at_row_end = false;
         self.desired_x = None;
-        self.undo.clear();
-        self.redo.clear();
+        self.history.clear();
         self.scroll = Scroll::default();
         self.scroll_px = 0.0;
         self.follow_caret = false;
@@ -555,12 +552,8 @@ impl Editor {
     fn push_undo(&mut self, kind: EditKind) {
         let now = Instant::now();
         if !folds_into_undo(self.last_edit, now, kind) {
-            self.undo
-                .push((self.content.clone(), self.selection.clone()));
-            if self.undo.len() > 250 {
-                self.undo.remove(0);
-            }
-            self.redo.clear();
+            self.history
+                .record((self.content.clone(), self.selection.clone()));
         }
         self.last_edit = Some((now, kind));
     }
@@ -1211,17 +1204,21 @@ impl Editor {
     }
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((content, selection)) = self.undo.pop() {
-            self.redo
-                .push((self.content.clone(), self.selection.clone()));
+        if self.history.undo_len() == 0 {
+            return;
+        }
+        let current = (std::mem::take(&mut self.content), self.selection.clone());
+        if let Some((content, selection)) = self.history.undo(current) {
             self.restore(content, selection, cx);
         }
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((content, selection)) = self.redo.pop() {
-            self.undo
-                .push((self.content.clone(), self.selection.clone()));
+        if self.history.redo_len() == 0 {
+            return;
+        }
+        let current = (std::mem::take(&mut self.content), self.selection.clone());
+        if let Some((content, selection)) = self.history.redo(current) {
             self.restore(content, selection, cx);
         }
     }

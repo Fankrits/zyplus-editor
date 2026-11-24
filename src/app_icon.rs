@@ -279,14 +279,30 @@ impl AssetSource for Assets {
     }
 }
 
+/// Whether `exe` sits inside an `.app` bundle, which supplies its own icon (`icon.icns`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn is_in_app_bundle(exe: &std::path::Path) -> bool {
+    exe.components().any(|part| {
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|s| s.ends_with(".app"))
+    })
+}
+
+/// Replace the generic executable icon in the Dock and the app switcher. Only an
+/// unbundled run (`cargo run`) needs this: decoding the PNG into an NSImage costs
+/// several MB that a bundled app, which already has its `.icns`, never needs.
 #[allow(unexpected_cfgs)]
-/// Replace the generic executable icon in the Dock and the app switcher.
 #[cfg(target_os = "macos")]
 pub fn set_dock_icon() {
     use cocoa::appkit::{NSApp, NSImage};
     use cocoa::base::{id, nil};
     use cocoa::foundation::NSData;
     use objc::{msg_send, sel, sel_impl};
+
+    if std::env::current_exe().is_ok_and(|exe| is_in_app_bundle(&exe)) {
+        return;
+    }
 
     // SAFETY: called on the main thread inside `Application::run`, with a
     // buffer that lives for the whole program; AppKit copies the bytes.
@@ -315,4 +331,23 @@ pub fn icon(name: &str, size: f32) -> gpui::Svg {
         .path(format!("icons/{name}.svg"))
         .size(px(size))
         .flex_shrink_0()
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::is_in_app_bundle;
+    use std::path::Path;
+
+    #[test]
+    fn only_executables_inside_an_app_bundle_count_as_bundled() {
+        assert!(is_in_app_bundle(Path::new(
+            "/Applications/Zyplus.app/Contents/MacOS/zyplus-gpui"
+        )));
+        assert!(!is_in_app_bundle(Path::new(
+            "/Users/me/dev/zyplus/target/debug/zyplus-gpui"
+        )));
+        assert!(!is_in_app_bundle(Path::new(
+            "/opt/apps/zyplus.application/bin/zyplus"
+        )));
+    }
 }

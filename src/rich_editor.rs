@@ -44,6 +44,7 @@ use gpui::{
 
 use crate::editor::{self, mono_font, Scroll};
 use crate::highlight::{self, TokenKind};
+use crate::history::History;
 use crate::rich_blocks::{self, Action, Button, Hover, Widget, WidgetKind};
 use crate::rich_model::{
     self, Block, BlockKind, CalloutKind, DisplayLine, InlineKind, InlineStyle, Line, LineKind,
@@ -125,7 +126,6 @@ const NEWLINE_W: f32 = 8.0;
 const CODE_CACHE_LIMIT: usize = 128;
 
 type Tokens = Vec<(Range<usize>, TokenKind)>;
-type Snapshot = (String, Range<usize>);
 
 /// Timing for the performance notes: set `ZYPLUS_RICH_TIMING=1` and every 60
 /// frames the rich editor prints the average and worst time of each stage to
@@ -600,8 +600,7 @@ pub struct RichEditor {
     desired_x: Option<f32>,
     /// The caret sits at the end of the row above a soft wrap.
     at_row_end: bool,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    history: History,
     last_edit: Option<Instant>,
     /// The last edit was plain typing, so the next typed character may join
     /// its undo step. Commands, pastes and caret moves end the run.
@@ -644,8 +643,7 @@ impl RichEditor {
             view_width: 0.0,
             desired_x: None,
             at_row_end: false,
-            undo: Vec::new(),
-            redo: Vec::new(),
+            history: History::default(),
             last_edit: None,
             typing_run: false,
             last_bounds: None,
@@ -689,8 +687,8 @@ impl RichEditor {
             self.model.lines.len(),
             self.scroll.line,
             self.scroll.offset,
-            self.undo.len(),
-            self.redo.len(),
+            self.history.undo_len(),
+            self.history.redo_len(),
         )
     }
 
@@ -765,8 +763,7 @@ impl RichEditor {
         self.marked = None;
         self.at_row_end = false;
         self.desired_x = None;
-        self.undo.clear();
-        self.redo.clear();
+        self.history.clear();
         self.scroll = Scroll::default();
         self.scroll_px = 0.0;
         self.follow_caret = false;
@@ -957,17 +954,21 @@ impl RichEditor {
     }
 
     pub fn undo(&mut self, cx: &mut Context<Self>) {
-        if let Some((content, selection)) = self.undo.pop() {
-            self.redo
-                .push((self.content.clone(), self.selection.clone()));
+        if self.history.undo_len() == 0 {
+            return;
+        }
+        let current = (std::mem::take(&mut self.content), self.selection.clone());
+        if let Some((content, selection)) = self.history.undo(current) {
             self.restore(content, selection, cx);
         }
     }
 
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        if let Some((content, selection)) = self.redo.pop() {
-            self.undo
-                .push((self.content.clone(), self.selection.clone()));
+        if self.history.redo_len() == 0 {
+            return;
+        }
+        let current = (std::mem::take(&mut self.content), self.selection.clone());
+        if let Some((content, selection)) = self.history.redo(current) {
             self.restore(content, selection, cx);
         }
     }
@@ -1042,12 +1043,8 @@ impl RichEditor {
         };
         let coalesce = typing && self.typing_run && quick;
         if !coalesce {
-            self.undo
-                .push((self.content.clone(), self.selection.clone()));
-            if self.undo.len() > 250 {
-                self.undo.remove(0);
-            }
-            self.redo.clear();
+            self.history
+                .record((self.content.clone(), self.selection.clone()));
         }
         self.last_edit = Some(now);
         self.typing_run = typing;

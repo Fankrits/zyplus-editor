@@ -34,6 +34,7 @@ mod editor;
 mod export_pdf;
 mod fullscreen_view;
 mod highlight;
+mod history;
 mod json_view;
 mod keymap;
 mod math;
@@ -51,6 +52,7 @@ pub(crate) mod rich_table;
 mod session;
 #[cfg(debug_assertions)]
 mod test_script;
+mod text_stats;
 mod theme;
 mod tree;
 mod updater;
@@ -181,12 +183,16 @@ struct Tab {
     path: String,
     title: String,
     /// The last content known to be on disk.
-    saved: String,
+    saved: text_stats::Fingerprint,
     dirty: bool,
     /// The view mode, as persisted: rich/plain, text/tree/table or table/text.
     mode: String,
     /// Mirror of the editor buffer, for preview and autosave.
     content: String,
+    /// Words in `content`, for the status bar. Counted on edit, or after a typing pause
+    /// for long text (`words_tick` names the pause this tab is waiting for).
+    words: usize,
+    words_tick: u64,
     kind: ViewKind,
     view: TabView,
     /// The WYSIWYG editor shown in Rich mode, created on first use. Both
@@ -1160,9 +1166,11 @@ impl Zyplus {
             id: tab_id,
             path: path.to_string(),
             title: paths::basename_of(path),
-            saved: content.clone(),
+            saved: text_stats::Fingerprint::of(&content),
             dirty: false,
             mode: mode.to_string(),
+            words: text_stats::count_words(&content),
+            words_tick: 0,
             content,
             kind,
             view,
@@ -1178,15 +1186,44 @@ impl Zyplus {
     }
 
     fn tab_edited(&mut self, tab_id: u64, text: String, cx: &mut Context<Self>) {
+        let mut recount = None;
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
-            tab.dirty = text != tab.saved;
+            tab.dirty = !tab.saved.matches(&text);
+            if text.len() <= text_stats::WORDS_SYNC_LIMIT {
+                tab.words = text_stats::count_words(&text);
+            } else {
+                tab.words_tick += 1;
+                recount = Some(tab.words_tick);
+            }
             tab.content = text;
+        }
+        if let Some(tick) = recount {
+            self.schedule_word_count(tab_id, tick, cx);
         }
         if let Some(find) = self.find.as_mut() {
             find.dirty = true;
         }
         self.schedule_autosave(cx);
         cx.notify();
+    }
+
+    /// Counts the words of a long text once typing pauses, so each keystroke does not rescan it.
+    fn schedule_word_count(&mut self, tab_id: u64, tick: u64, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(tab) = this.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+                    if tab.words_tick == tick {
+                        tab.words = text_stats::count_words(&tab.content);
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn open_document(&mut self, path: &str, window: Option<&mut Window>, cx: &mut Context<Self>) {
@@ -1232,10 +1269,9 @@ impl Zyplus {
         let Some(index) = self.tabs.iter().position(|tab| tab.path == path) else {
             return false;
         };
-        let content = self.tabs[index].content.clone();
-        match tree::write_text_file(path, &content) {
+        match tree::write_text_file(path, &self.tabs[index].content) {
             Ok(()) => {
-                self.tabs[index].saved = content;
+                self.tabs[index].saved = text_stats::Fingerprint::of(&self.tabs[index].content);
                 self.tabs[index].dirty = false;
                 self.error = None;
                 self.persist();
@@ -2555,7 +2591,7 @@ impl Zyplus {
             }
             match tree::write_text_file(&tab.path, &tab.content) {
                 Ok(()) => {
-                    tab.saved = tab.content.clone();
+                    tab.saved = text_stats::Fingerprint::of(&tab.content);
                     tab.dirty = false;
                     changed = true;
                 }
@@ -4008,10 +4044,7 @@ impl Zyplus {
             ViewKind::Text { language } => (view_kind::language_label(language), true),
             _ => (view_kind::mode_label(&mode), true),
         };
-        let words = self
-            .active_tab()
-            .map(|tab| tab.content.split_whitespace().count())
-            .unwrap_or(0);
+        let words = self.active_tab().map(|tab| tab.words).unwrap_or(0);
         div()
             .flex()
             .flex_row()
@@ -6199,6 +6232,7 @@ fn main() {
     let app = Application::new().with_assets(app_icon::Assets);
     app.on_open_urls(move |urls| {
         let _ = url_tx.send(os::urls_to_paths(&urls));
+        os::wake();
     });
     // Clicking the Dock icon with no window open brings one back.
     app.on_reopen(|cx| {
@@ -6252,11 +6286,12 @@ fn main() {
         test_script::spawn(main_window, cx);
 
         // Drains files from later launches and from the OS. `primary` is moved
-        // in so the single-instance socket lives as long as this task does.
+        // in so the single-instance socket lives as long as this task does. The
+        // task sleeps until `os::wake` is called (a forwarded launch or an
+        // open-URL event), so an idle app does not wake up to poll.
+        let (wake_tx, mut wake_rx) = futures::channel::mpsc::unbounded::<()>();
+        os::set_wake(wake_tx);
         cx.spawn(async move |cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(100))
-                .await;
             let mut batches: Vec<Vec<String>> = Vec::new();
             while let Ok(batch) = primary.requests.try_recv() {
                 batches.push(batch);
@@ -6268,6 +6303,9 @@ fn main() {
                 if cx.update(|cx| open_external(batch, cx)).is_err() {
                     return;
                 }
+            }
+            if futures::StreamExt::next(&mut wake_rx).await.is_none() {
+                return;
             }
         })
         .detach();

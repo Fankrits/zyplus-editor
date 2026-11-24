@@ -7841,6 +7841,7 @@ dependencies = [
  "cocoa 0.26.0",
  "core-foundation 0.10.0",
  "flate2",
+ "futures",
  "gpui",
  "image",
  "mermaid-svg",
