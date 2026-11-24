@@ -800,20 +800,27 @@ pub fn desktop_file_dirs(
     xdg_data_dirs: Option<&str>,
     home: Option<&str>,
 ) -> Vec<PathBuf> {
+    // XDG paths are Unix paths: test for a leading `/` and join with `/` as text,
+    // so this behaves identically (and is testable) on every host OS.
+    let applications =
+        |base: &str| PathBuf::from(format!("{}/applications", base.trim_end_matches('/')));
     let mut dirs = Vec::new();
-    match xdg_data_home.filter(|v| Path::new(v).is_absolute()) {
-        Some(dir) => dirs.push(PathBuf::from(dir).join("applications")),
+    match xdg_data_home.filter(|v| v.starts_with('/')) {
+        Some(dir) => dirs.push(applications(dir)),
         None => {
             if let Some(home) = home.filter(|v| !v.is_empty()) {
-                dirs.push(PathBuf::from(home).join(".local/share/applications"));
+                dirs.push(applications(&format!(
+                    "{}/.local/share",
+                    home.trim_end_matches('/')
+                )));
             }
         }
     }
     let system = xdg_data_dirs
         .filter(|v| !v.trim().is_empty())
         .unwrap_or("/usr/local/share:/usr/share");
-    for dir in system.split(':').filter(|d| Path::new(d).is_absolute()) {
-        dirs.push(PathBuf::from(dir).join("applications"));
+    for dir in system.split(':').filter(|d| d.starts_with('/')) {
+        dirs.push(applications(dir));
     }
     dirs
 }
